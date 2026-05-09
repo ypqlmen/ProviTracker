@@ -42,7 +42,7 @@ static void initAutoUpdate()
 
     if (init && set_url && set_details) {
         set_url("https://raw.githubusercontent.com/ypqlmen/ProviTracker/main/appcast.xml");
-        set_details(L"Victor Tang", L"Provi Tracker", L"1.3.3");
+        set_details(L"Victor Tang", L"Provi Tracker", L"1.3.4");
         init();
     }
 }
@@ -117,8 +117,147 @@ static QPair<QFrame*, QVBoxLayout*> createCard(const QString& title) {
     return qMakePair(frame, layout);
 }
 
+class RoundedProgressBar : public QProgressBar {
+public:
+    using QProgressBar::QProgressBar;
+
+protected:
+    void paintEvent(QPaintEvent*) override {
+        QPainter painter(this);
+        painter.setRenderHint(QPainter::Antialiasing, true);
+
+        const QRectF outer = rect().adjusted(0.5, 0.5, -0.5, -0.5);
+        const qreal outerRadius = qMin<qreal>(outer.height() / 2.0, 12.0);
+
+        painter.setPen(QPen(QColor("#2A3B5F"), 1.0));
+        painter.setBrush(QColor("#0B1424"));
+        painter.drawRoundedRect(outer, outerRadius, outerRadius);
+
+        const int minValue = minimum();
+        const int maxValue = maximum();
+        const double ratio = maxValue > minValue
+            ? qBound(0.0, double(value() - minValue) / double(maxValue - minValue), 1.0)
+            : 0.0;
+
+        if (ratio > 0.0) {
+            QRectF fill = outer.adjusted(1.0, 1.0, -1.0, -1.0);
+            fill.setWidth(qMax<qreal>(1.0, fill.width() * ratio));
+
+            QColor fillColor = property("progressColor").value<QColor>();
+            if (!fillColor.isValid()) fillColor = QColor("#14B8A6");
+
+            const qreal fillRadius = qMin(fill.height() / 2.0, fill.width() / 2.0);
+            painter.setPen(Qt::NoPen);
+            painter.setBrush(fillColor);
+            painter.drawRoundedRect(fill, fillRadius, fillRadius);
+        }
+
+        QFont textFont = font();
+        textFont.setBold(true);
+        painter.setFont(textFont);
+        painter.setPen(QColor("#F8FBFF"));
+        painter.drawText(rect(), Qt::AlignCenter, text());
+    }
+};
+
+class RoundedTableWidget : public QTableWidget {
+public:
+    using QTableWidget::QTableWidget;
+
+protected:
+    void resizeEvent(QResizeEvent* event) override {
+        QTableWidget::resizeEvent(event);
+
+        QPainterPath path;
+        path.addRoundedRect(rect(), 16, 16);
+        setMask(QRegion(path.toFillPolygon().toPolygon()));
+    }
+};
+
+class ClearableTableWidget : public RoundedTableWidget {
+public:
+    using RoundedTableWidget::RoundedTableWidget;
+
+protected:
+    void mousePressEvent(QMouseEvent* event) override {
+        if (!itemAt(event->pos())) {
+            clearSelection();
+            setCurrentItem(nullptr);
+        }
+        RoundedTableWidget::mousePressEvent(event);
+    }
+};
+
+static void styleDataTable(QTableWidget* table, bool allowSelection = true)
+{
+    if (!table) return;
+
+    table->setFrameShape(QFrame::NoFrame);
+    table->setFocusPolicy(allowSelection ? Qt::ClickFocus : Qt::NoFocus);
+    table->viewport()->setAutoFillBackground(false);
+    table->viewport()->setAttribute(Qt::WA_TranslucentBackground);
+    table->horizontalHeader()->setFixedHeight(42);
+    table->horizontalHeader()->setDefaultAlignment(Qt::AlignCenter);
+    table->horizontalHeader()->setHighlightSections(false);
+
+    table->setStyleSheet(QString(R"(
+QTableWidget {
+    background: #0B1424;
+    border: 1px solid #1C2E4B;
+    border-radius: 16px;
+    padding: 0px;
+    outline: 0;
+    color: #EAF4FF;
+    alternate-background-color: #12203A;
+}
+QTableWidget::viewport {
+    background: transparent;
+    border-radius: 16px;
+}
+QHeaderView::section {
+    background: #13203A;
+    color: #EAF4FF;
+    border: none;
+    padding: 8px 10px;
+    font-weight: 800;
+    min-height: 24px;
+}
+QTableCornerButton::section {
+    background: #13203A;
+    border: none;
+}
+QTableWidget::item {
+    color: #EAF4FF;
+    border: none;
+    padding: 8px;
+    min-height: 22px;
+}
+QTableWidget::item:selected {
+    background: %1;
+    color: %2;
+}
+)").arg(allowSelection ? "#14B8A6" : "transparent", allowSelection ? "#06202A" : "#EAF4FF"));
+}
+
+static bool confirmQuestion(QWidget* parent, const QString& title, const QString& message)
+{
+    QMessageBox box(parent);
+    box.setWindowTitle(title);
+    box.setText(message);
+    box.setIcon(QMessageBox::Question);
+    auto* yesButton = box.addButton("Ja", QMessageBox::YesRole);
+    auto* noButton = box.addButton("Nej", QMessageBox::NoRole);
+    box.setDefaultButton(noButton);
+    box.exec();
+    return box.clickedButton() == yesButton;
+}
+
 static QPair<QFrame*, QLabel*> createKpiCard(const QString& title) {
     auto card = createCard(title);
+
+    card.first->setMinimumHeight(108);
+    card.first->setMaximumHeight(126);
+    card.first->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
 
     auto* valueLabel = new QLabel("-");
     valueLabel->setWordWrap(true);
@@ -153,8 +292,11 @@ static QPair<QFrame*, QLabel*> createSummaryCard(const QString& title) {
 static QFrame* createProgressCard(const QString& title, QProgressBar** barOut, QLabel** hintOut) {
     auto card = createCard(title);
 
-    auto* bar = new QProgressBar;
+    auto* bar = new RoundedProgressBar;
     bar->setRange(0, 100);
+    bar->setMinimumHeight(26);
+    bar->setMaximumHeight(26);
+    bar->setProperty("progressColor", QColor("#14B8A6"));
 
     auto* hint = new QLabel("-");
     hint->setWordWrap(true);
@@ -1250,7 +1392,7 @@ public:
 
         // ===== TABLE CARD =====
         auto tableCard = createCard("Ordrer");
-        table = new QTableWidget(0, 5);
+        table = new RoundedTableWidget(0, 5);
         table->setHorizontalHeaderLabels({"Kategori", "Produkt", "Antal", "Info", "Handling"});
 
         tableCard.second->addWidget(table);
@@ -1274,9 +1416,13 @@ public:
         table->setTextElideMode(Qt::ElideNone);
         table->setShowGrid(false);
         table->setAlternatingRowColors(true);
+        table->setSelectionMode(QAbstractItemView::NoSelection);
+        table->setEditTriggers(QAbstractItemView::NoEditTriggers);
+        table->setFocusPolicy(Qt::NoFocus);
         table->setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);
         table->setMinimumHeight(270);
         table->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+        styleDataTable(table, false);
 
         auto actionCard = createCard("Handlinger");
         auto* btnRow = new QHBoxLayout;
@@ -2285,8 +2431,9 @@ QHeaderView::section {
         stop:1 #13203A);
     color: #EAF4FF;
     border: none;
-    padding: 12px;
+    padding: 8px 10px;
     font-weight: 800;
+    min-height: 24px;
 }
             QTableCornerButton::section {
                 background: #13203A;
@@ -2405,6 +2552,50 @@ QTableWidget::item {
 
         connect(newOrderBtn, &QPushButton::clicked, this, [this]() { createOrder(); });
         connect(switchBtn, &QPushButton::clicked, this, [this]() { chooseSalesperson(); });
+        qApp->installEventFilter(this);
+    }
+
+    bool eventFilter(QObject* watched, QEvent* event) override {
+        if (event->type() == QEvent::MouseButtonPress) {
+            clearOrderSelectionOnBackgroundClick(watched);
+        }
+        return QMainWindow::eventFilter(watched, event);
+    }
+
+    bool isChildOf(QWidget* child, QWidget* parent) const {
+        for (auto* w = child; w; w = w->parentWidget()) {
+            if (w == parent) return true;
+        }
+        return false;
+    }
+
+    bool isInteractiveClickTarget(QWidget* widget) const {
+        for (auto* w = widget; w; w = w->parentWidget()) {
+            if (qobject_cast<QAbstractButton*>(w)
+                || qobject_cast<QAbstractSpinBox*>(w)
+                || qobject_cast<QComboBox*>(w)
+                || qobject_cast<QLineEdit*>(w)
+                || qobject_cast<QTextEdit*>(w)
+                || qobject_cast<QListWidget*>(w)
+                || qobject_cast<QTabBar*>(w)
+                || qobject_cast<QScrollBar*>(w)
+                || qobject_cast<QHeaderView*>(w)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    void clearOrderSelectionOnBackgroundClick(QObject* watched) {
+        if (!ordersTable || !ordersTable->selectionModel() || !ordersTable->selectionModel()->hasSelection())
+            return;
+
+        auto* widget = qobject_cast<QWidget*>(watched);
+        if (!widget || isChildOf(widget, ordersTable) || isInteractiveClickTarget(widget))
+            return;
+
+        ordersTable->clearSelection();
+        ordersTable->setCurrentItem(nullptr);
     }
 
     QWidget* buildDashboardTab() {
@@ -2477,7 +2668,7 @@ QTableWidget::item {
 
         auto tableCard = createCard("Ordreoversigt");
 
-        ordersTable = new QTableWidget(0, 5);
+        ordersTable = new ClearableTableWidget(0, 5);
         ordersTable->setHorizontalHeaderLabels({"Tid", "Ordre-ID", "Det der er solgt", "Point", "Note"});
         ordersTable->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Fixed);
         ordersTable->horizontalHeader()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
@@ -2498,6 +2689,7 @@ QTableWidget::item {
         ordersTable->setMinimumHeight(220);
         ordersTable->setMaximumHeight(320);
         ordersTable->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+        styleDataTable(ordersTable, true);
 
         tableCard.second->addWidget(ordersTable);
         tableCard.second->addStretch();
@@ -2752,11 +2944,7 @@ QTableWidget::item {
             }
 
             const auto seller = repo.salespeople[row];
-            if (QMessageBox::question(
-                    this,
-                    "Slet sælger",
-                    QString("Er du sikker på, at du vil slette '%1'?").arg(seller.name)
-                    ) != QMessageBox::Yes) {
+            if (!confirmQuestion(this, "Slet sælger", QString("Er du sikker på, at du vil slette '%1'?").arg(seller.name))) {
                 return;
             }
 
@@ -2893,7 +3081,7 @@ QTableWidget::item {
         const QString path = QFileDialog::getOpenFileName(this, "Vælg backup-fil", repo.baseDir(), "JSON-filer (*.json)");
         if (path.isEmpty()) return false;
 
-        if (QMessageBox::question(this, "Importér backup", "Det her overskriver nuværende lokale data. Vil du fortsætte?") != QMessageBox::Yes) {
+        if (!confirmQuestion(this, "Importér backup", "Det her overskriver nuværende lokale data. Vil du fortsætte?")) {
             return false;
         }
 
@@ -3025,20 +3213,8 @@ QTableWidget::item {
         else if (ratio >= 0.55) chunkColor = "#14B8A6";
         else chunkColor = "#0EA5A4";
 
-        bar->setStyleSheet(QString(
-            "QProgressBar {"
-            "background:#0B1424;"
-            "border:1px solid #2A3B5F;"
-            "border-radius:12px;"
-            "text-align:center;"
-            "min-height:22px;"
-            "color:#F8FBFF;"
-            "font-weight:700;"
-            "}"
-            "QProgressBar::chunk {"
-            "background:%1;"
-            "border-radius:10px;"
-            "}").arg(chunkColor));
+        bar->setProperty("progressColor", QColor(chunkColor));
+        bar->update();
     }
 
     QString moneySpan(double amount, const QString& color = "#34D399") const {
@@ -3161,7 +3337,7 @@ QTableWidget::item {
             if (repo.settings.monthlySalesTarget <= 0) {
                 salesTargetProgressHintLabel->setText("Sæt et salgsmål i Indstillinger for at få live fremdrift på måneden.");
             } else if (missingSalesToTarget > 0) {
-                salesTargetProgressHintLabel->setText(QString("Live callout: du mangler <b>%1 salg</b> for at ramme målet denne måned.").arg(missingSalesToTarget));
+                salesTargetProgressHintLabel->setText(QString("Du mangler <b>%1 salg</b> for at ramme målet denne måned.").arg(missingSalesToTarget));
             } else {
                 salesTargetProgressHintLabel->setText(QString("Salgsmålet er ramt. Du ligger <b>%1 salg</b> over målet.").arg(mMonth.salesCount - repo.settings.monthlySalesTarget));
             }
@@ -3214,7 +3390,7 @@ QTableWidget::item {
         targetTs << "Du står på " << money(mMonth.totalPoints) << " point og " << mMonth.salesCount << " salg lige nu.\n";
         targetTs << "Tillæg lukket: " << mMonth.addOnCount << "  •  SIMO/VOICE: " << mMonth.simoCount << "/" << mMonth.voiceCount << "\n";
         if (repo.settings.monthlySalesTarget > 0) {
-            targetTs << "Live callout: du mangler " << missingSalesToTarget << " salg for at ramme månedens mål.\n";
+            targetTs << "Du mangler " << missingSalesToTarget << " salg for at ramme månedens mål.\n";
         }
         targetTs << nextMonthlyTierHint(mMonth.totalPoints, repo.settings.bonus);
         if (targetSummaryLabel) targetSummaryLabel->setText(targetText);
@@ -3387,7 +3563,7 @@ QTableWidget::item {
     void deleteSelectedOrder() {
         const int repoIndex = selectedOrderRepoIndex();
         if (repoIndex < 0) return;
-        if (QMessageBox::question(this, "Slet ordre", "Er du sikker på, at du vil slette den valgte ordre?") == QMessageBox::Yes) {
+        if (confirmQuestion(this, "Slet ordre", "Er du sikker på, at du vil slette den valgte ordre?")) {
             repo.orders.removeAt(repoIndex);
             repo.saveOrders();
             refreshAll();
