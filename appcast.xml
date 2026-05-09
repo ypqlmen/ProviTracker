@@ -5,11 +5,11 @@
     <title>Provi Tracker Updates</title>
 
     <item>
-      <title>Version 1.3.0</title>
+      <title>Version 1.3.1</title>
       <pubDate>Fri, 08 May 2026 05:00:00 +0000</pubDate>
       <enclosure
-        url="https://github.com/ypqlmen/ProviTracker/releases/download/autoupdate/ProviBeregnerSetup-1.3.exe"
-        sparkle:version="1.3.0"
+        url="https://github.com/ypqlmen/ProviTracker/releases/download/autoupdate/ProviBeregnerSetup-1.3.1.exe"
+        sparkle:version="1.3.1"
         type="application/octet-stream" />
     </item>
 
