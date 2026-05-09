@@ -42,7 +42,7 @@ static void initAutoUpdate()
 
     if (init && set_url && set_details) {
         set_url("https://raw.githubusercontent.com/ypqlmen/ProviTracker/main/appcast.xml");
-        set_details(L"Victor Tang", L"Provi Tracker", L"1.3.4");
+        set_details(L"Victor Tang", L"Provi Tracker", L"1.3.5");
         init();
     }
 }
@@ -174,6 +174,73 @@ protected:
     }
 };
 
+class CleanTableHeaderView : public QHeaderView {
+public:
+    explicit CleanTableHeaderView(Qt::Orientation orientation, QWidget* parent = nullptr)
+        : QHeaderView(orientation, parent)
+    {
+        setFixedHeight(38);
+        setMinimumSectionSize(86);
+        setDefaultAlignment(Qt::AlignCenter);
+        setHighlightSections(false);
+        setSectionsClickable(false);
+        setStretchLastSection(false);
+        setFocusPolicy(Qt::NoFocus);
+    }
+
+protected:
+    void paintSection(QPainter* painter, const QRect& rect, int logicalIndex) const override {
+        if (!painter || !model() || rect.isEmpty())
+            return;
+
+        painter->save();
+        painter->setRenderHint(QPainter::Antialiasing, true);
+        painter->setPen(Qt::NoPen);
+        painter->setBrush(QColor("#13203A"));
+
+        const int visual = visualIndex(logicalIndex);
+        const bool firstSection = visual == 0;
+        const bool lastSection = visual == count() - 1;
+        const QRectF bg = QRectF(rect).adjusted(0.0, 0.0, 0.0, 0.0);
+        const qreal radius = 10.0;
+
+        QPainterPath bgPath;
+        bgPath.moveTo(firstSection ? bg.left() + radius : bg.left(), bg.top());
+        if (lastSection) {
+            bgPath.lineTo(bg.right() - radius, bg.top());
+            bgPath.quadTo(bg.right(), bg.top(), bg.right(), bg.top() + radius);
+            bgPath.lineTo(bg.right(), bg.bottom() - radius);
+            bgPath.quadTo(bg.right(), bg.bottom(), bg.right() - radius, bg.bottom());
+        } else {
+            bgPath.lineTo(bg.right(), bg.top());
+            bgPath.lineTo(bg.right(), bg.bottom());
+        }
+        if (firstSection) {
+            bgPath.lineTo(bg.left() + radius, bg.bottom());
+            bgPath.quadTo(bg.left(), bg.bottom(), bg.left(), bg.bottom() - radius);
+            bgPath.lineTo(bg.left(), bg.top() + radius);
+            bgPath.quadTo(bg.left(), bg.top(), bg.left() + radius, bg.top());
+        } else {
+            bgPath.lineTo(bg.left(), bg.bottom());
+            bgPath.lineTo(bg.left(), bg.top());
+        }
+        bgPath.closeSubpath();
+        painter->drawPath(bgPath);
+
+        QFont headerFont = font();
+        headerFont.setBold(true);
+        headerFont.setPointSizeF(qMax<qreal>(9.0, headerFont.pointSizeF()));
+        painter->setFont(headerFont);
+        painter->setPen(QColor("#F8FBFF"));
+
+        const QString text = model()->headerData(logicalIndex, orientation(), Qt::DisplayRole).toString();
+        const QRect textRect = rect.adjusted(10, 0, -10, 1);
+        const QString elided = fontMetrics().elidedText(text, Qt::ElideRight, textRect.width());
+        painter->drawText(textRect, Qt::AlignCenter | Qt::TextSingleLine, elided);
+        painter->restore();
+    }
+};
+
 class ClearableTableWidget : public RoundedTableWidget {
 public:
     using RoundedTableWidget::RoundedTableWidget;
@@ -196,9 +263,10 @@ static void styleDataTable(QTableWidget* table, bool allowSelection = true)
     table->setFocusPolicy(allowSelection ? Qt::ClickFocus : Qt::NoFocus);
     table->viewport()->setAutoFillBackground(false);
     table->viewport()->setAttribute(Qt::WA_TranslucentBackground);
-    table->horizontalHeader()->setFixedHeight(42);
+    table->horizontalHeader()->setFixedHeight(38);
     table->horizontalHeader()->setDefaultAlignment(Qt::AlignCenter);
     table->horizontalHeader()->setHighlightSections(false);
+    table->horizontalHeader()->setSectionsClickable(false);
 
     table->setStyleSheet(QString(R"(
 QTableWidget {
@@ -1393,6 +1461,7 @@ public:
         // ===== TABLE CARD =====
         auto tableCard = createCard("Ordrer");
         table = new RoundedTableWidget(0, 5);
+        table->setHorizontalHeader(new CleanTableHeaderView(Qt::Horizontal, table));
         table->setHorizontalHeaderLabels({"Kategori", "Produkt", "Antal", "Info", "Handling"});
 
         tableCard.second->addWidget(table);
@@ -2669,6 +2738,7 @@ QTableWidget::item {
         auto tableCard = createCard("Ordreoversigt");
 
         ordersTable = new ClearableTableWidget(0, 5);
+        ordersTable->setHorizontalHeader(new CleanTableHeaderView(Qt::Horizontal, ordersTable));
         ordersTable->setHorizontalHeaderLabels({"Tid", "Ordre-ID", "Det der er solgt", "Point", "Note"});
         ordersTable->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Fixed);
         ordersTable->horizontalHeader()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
