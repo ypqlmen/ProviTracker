@@ -42,7 +42,7 @@ static void initAutoUpdate()
 
     if (init && set_url && set_details) {
         set_url("https://raw.githubusercontent.com/ypqlmen/ProviTracker/main/appcast.xml");
-        set_details(L"Victor Tang", L"Provi Tracker", L"1.3.5");
+        set_details(L"Victor Tang", L"Provi Tracker", L"1.3.6");
         init();
     }
 }
@@ -540,6 +540,16 @@ struct IntramanagerHoursEntry {
     QString syncedAt;
 };
 
+struct IntramanagerPunchState {
+    bool known = false;
+    bool clockedIn = false;
+    QString statusText;
+    QString detail;
+    QString lastStart;
+    QString lastStop;
+    QString syncedAt;
+};
+
 struct AppSettings {
     QString activeSalespersonId;
     BonusSettings bonus;
@@ -556,6 +566,7 @@ struct AppSettings {
     QString lastIntramanagerSyncAt;
 
     QMap<QString, IntramanagerHoursEntry> intramanagerHoursCache;
+    IntramanagerPunchState intramanagerPunch;
 };
 
 struct Metrics {
@@ -693,6 +704,8 @@ static BonusSettings fromBonusJson(const QJsonObject& o) {
 
 static QJsonObject toJson(const IntramanagerHoursEntry& e);
 static IntramanagerHoursEntry fromIntramanagerHoursJson(const QJsonObject& o);
+static QJsonObject toJson(const IntramanagerPunchState& s);
+static IntramanagerPunchState fromIntramanagerPunchJson(const QJsonObject& o);
 
 static QJsonObject toJson(const IntramanagerHoursEntry& e) {
     return {
@@ -714,6 +727,30 @@ static IntramanagerHoursEntry fromIntramanagerHoursJson(const QJsonObject& o) {
     return e;
 }
 
+static QJsonObject toJson(const IntramanagerPunchState& s) {
+    return {
+        {"known", s.known},
+        {"clockedIn", s.clockedIn},
+        {"statusText", s.statusText},
+        {"detail", s.detail},
+        {"lastStart", s.lastStart},
+        {"lastStop", s.lastStop},
+        {"syncedAt", s.syncedAt}
+    };
+}
+
+static IntramanagerPunchState fromIntramanagerPunchJson(const QJsonObject& o) {
+    IntramanagerPunchState s;
+    s.known = o.value("known").toBool(false);
+    s.clockedIn = o.value("clockedIn").toBool(false);
+    s.statusText = o.value("statusText").toString();
+    s.detail = o.value("detail").toString();
+    s.lastStart = o.value("lastStart").toString();
+    s.lastStop = o.value("lastStop").toString();
+    s.syncedAt = o.value("syncedAt").toString();
+    return s;
+}
+
 static QJsonObject toJson(const AppSettings& s) {
     QJsonObject hoursCacheJson;
 
@@ -733,7 +770,8 @@ static QJsonObject toJson(const AppSettings& s) {
         {"lastIntramanagerPeriodFrom", s.lastIntramanagerPeriodFrom},
         {"lastIntramanagerPeriodTo", s.lastIntramanagerPeriodTo},
         {"lastIntramanagerSyncAt", s.lastIntramanagerSyncAt},
-        {"intramanagerHoursCache", hoursCacheJson}
+        {"intramanagerHoursCache", hoursCacheJson},
+        {"intramanagerPunch", toJson(s.intramanagerPunch)}
     };
 }
 
@@ -756,6 +794,8 @@ static AppSettings fromSettingsJson(const QJsonObject& o) {
     for (auto it = hoursCacheJson.begin(); it != hoursCacheJson.end(); ++it) {
         s.intramanagerHoursCache[it.key()] = fromIntramanagerHoursJson(it.value().toObject());
     }
+
+    s.intramanagerPunch = fromIntramanagerPunchJson(o.value("intramanagerPunch").toObject());
 
     return s;
 }
@@ -1912,6 +1952,9 @@ private:
     QLabel* kpiMonthCommissionLabel = nullptr;
     QLabel* kpiMonthSalesLabel = nullptr;
     QLabel* kpiMonthAddonsLabel = nullptr;
+    QLabel* intramanagerPunchStatusLabel = nullptr;
+    QLabel* intramanagerPunchDetailLabel = nullptr;
+    QPushButton* intramanagerPunchButton = nullptr;
 
     QProgressBar* targetProgressBar = nullptr;
     QProgressBar* salesTargetProgressBar = nullptr;
@@ -1936,6 +1979,7 @@ private:
     QSpinBox* monthlySalesTargetSpin = nullptr;
     QListWidget* salespeopleList = nullptr;
     bool intramanagerSyncRunning = false;
+    bool intramanagerPunchRunning = false;
     QTimer* intramanagerAutoSyncTimer = nullptr;
     QSet<QString> intramanagerPendingFetchKeys;
 
@@ -1949,6 +1993,17 @@ private:
         bool success = false;
         double hours = 0.0;
         double phoneHours = 0.0;
+        QString error;
+    };
+
+    struct IntramanagerPunchResult {
+        bool success = false;
+        bool statusKnown = false;
+        bool clockedIn = false;
+        QString statusText;
+        QString detail;
+        QString lastStart;
+        QString lastStop;
         QString error;
     };
 
@@ -1984,7 +2039,7 @@ private:
 
     bool prepareIntramanagerFetch(QString* usernameOut, QString* passwordOut, QString* workerPathOut, QString* errorOut) const {
         if (!repo.settings.intramanagerEnabled) {
-            if (errorOut) *errorOut = "Intramanager timehentning er ikke aktiveret.";
+            if (errorOut) *errorOut = "Intramanager er ikke aktiveret.";
             return false;
         }
 
@@ -2022,7 +2077,11 @@ private:
     }
 
     QStringList intramanagerWorkerArgs(const QString& fromDate, const QString& toDate) const {
-        return {"--from-date", fromDate, "--to-date", toDate, "--stdin-json"};
+        return {"--action", "hours", "--from-date", fromDate, "--to-date", toDate, "--stdin-json"};
+    }
+
+    QStringList intramanagerPunchWorkerArgs(const QString& action) const {
+        return {"--action", action, "--stdin-json"};
     }
 
     IntramanagerFetchResult parseIntramanagerWorkerOutput(const QByteArray& stdoutData, const QByteArray& stderrData) const {
@@ -2051,6 +2110,37 @@ private:
         return result;
     }
 
+    IntramanagerPunchResult parseIntramanagerPunchWorkerOutput(const QByteArray& stdoutData, const QByteArray& stderrData) const {
+        IntramanagerPunchResult result;
+        QJsonParseError jsonError;
+        const auto doc = QJsonDocument::fromJson(stdoutData, &jsonError);
+
+        if (jsonError.error != QJsonParseError::NoError || !doc.isObject()) {
+            result.error =
+                "Worker returnerede ikke gyldig JSON.\n\nOutput:\n" +
+                QString::fromUtf8(stdoutData) +
+                "\n\nFejl:\n" +
+                QString::fromUtf8(stderrData);
+            return result;
+        }
+
+        const QJsonObject obj = doc.object();
+        result.statusKnown = obj.value("statusKnown").toBool(false);
+        result.clockedIn = obj.value("clockedIn").toBool(false);
+        result.statusText = obj.value("statusText").toString();
+        result.detail = obj.value("detail").toString();
+        result.lastStart = obj.value("lastStart").toString();
+        result.lastStop = obj.value("lastStop").toString();
+
+        if (!obj.value("success").toBool(false)) {
+            result.error = obj.value("error").toString("Ukendt fejl ved stempelstatus.");
+            return result;
+        }
+
+        result.success = true;
+        return result;
+    }
+
     void rememberIntramanagerHours(const QString& fromDate, const QString& toDate, double hours, double phoneHours) {
         const QString syncedAt = QDateTime::currentDateTime().toString(Qt::ISODate);
 
@@ -2069,6 +2159,77 @@ private:
         repo.settings.intramanagerHoursCache[intramanagerPeriodKey(fromDate, toDate)] = entry;
     }
 
+    void rememberIntramanagerPunchState(const IntramanagerPunchResult& result) {
+        repo.settings.intramanagerPunch.known = result.statusKnown;
+        repo.settings.intramanagerPunch.clockedIn = result.clockedIn;
+        repo.settings.intramanagerPunch.statusText = result.statusText;
+        repo.settings.intramanagerPunch.detail = result.detail;
+        repo.settings.intramanagerPunch.lastStart = result.lastStart;
+        repo.settings.intramanagerPunch.lastStop = result.lastStop;
+        repo.settings.intramanagerPunch.syncedAt = QDateTime::currentDateTime().toString(Qt::ISODate);
+    }
+
+    QString shortPunchSyncText() const {
+        const QDateTime synced = QDateTime::fromString(repo.settings.intramanagerPunch.syncedAt, Qt::ISODate);
+        if (!synced.isValid()) return "Ikke hentet endnu";
+        return "Opdateret " + synced.toString("dd-MM HH:mm");
+    }
+
+    QString punchDetailText() const {
+        const auto& punch = repo.settings.intramanagerPunch;
+        if (!repo.settings.intramanagerEnabled) {
+            return "Gem Intramanager-login i Indstillinger for at bruge stempeluret.";
+        }
+        if (!punch.known) {
+            return punch.detail.isEmpty() ? "Status er ikke hentet endnu." : punch.detail;
+        }
+
+        QStringList parts;
+        if (!punch.detail.isEmpty()) parts << punch.detail;
+        if (!punch.lastStart.isEmpty()) parts << "Seneste ind: " + punch.lastStart;
+        if (!punch.lastStop.isEmpty()) parts << "Seneste ud: " + punch.lastStop;
+        parts << shortPunchSyncText();
+        return parts.join("\n");
+    }
+
+    void refreshPunchCardUi() {
+        const auto& punch = repo.settings.intramanagerPunch;
+
+        if (intramanagerPunchStatusLabel) {
+            QString status = "Status ukendt";
+            if (intramanagerPunchRunning) {
+                status = "Kontakter Intramanager...";
+            } else if (!repo.settings.intramanagerEnabled) {
+                status = "Intramanager er ikke aktiv";
+            } else if (punch.known) {
+                status = punch.clockedIn ? "Stemplet ind" : "Stemplet ud";
+            }
+
+            intramanagerPunchStatusLabel->setText(status);
+            intramanagerPunchStatusLabel->setStyleSheet(
+                QString("QLabel { color:%1; font-size:22px; font-weight:900; background:transparent; }")
+                    .arg(punch.known && punch.clockedIn ? "#34D399" : "#F8FBFF")
+                );
+        }
+
+        if (intramanagerPunchDetailLabel) {
+            intramanagerPunchDetailLabel->setText(punchDetailText());
+        }
+
+        if (intramanagerPunchButton) {
+            intramanagerPunchButton->setEnabled(repo.settings.intramanagerEnabled && !intramanagerPunchRunning);
+            if (!repo.settings.intramanagerEnabled) {
+                intramanagerPunchButton->setText("Kræver login");
+            } else if (intramanagerPunchRunning) {
+                intramanagerPunchButton->setText("Arbejder...");
+            } else if (!punch.known) {
+                intramanagerPunchButton->setText("Hent status");
+            } else {
+                intramanagerPunchButton->setText(punch.clockedIn ? "Stempel ud" : "Stempel ind");
+            }
+        }
+    }
+
     void setupIntramanagerAutoSync() {
         if (intramanagerAutoSyncTimer) {
             intramanagerAutoSyncTimer->stop();
@@ -2085,12 +2246,17 @@ private:
 
         connect(intramanagerAutoSyncTimer, &QTimer::timeout, this, [this]() {
             syncIntramanagerHoursAsync(true);
+            refreshIntramanagerPunchStatusAsync(true);
         });
 
         intramanagerAutoSyncTimer->start();
 
         QTimer::singleShot(5000, this, [this]() {
             syncIntramanagerHoursAsync(true);
+        });
+
+        QTimer::singleShot(1500, this, [this]() {
+            refreshIntramanagerPunchStatusAsync(true);
         });
     }
 
@@ -2204,6 +2370,115 @@ private:
         });
 
         process->start(workerPath, intramanagerWorkerArgs(fromDate, toDate));
+    }
+
+    void runIntramanagerPunchWorker(
+        const QString& action,
+        bool silent,
+        std::function<void(bool)> afterFetch = {}
+        ) {
+        if (intramanagerPunchRunning) {
+            if (afterFetch) afterFetch(false);
+            return;
+        }
+
+        QString username;
+        QString password;
+        QString workerPath;
+        QString error;
+
+        if (!prepareIntramanagerFetch(&username, &password, &workerPath, &error)) {
+            if (!silent) QMessageBox::warning(this, "Intramanager", error);
+            if (afterFetch) afterFetch(false);
+            refreshPunchCardUi();
+            return;
+        }
+
+        intramanagerPunchRunning = true;
+        refreshPunchCardUi();
+
+        auto* process = new QProcess(this);
+        QJsonObject payload;
+        payload["username"] = username;
+        payload["password"] = password;
+        payload["action"] = action;
+        payload["onDate"] = intramanagerDate(QDate::currentDate());
+
+        connect(process, &QProcess::started, this, [process, payload]() {
+            process->write(QJsonDocument(payload).toJson(QJsonDocument::Compact));
+            process->closeWriteChannel();
+        });
+
+        connect(process, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
+                this, [this, process, silent, action, afterFetch](int, QProcess::ExitStatus) {
+                    intramanagerPunchRunning = false;
+
+                    const QByteArray stdoutData = process->readAllStandardOutput();
+                    const QByteArray stderrData = process->readAllStandardError();
+                    process->deleteLater();
+
+                    const IntramanagerPunchResult result = parseIntramanagerPunchWorkerOutput(stdoutData, stderrData);
+
+                    if (!result.success) {
+                        repo.settings.intramanagerPunch.known = false;
+                        repo.settings.intramanagerPunch.detail = result.error;
+                        repo.settings.intramanagerPunch.syncedAt = QDateTime::currentDateTime().toString(Qt::ISODate);
+                        repo.saveSettings();
+                        refreshPunchCardUi();
+                        if (!silent) QMessageBox::warning(this, "Intramanager", result.error);
+                        if (afterFetch) afterFetch(false);
+                        return;
+                    }
+
+                    rememberIntramanagerPunchState(result);
+                    repo.saveSettings();
+                    refreshPunchCardUi();
+
+                    if (!silent && action == "punch-toggle") {
+                        QMessageBox::information(this, "Intramanager", result.statusText);
+                    }
+
+                    if (action == "punch-toggle") {
+                        syncIntramanagerHoursAsync(true);
+                    }
+
+                    if (afterFetch) afterFetch(true);
+                });
+
+        connect(process, &QProcess::errorOccurred, this, [this, process, silent, afterFetch](QProcess::ProcessError error) {
+            if (error != QProcess::FailedToStart) return;
+
+            intramanagerPunchRunning = false;
+            const QString err = process->errorString();
+            process->deleteLater();
+
+            repo.settings.intramanagerPunch.known = false;
+            repo.settings.intramanagerPunch.detail = "Kunne ikke starte Intramanager-worker:\n" + err;
+            repo.settings.intramanagerPunch.syncedAt = QDateTime::currentDateTime().toString(Qt::ISODate);
+            repo.saveSettings();
+            refreshPunchCardUi();
+
+            if (!silent) {
+                QMessageBox::warning(this, "Intramanager", repo.settings.intramanagerPunch.detail);
+            }
+            if (afterFetch) afterFetch(false);
+        });
+
+        process->start(workerPath, intramanagerPunchWorkerArgs(action));
+    }
+
+    void refreshIntramanagerPunchStatusAsync(bool silent = true) {
+        runIntramanagerPunchWorker("punch-status", silent);
+    }
+
+    void toggleIntramanagerPunchAsync() {
+        const auto& punch = repo.settings.intramanagerPunch;
+        if (!punch.known) {
+            refreshIntramanagerPunchStatusAsync(false);
+            return;
+        }
+
+        runIntramanagerPunchWorker("punch-toggle", false);
     }
 
     void syncIntramanagerHoursAsync(bool silent = false) {
@@ -2691,6 +2966,30 @@ QTableWidget::item {
         kpiGrid->addWidget(k4.first, 0, 3);
         layout->addLayout(kpiGrid);
 
+        auto punchCard = createCard("Stempelur");
+        auto* punchTop = new QHBoxLayout;
+        punchTop->setContentsMargins(0, 0, 0, 0);
+        punchTop->setSpacing(12);
+
+        intramanagerPunchStatusLabel = new QLabel("Status ukendt");
+        intramanagerPunchStatusLabel->setTextInteractionFlags(Qt::NoTextInteraction);
+
+        intramanagerPunchButton = new QPushButton("Hent status");
+        intramanagerPunchButton->setMinimumWidth(140);
+
+        punchTop->addWidget(intramanagerPunchStatusLabel);
+        punchTop->addStretch();
+        punchTop->addWidget(intramanagerPunchButton);
+
+        intramanagerPunchDetailLabel = new QLabel("-");
+        intramanagerPunchDetailLabel->setWordWrap(true);
+        intramanagerPunchDetailLabel->setTextInteractionFlags(Qt::NoTextInteraction);
+        intramanagerPunchDetailLabel->setStyleSheet("QLabel { color:#D8F5FF; font-size:13px; font-weight:600; background:transparent; }");
+
+        punchCard.second->addLayout(punchTop);
+        punchCard.second->addWidget(intramanagerPunchDetailLabel);
+        layout->addWidget(punchCard.first);
+
         auto progressCard = createCard("Mål, bonus og næste løft");
         auto* progressLayout = new QGridLayout;
         progressLayout->setHorizontalSpacing(14);
@@ -2708,6 +3007,11 @@ QTableWidget::item {
         recentActivityLabel = recentCard.second;
         layout->addWidget(recentCard.first);
         layout->addStretch();
+
+        connect(intramanagerPunchButton, &QPushButton::clicked, this, [this]() {
+            toggleIntramanagerPunchAsync();
+        });
+
         return w;
     }
 
@@ -2882,7 +3186,7 @@ QTableWidget::item {
         auto* imForm = new QFormLayout;
         imForm->setSpacing(12);
 
-        intramanagerEnabledCheck = new QCheckBox("Aktivér automatisk timehentning");
+        intramanagerEnabledCheck = new QCheckBox("Aktivér Intramanager og automatisk timehentning");
         intramanagerEnabledCheck->setFocusPolicy(Qt::NoFocus);
 
         intramanagerUsernameEdit = new QLineEdit;
@@ -2984,6 +3288,7 @@ QTableWidget::item {
 
             refreshAll();
             setupIntramanagerAutoSync();
+            refreshIntramanagerPunchStatusAsync(true);
         });
 
         connect(addSellerBtn, &QPushButton::clicked, this, [this, sellerNameEdit]() {
@@ -3312,6 +3617,7 @@ QTableWidget::item {
     void refreshDashboard() {
         const auto* s = activeSalesperson();
         if (!s) return;
+        refreshPunchCardUi();
 
         const QDate now = QDate::currentDate();
         const auto todayRange = qMakePair(QDateTime(now, QTime(0,0,0)), QDateTime(now, QTime(23,59,59)));
@@ -3597,6 +3903,8 @@ QTableWidget::item {
         if (intramanagerStatusLabel) {
             intramanagerStatusLabel->setText("Timer hentes automatisk, når rapporter har brug for dem.");
         }
+
+        refreshPunchCardUi();
     }
 
     void createOrder() {
