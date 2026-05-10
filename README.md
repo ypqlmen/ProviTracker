@@ -14,6 +14,21 @@ Qt Widgets desktop-app i C++ med lokal JSON-lagring, per-user installation og Wi
 - Automatisk maanedsluk for tidligere maaneder med snapshots + PDF
 - Bonusmotor med 5-trinslaasning for SIMO og 10-trinslaasning for VOICE
 - Intramanager-timer caches pr. rapportperiode
+- Webhook-baseret salgsregistrering til Excel Online/Outlook via fx Power Automate
+
+## Salgsregistrering via webflow
+
+Programmet bruger ikke lokal Excel eller Outlook. Naar salgsregistrering er slaaet til i Indstillinger, sender appen en JSON-pakke til den webhook URL, der er gemt i indstillingerne.
+
+Payloaden indeholder bl.a.:
+
+- `date`, `sellerInitials`, `orderNumber`, `cvrNumber`, `companyName`, `phoneNumber`
+- `recipient`, `mailSubject` og `mailHtml`
+- `items` med produktnavn, antal, point og aliases til matching mod masterarket
+
+Et Power Automate-flow kan derfor bruge de faste felter til at oprette raekken i Excel Online og bruge `mailHtml` direkte som broedtekst i Outlook-mailen.
+
+Se `docs/power_automate_salgsregistrering.md` og `scripts/excel_online_sales_registration.ts` for den konkrete flow-opsaetning.
 
 ## Bonuslogik
 
@@ -44,6 +59,7 @@ cmake --build build/Desktop_Qt_6_9_3_MinGW_64_bit-Release --config Release
 ## Krav
 
 - Qt 6 Widgets
+- Qt 6 Network
 - C++17
 - Inno Setup 6 til installer-builds
 
@@ -74,9 +90,9 @@ WinSparkle laeser appcast fra:
 
 `https://raw.githubusercontent.com/ypqlmen/ProviTracker/main/appcast.xml`
 
-GitHub Release-tagget til auto-update er `autoupdate`, og asset-navnet for version 1.3.6 er:
+GitHub Release-tagget til auto-update er `autoupdate`, og asset-navnet for version 1.3.7 er:
 
-`ProviBeregnerSetup-1.3.6.exe`
+`ProviBeregnerSetup-1.3.7.exe`
 
 Bemærk: den oprindelige 1.1-build indeholdt WinSparkle DLL'en, men ikke en appcast-URL i selve programmet eller installeren. Brugere på 1.1 skal derfor installere en nyere version manuelt én gang; derefter kan auto-update hente fremtidige versioner.
 

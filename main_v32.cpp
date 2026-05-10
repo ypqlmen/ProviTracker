@@ -1,6 +1,7 @@
 #include <QtWidgets>
 #include <QtCore>
 #include <QtPrintSupport>
+#include <QtNetwork>
 #include <QPropertyAnimation>
 #include <QEasingCurve>
 #include <algorithm>
@@ -42,7 +43,7 @@ static void initAutoUpdate()
 
     if (init && set_url && set_details) {
         set_url("https://raw.githubusercontent.com/ypqlmen/ProviTracker/main/appcast.xml");
-        set_details(L"Victor Tang", L"Provi Tracker", L"1.3.6");
+        set_details(L"Victor Tang", L"Provi Tracker", L"1.3.7");
         init();
     }
 }
@@ -430,6 +431,10 @@ struct OrderItem {
 struct Order {
     QString id;
     QString salespersonId;
+    QString sellerInitials;
+    QString cvrNumber;
+    QString companyName;
+    QString phoneNumber;
     QDateTime createdAt;
     QVector<OrderItem> items;
     QString note;
@@ -560,6 +565,11 @@ struct AppSettings {
     QString intramanagerUsername;
     bool intramanagerEnabled = false;
 
+    QString defaultSellerInitials;
+    QString salesRegistrationWebhookUrl;
+    QString salesRegistrationRecipient;
+    bool salesRegistrationEnabled = false;
+
     double lastIntramanagerHours = 0.0;
     QString lastIntramanagerPeriodFrom;
     QString lastIntramanagerPeriodTo;
@@ -634,6 +644,10 @@ static QJsonObject toJson(const Order& o) {
     return {
         {"id", o.id},
         {"salespersonId", o.salespersonId},
+        {"sellerInitials", o.sellerInitials},
+        {"cvrNumber", o.cvrNumber},
+        {"companyName", o.companyName},
+        {"phoneNumber", o.phoneNumber},
         {"createdAt", o.createdAt.toString(Qt::ISODate)},
         {"items", items},
         {"note", o.note}
@@ -644,6 +658,10 @@ static Order fromOrderJson(const QJsonObject& o) {
     Order order;
     order.id = o["id"].toString();
     order.salespersonId = o["salespersonId"].toString();
+    order.sellerInitials = o.value("sellerInitials").toString();
+    order.cvrNumber = o.value("cvrNumber").toString();
+    order.companyName = o.value("companyName").toString();
+    order.phoneNumber = o.value("phoneNumber").toString();
     order.createdAt = QDateTime::fromString(o["createdAt"].toString(), Qt::ISODate);
     for (const auto& v : o["items"].toArray()) order.items.push_back(fromOrderItemJson(v.toObject()));
     order.note = o["note"].toString();
@@ -766,6 +784,10 @@ static QJsonObject toJson(const AppSettings& s) {
         {"hourlyRate", s.hourlyRate},
         {"intramanagerUsername", s.intramanagerUsername},
         {"intramanagerEnabled", s.intramanagerEnabled},
+        {"defaultSellerInitials", s.defaultSellerInitials},
+        {"salesRegistrationWebhookUrl", s.salesRegistrationWebhookUrl},
+        {"salesRegistrationRecipient", s.salesRegistrationRecipient},
+        {"salesRegistrationEnabled", s.salesRegistrationEnabled},
         {"lastIntramanagerHours", s.lastIntramanagerHours},
         {"lastIntramanagerPeriodFrom", s.lastIntramanagerPeriodFrom},
         {"lastIntramanagerPeriodTo", s.lastIntramanagerPeriodTo},
@@ -784,6 +806,13 @@ static AppSettings fromSettingsJson(const QJsonObject& o) {
     s.hourlyRate = o.value("hourlyRate").toDouble(0.0);
     s.intramanagerUsername = o.value("intramanagerUsername").toString();
     s.intramanagerEnabled = o.value("intramanagerEnabled").toBool(false);
+    s.defaultSellerInitials = o.value("defaultSellerInitials").toString();
+    s.salesRegistrationWebhookUrl = o.value("salesRegistrationWebhookUrl").toString();
+    if (s.salesRegistrationWebhookUrl.isEmpty()) {
+        s.salesRegistrationWebhookUrl = o.value("salesMasterWorkbookPath").toString();
+    }
+    s.salesRegistrationRecipient = o.value("salesRegistrationRecipient").toString();
+    s.salesRegistrationEnabled = o.value("salesRegistrationEnabled").toBool(false);
     s.lastIntramanagerHours = o.value("lastIntramanagerHours").toDouble(0.0);
     s.lastIntramanagerPeriodFrom = o.value("lastIntramanagerPeriodFrom").toString();
     s.lastIntramanagerPeriodTo = o.value("lastIntramanagerPeriodTo").toString();
@@ -843,6 +872,12 @@ public:
             seedProducts();
             saveProducts();
         }
+
+        const bool catalogChanged = migrateProductCatalog();
+        if (catalogChanged) {
+            saveProducts();
+            saveOrders();
+        }
     }
 
     void saveAll() {
@@ -894,10 +929,10 @@ public:
             {"mobil_1000gb_24", "Mobil 1000GB 24mdr", "Mobil", 4.25, CountMode::Both, true},
             {"mobil_1000gb_12", "Mobil 1000GB 12mdr", "Mobil", 3.25, CountMode::Both, true},
             {"mobil_1000gb_0", "Mobil 1000GB 0mdr", "Mobil", 2.5, CountMode::Both, true},
-            {"mobil_1000plus_billig_36", "Mobil 1000+ billig 36mdr", "Mobil", 2.5, CountMode::Both, true},
             {"til_go_world", "Tillæg GoWorld", "Tillæg", 0.5, CountMode::None, false},
             {"til_true_talk_kollega", "Tillæg TrueTalk Kollega", "Tillæg", 0.5, CountMode::None, false},
-            {"til_true_talk_firma", "Tillæg TrueTalk Firma", "Tillæg", 2.0, CountMode::None, false},
+            {"til_true_talk_firma", "Tillæg TrueTalk Firma/Agent", "Tillæg", 2.0, CountMode::None, false},
+            {"til_1000gb_data", "Tillæg 1000GB data", "Tillæg", 0.5, CountMode::None, false},
             {"til_datakort", "Tillæg Datakort", "Tillæg", 0.5, CountMode::None, false},
             {"til_service", "Tillæg Service", "Tillæg", 0.5, CountMode::None, false},
             {"mbb_20_0", "Mobilt bredbånd 20GB 0mdr", "Mobilt bredbånd", 2.0, CountMode::None, true},
@@ -912,6 +947,60 @@ public:
             {"fwa_fri_36", "FWA 5G Fridata 36mdr", "FWA", 2.5, CountMode::Voice, true},
             {"fiber_12", "Fiber 12mdr", "Fiber", 1.5, CountMode::None, true}
         };
+    }
+
+    bool migrateProductCatalog() {
+        bool changed = false;
+        constexpr const char* oldCheapDataKey = "mobil_1000plus_billig_36";
+        constexpr const char* dataAddonKey = "til_1000gb_data";
+
+        if (Product* trueTalk = findProduct("til_true_talk_firma")) {
+            if (trueTalk->displayName != "Tillæg TrueTalk Firma/Agent"
+                || trueTalk->points != 2.0
+                || trueTalk->countsAsSale) {
+                trueTalk->displayName = "Tillæg TrueTalk Firma/Agent";
+                trueTalk->points = 2.0;
+                trueTalk->countMode = CountMode::None;
+                trueTalk->countsAsSale = false;
+                changed = true;
+            }
+        }
+
+        if (Product* dataAddon = findProduct(dataAddonKey)) {
+            if (dataAddon->displayName != "Tillæg 1000GB data"
+                || dataAddon->category != "Tillæg"
+                || dataAddon->points != 0.5
+                || dataAddon->countMode != CountMode::None
+                || dataAddon->countsAsSale) {
+                dataAddon->displayName = "Tillæg 1000GB data";
+                dataAddon->category = "Tillæg";
+                dataAddon->points = 0.5;
+                dataAddon->countMode = CountMode::None;
+                dataAddon->countsAsSale = false;
+                changed = true;
+            }
+        } else {
+            products.push_back({dataAddonKey, "Tillæg 1000GB data", "Tillæg", 0.5, CountMode::None, false});
+            changed = true;
+        }
+
+        for (int i = products.size() - 1; i >= 0; --i) {
+            if (products[i].key == oldCheapDataKey) {
+                products.removeAt(i);
+                changed = true;
+            }
+        }
+
+        for (auto& order : orders) {
+            for (auto& item : order.items) {
+                if (item.productKey == oldCheapDataKey) {
+                    item.productKey = dataAddonKey;
+                    changed = true;
+                }
+            }
+        }
+
+        return changed;
     }
 
 private:
@@ -1460,10 +1549,18 @@ public:
         setWindowTitle(existing.has_value() ? "Rediger ordre" : "Ny ordre");
         resize(1120, 720);
 
-        order = existing.value_or(Order{"", salespersonId, QDateTime::currentDateTime(), {}, {}});
+        if (existing.has_value()) {
+            order = *existing;
+        } else {
+            order.salespersonId = salespersonId;
+            order.createdAt = QDateTime::currentDateTime();
+            order.sellerInitials = repo.settings.defaultSellerInitials;
+        }
 
         auto* mainLayout = new QVBoxLayout(this);
-        auto* topRow = new QHBoxLayout;
+        auto* detailsGrid = new QGridLayout;
+        detailsGrid->setHorizontalSpacing(12);
+        detailsGrid->setVerticalSpacing(10);
         idEdit = new QLineEdit(order.id);
         idEdit->setPlaceholderText("Indtast eller indsæt ordre-ID...");
         idEdit->setClearButtonEnabled(true);
@@ -1474,15 +1571,31 @@ public:
         dateEdit->setLocale(QLocale(QLocale::Danish, QLocale::Denmark));
         dateEdit->setMinimumWidth(190);
         dateEdit->setMinimumHeight(42);
+        initialsEdit = new QLineEdit(order.sellerInitials);
+        initialsEdit->setPlaceholderText("Fx 5RVPTN");
+        cvrEdit = new QLineEdit(order.cvrNumber);
+        cvrEdit->setPlaceholderText("CVR-nr.");
+        companyNameEdit = new QLineEdit(order.companyName);
+        companyNameEdit->setPlaceholderText("Firmanavn");
+        phoneEdit = new QLineEdit(order.phoneNumber);
+        phoneEdit->setPlaceholderText("Telefonnummer");
         noteEdit = new QLineEdit(order.note);
         noteEdit->setPlaceholderText("Valgfri note til ordren");
-        topRow->addWidget(new QLabel("Ordre-ID:"));
-        topRow->addWidget(idEdit, 2);
-        topRow->addWidget(new QLabel("Dato/tid:"));
-        topRow->addWidget(dateEdit, 1);
-        topRow->addWidget(new QLabel("Note:"));
-        topRow->addWidget(noteEdit, 3);
-        mainLayout->addLayout(topRow);
+        detailsGrid->addWidget(new QLabel("Dato/tid:"), 0, 0);
+        detailsGrid->addWidget(dateEdit, 0, 1);
+        detailsGrid->addWidget(new QLabel("Initialer:"), 0, 2);
+        detailsGrid->addWidget(initialsEdit, 0, 3);
+        detailsGrid->addWidget(new QLabel("Ordre nummer:"), 0, 4);
+        detailsGrid->addWidget(idEdit, 0, 5);
+        detailsGrid->addWidget(new QLabel("CVR-nr.:"), 1, 0);
+        detailsGrid->addWidget(cvrEdit, 1, 1);
+        detailsGrid->addWidget(new QLabel("Firmanavn:"), 1, 2);
+        detailsGrid->addWidget(companyNameEdit, 1, 3);
+        detailsGrid->addWidget(new QLabel("Telefon:"), 1, 4);
+        detailsGrid->addWidget(phoneEdit, 1, 5);
+        detailsGrid->addWidget(new QLabel("Note:"), 2, 0);
+        detailsGrid->addWidget(noteEdit, 2, 1, 1, 5);
+        mainLayout->addLayout(detailsGrid);
 
         // ===== FAVORITTER CARD =====
         auto favCard = createCard("Dine favoritter");
@@ -1589,6 +1702,19 @@ public:
                 QMessageBox::warning(this, "Manglende ordre-ID", "Du skal indtaste eller indsætte et ordre-ID.");
                 return;
             }
+            order.sellerInitials = initialsEdit->text().trimmed();
+            order.cvrNumber = cvrEdit->text().trimmed();
+            order.companyName = companyNameEdit->text().trimmed();
+            order.phoneNumber = phoneEdit->text().trimmed();
+            if (order.sellerInitials.isEmpty() || order.cvrNumber.isEmpty()
+                || order.companyName.isEmpty() || order.phoneNumber.isEmpty()) {
+                QMessageBox::warning(
+                    this,
+                    "Manglende ordreoplysninger",
+                    "Du skal udfylde initialer, CVR-nr., firmanavn og telefonnummer."
+                    );
+                return;
+            }
             order.createdAt = dateEdit->dateTime();
             order.note = noteEdit->text().trimmed();
             order.items.clear();
@@ -1617,6 +1743,10 @@ private:
     Order order;
     QLineEdit* idEdit = nullptr;
     QDateTimeEdit* dateEdit = nullptr;
+    QLineEdit* initialsEdit = nullptr;
+    QLineEdit* cvrEdit = nullptr;
+    QLineEdit* companyNameEdit = nullptr;
+    QLineEdit* phoneEdit = nullptr;
     QLineEdit* noteEdit = nullptr;
     QTableWidget* table = nullptr;
 
@@ -1988,6 +2118,11 @@ private:
     QLineEdit* intramanagerPasswordEdit = nullptr;
     QCheckBox* intramanagerEnabledCheck = nullptr;
     QLabel* intramanagerStatusLabel = nullptr;
+    QLineEdit* defaultSellerInitialsEdit = nullptr;
+    QLineEdit* salesRegistrationWebhookEdit = nullptr;
+    QLineEdit* salesRegistrationRecipientEdit = nullptr;
+    QCheckBox* salesRegistrationEnabledCheck = nullptr;
+    QLabel* salesRegistrationStatusLabel = nullptr;
 
     struct IntramanagerFetchResult {
         bool success = false;
@@ -2139,6 +2274,17 @@ private:
 
         result.success = true;
         return result;
+    }
+
+    QString friendlyPunchError(const QString& rawError) const {
+        const QString text = rawError.trimmed();
+        const QString lower = text.toLower();
+        if (lower.contains("kontorets") || lower.contains("kontor")
+            || lower.contains("ip-adresse") || lower.contains("ip adresse")
+            || lower.contains("forbidden") || lower.contains("permission")) {
+            return "Man kan kun stemple ind eller ud på kontorets internet.";
+        }
+        return text.isEmpty() ? "Ukendt fejl ved stempelstatus." : text;
     }
 
     void rememberIntramanagerHours(const QString& fromDate, const QString& toDate, double hours, double phoneHours) {
@@ -2420,12 +2566,19 @@ private:
                     const IntramanagerPunchResult result = parseIntramanagerPunchWorkerOutput(stdoutData, stderrData);
 
                     if (!result.success) {
-                        repo.settings.intramanagerPunch.known = false;
-                        repo.settings.intramanagerPunch.detail = result.error;
-                        repo.settings.intramanagerPunch.syncedAt = QDateTime::currentDateTime().toString(Qt::ISODate);
+                        const QString friendlyError = friendlyPunchError(result.error);
+                        if (result.statusKnown) {
+                            IntramanagerPunchResult remembered = result;
+                            remembered.detail = friendlyError;
+                            rememberIntramanagerPunchState(remembered);
+                        } else {
+                            repo.settings.intramanagerPunch.known = false;
+                            repo.settings.intramanagerPunch.detail = friendlyError;
+                            repo.settings.intramanagerPunch.syncedAt = QDateTime::currentDateTime().toString(Qt::ISODate);
+                        }
                         repo.saveSettings();
                         refreshPunchCardUi();
-                        if (!silent) QMessageBox::warning(this, "Intramanager", result.error);
+                        if (!silent) QMessageBox::warning(this, "Intramanager", friendlyError);
                         if (afterFetch) afterFetch(false);
                         return;
                     }
@@ -3220,6 +3373,41 @@ QTableWidget::item {
 
         left->addWidget(intramanagerCard.first, 1);
 
+        auto salesRegistrationCard = createCard("Salgsregistrering");
+        auto* salesRegForm = new QFormLayout;
+        salesRegForm->setSpacing(12);
+
+        defaultSellerInitialsEdit = new QLineEdit;
+        defaultSellerInitialsEdit->setPlaceholderText("Standard initialer ved nye ordrer");
+
+        salesRegistrationWebhookEdit = new QLineEdit;
+        salesRegistrationWebhookEdit->setPlaceholderText("Power Automate webhook URL");
+
+        salesRegistrationRecipientEdit = new QLineEdit;
+        salesRegistrationRecipientEdit->setPlaceholderText("Mail der skal modtage salgs-reg");
+
+        salesRegistrationEnabledCheck = new QCheckBox("Send salgs-reg automatisk ved ny ordre");
+        salesRegistrationEnabledCheck->setFocusPolicy(Qt::NoFocus);
+
+        auto* saveSalesRegistrationBtn = new QPushButton("Gem salgsregistrering");
+        auto* testSalesRegistrationBtn = new QPushButton("Test webflow");
+
+        salesRegistrationStatusLabel = new QLabel("Sender salgs-reg til en webflow, der opdaterer Excel Online og Outlook.");
+        salesRegistrationStatusLabel->setWordWrap(true);
+        salesRegistrationStatusLabel->setTextInteractionFlags(Qt::NoTextInteraction);
+
+        salesRegForm->addRow("Sælger initialer", defaultSellerInitialsEdit);
+        salesRegForm->addRow("Webhook URL", salesRegistrationWebhookEdit);
+        salesRegForm->addRow("Modtager-mail", salesRegistrationRecipientEdit);
+        salesRegForm->addRow(salesRegistrationEnabledCheck);
+        salesRegForm->addRow(saveSalesRegistrationBtn);
+        salesRegForm->addRow(testSalesRegistrationBtn);
+        salesRegForm->addRow("Status", salesRegistrationStatusLabel);
+
+        salesRegistrationCard.second->addLayout(salesRegForm);
+        salesRegistrationCard.second->addStretch();
+        left->addWidget(salesRegistrationCard.first, 1);
+
         auto* right = new QVBoxLayout;
         right->setSpacing(18);
 
@@ -3289,6 +3477,26 @@ QTableWidget::item {
             refreshAll();
             setupIntramanagerAutoSync();
             refreshIntramanagerPunchStatusAsync(true);
+        });
+
+        connect(saveSalesRegistrationBtn, &QPushButton::clicked, this, [this]() {
+            repo.settings.defaultSellerInitials = defaultSellerInitialsEdit->text().trimmed();
+            repo.settings.salesRegistrationWebhookUrl = salesRegistrationWebhookEdit->text().trimmed();
+            repo.settings.salesRegistrationRecipient = salesRegistrationRecipientEdit->text().trimmed();
+            repo.settings.salesRegistrationEnabled = salesRegistrationEnabledCheck->isChecked();
+            repo.saveSettings();
+            if (salesRegistrationStatusLabel) {
+                salesRegistrationStatusLabel->setText("Salgsregistrering er gemt.");
+            }
+        });
+
+        connect(testSalesRegistrationBtn, &QPushButton::clicked, this, [this]() {
+            repo.settings.defaultSellerInitials = defaultSellerInitialsEdit->text().trimmed();
+            repo.settings.salesRegistrationWebhookUrl = salesRegistrationWebhookEdit->text().trimmed();
+            repo.settings.salesRegistrationRecipient = salesRegistrationRecipientEdit->text().trimmed();
+            repo.settings.salesRegistrationEnabled = salesRegistrationEnabledCheck->isChecked();
+            repo.saveSettings();
+            testSalesRegistrationWebhookAsync();
         });
 
         connect(addSellerBtn, &QPushButton::clicked, this, [this, sellerNameEdit]() {
@@ -3904,7 +4112,255 @@ QTableWidget::item {
             intramanagerStatusLabel->setText("Timer hentes automatisk, når rapporter har brug for dem.");
         }
 
+        if (defaultSellerInitialsEdit) {
+            defaultSellerInitialsEdit->setText(repo.settings.defaultSellerInitials);
+        }
+        if (salesRegistrationWebhookEdit) {
+            salesRegistrationWebhookEdit->setText(repo.settings.salesRegistrationWebhookUrl);
+        }
+        if (salesRegistrationRecipientEdit) {
+            salesRegistrationRecipientEdit->setText(repo.settings.salesRegistrationRecipient);
+        }
+        if (salesRegistrationEnabledCheck) {
+            salesRegistrationEnabledCheck->setChecked(repo.settings.salesRegistrationEnabled);
+        }
+        if (salesRegistrationStatusLabel) {
+            salesRegistrationStatusLabel->setText("Sender salgs-reg til en webflow, der opdaterer Excel Online og Outlook.");
+        }
+
         refreshPunchCardUi();
+    }
+
+    QStringList salesRegistrationAliases(const Product& product) const {
+        QStringList aliases;
+        aliases << product.displayName << product.key;
+
+        QString trimmed = product.displayName;
+        trimmed.remove("Tillæg ", Qt::CaseInsensitive);
+        trimmed.remove("Mobil ", Qt::CaseInsensitive);
+        trimmed.remove("Mobilt bredbånd ", Qt::CaseInsensitive);
+        trimmed.remove("mdr", Qt::CaseInsensitive);
+        aliases << trimmed.trimmed();
+
+        if (product.key == "til_1000gb_data") {
+            aliases << "1000GB data" << "1000 GB data" << "Add-on" << "Addon";
+        } else if (product.key == "til_true_talk_firma") {
+            aliases << "TrueTalk Firma/Agent" << "TrueTalk Firma + Agent" << "Truetalk firma";
+        }
+
+        aliases.removeDuplicates();
+        return aliases;
+    }
+
+    QString salesRegistrationCategoryColor(const QString& category) const {
+        if (category.compare("Mobil", Qt::CaseInsensitive) == 0) return "#92D050";
+        if (category.compare("Tillæg", Qt::CaseInsensitive) == 0) return "#FFC000";
+        if (category.compare("Mobilt bredbånd", Qt::CaseInsensitive) == 0) return "#00B0F0";
+        if (category.compare("FWA", Qt::CaseInsensitive) == 0) return "#ED7D31";
+        if (category.compare("Fiber", Qt::CaseInsensitive) == 0) return "#FF66A1";
+        return "#BFBFBF";
+    }
+
+    QString htmlEscape(const QString& text) const {
+        QString out = text;
+        out.replace("&", "&amp;");
+        out.replace("<", "&lt;");
+        out.replace(">", "&gt;");
+        out.replace("\"", "&quot;");
+        return out;
+    }
+
+    QString salesRegistrationMailHtml(const Order& order) const {
+        QMap<QString, int> quantities;
+        for (const auto& item : order.items) {
+            quantities[item.productKey] += item.quantity;
+        }
+
+        QString html = "<table style=\"border-collapse:collapse;font-family:Arial,sans-serif;font-size:11px;\">";
+        html += "<tr>";
+        const QString fixedHeaderStyle = "border:1px solid #111;padding:4px 6px;background:#A6A6A6;color:#111;font-weight:700;white-space:nowrap;";
+        const QStringList fixedHeaders = {"Dato", "Initialer", "OSE-nr", "Cvr nr.", "Firmanavn", "Telefon"};
+        for (const QString& header : fixedHeaders) {
+            html += "<th style=\"" + fixedHeaderStyle + "\">" + htmlEscape(header) + "</th>";
+        }
+        for (const auto& product : repo.products) {
+            const QString style = "border:1px solid #111;padding:4px 6px;background:" + salesRegistrationCategoryColor(product.category)
+                + ";color:#111;font-weight:700;white-space:nowrap;";
+            html += "<th style=\"" + style + "\">" + htmlEscape(product.displayName) + "</th>";
+        }
+        html += "</tr><tr>";
+
+        const QString valueStyle = "border:1px solid #111;padding:4px 6px;background:#fff;color:#111;white-space:nowrap;";
+        const QStringList fixedValues = {
+            order.createdAt.date().toString("dd.MM.yy"),
+            order.sellerInitials,
+            order.id,
+            order.cvrNumber,
+            order.companyName,
+            order.phoneNumber
+        };
+        for (const QString& value : fixedValues) {
+            html += "<td style=\"" + valueStyle + "\">" + htmlEscape(value) + "</td>";
+        }
+        for (const auto& product : repo.products) {
+            const int qty = quantities.value(product.key, 0);
+            html += "<td style=\"" + valueStyle + "\">" + (qty > 0 ? QString::number(qty) : QString()) + "</td>";
+        }
+        html += "</tr></table>";
+        return html;
+    }
+
+    QJsonObject salesRegistrationPayload(const Order& order) const {
+        QJsonArray items;
+        for (const auto& item : order.items) {
+            const Product* product = repo.findProduct(item.productKey);
+            if (!product) continue;
+
+            QJsonArray aliases;
+            for (const QString& alias : salesRegistrationAliases(*product)) {
+                if (!alias.trimmed().isEmpty()) aliases.append(alias.trimmed());
+            }
+
+            QJsonObject obj;
+            obj["key"] = product->key;
+            obj["productName"] = product->displayName;
+            obj["category"] = product->category;
+            obj["quantity"] = item.quantity;
+            obj["points"] = product->points;
+            obj["aliases"] = aliases;
+            items.append(obj);
+        }
+
+        QJsonObject payload;
+        payload["source"] = "Provi Tracker";
+        payload["type"] = "sales_registration";
+        payload["recipient"] = repo.settings.salesRegistrationRecipient;
+        payload["createdAt"] = QDateTime::currentDateTime().toString(Qt::ISODate);
+        payload["date"] = order.createdAt.date().toString("dd.MM.yy");
+        payload["sellerInitials"] = order.sellerInitials;
+        payload["orderNumber"] = order.id;
+        payload["cvrNumber"] = order.cvrNumber;
+        payload["companyName"] = order.companyName;
+        payload["phoneNumber"] = order.phoneNumber;
+        payload["note"] = order.note;
+        payload["items"] = items;
+        payload["mailSubject"] = QString("Salgs reg - %1 - %2").arg(order.companyName, order.id);
+        payload["mailHtml"] = salesRegistrationMailHtml(order);
+        return payload;
+    }
+
+    bool prepareSalesRegistrationWebhook(QUrl* urlOut, QString* errorOut) const {
+        const QUrl webhookUrl(repo.settings.salesRegistrationWebhookUrl.trimmed());
+        if (!webhookUrl.isValid() || webhookUrl.scheme().isEmpty()
+            || (webhookUrl.scheme() != "https" && webhookUrl.scheme() != "http")
+            || repo.settings.salesRegistrationRecipient.trimmed().isEmpty()) {
+            if (errorOut) {
+                *errorOut = "Salgsregistrering mangler webhook URL eller modtager-mail.";
+            }
+            return false;
+        }
+
+        if (urlOut) {
+            *urlOut = webhookUrl;
+        }
+        return true;
+    }
+
+    void postSalesRegistrationPayloadAsync(
+        const QJsonObject& payload,
+        const QString& sendingText,
+        const QString& defaultSuccessText,
+        bool showWarnings
+        ) {
+        QUrl webhookUrl;
+        QString configError;
+        if (!prepareSalesRegistrationWebhook(&webhookUrl, &configError)) {
+            if (salesRegistrationStatusLabel) {
+                salesRegistrationStatusLabel->setText(configError);
+            }
+            return;
+        }
+
+        if (salesRegistrationStatusLabel) {
+            salesRegistrationStatusLabel->setText(sendingText);
+        }
+
+        auto* manager = new QNetworkAccessManager(this);
+        QNetworkRequest request(webhookUrl);
+        request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json; charset=utf-8");
+        request.setTransferTimeout(60000);
+
+        const QByteArray body = QJsonDocument(payload).toJson(QJsonDocument::Compact);
+        QNetworkReply* reply = manager->post(request, body);
+
+        connect(reply, &QNetworkReply::finished, this, [this, manager, reply, defaultSuccessText, showWarnings]() {
+            const int statusCode = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+            const QByteArray responseBody = reply->readAll();
+            const QString networkError = reply->errorString();
+            const bool ok = reply->error() == QNetworkReply::NoError && statusCode >= 200 && statusCode < 300;
+
+            reply->deleteLater();
+            manager->deleteLater();
+
+            if (!ok) {
+                const QString message = QString("Salgs-reg kunne ikke sendes til webflow (%1).").arg(statusCode > 0 ? QString::number(statusCode) : networkError);
+                if (salesRegistrationStatusLabel) salesRegistrationStatusLabel->setText(message);
+                if (showWarnings) {
+                    QMessageBox::warning(this, "Salgsregistrering", message + "\n\n" + QString::fromUtf8(responseBody));
+                }
+                return;
+            }
+
+            QString message = defaultSuccessText;
+            QJsonParseError err;
+            const auto doc = QJsonDocument::fromJson(responseBody, &err);
+            if (err.error == QJsonParseError::NoError && doc.isObject()) {
+                const QString flowMessage = doc.object().value("message").toString();
+                if (!flowMessage.isEmpty()) {
+                    message = flowMessage;
+                }
+            }
+            if (salesRegistrationStatusLabel) salesRegistrationStatusLabel->setText(message);
+        });
+    }
+
+    void submitSalesRegistrationAsync(const Order& order) {
+        if (!repo.settings.salesRegistrationEnabled) {
+            return;
+        }
+
+        postSalesRegistrationPayloadAsync(
+            salesRegistrationPayload(order),
+            "Salgs-reg sendes til webflow...",
+            "Salgs-reg sendt til webflow.",
+            true
+            );
+    }
+
+    void testSalesRegistrationWebhookAsync() {
+        Order sample;
+        sample.id = "TEST-" + QDateTime::currentDateTime().toString("yyyyMMddHHmmss");
+        sample.salespersonId = repo.settings.activeSalespersonId;
+        sample.sellerInitials = repo.settings.defaultSellerInitials.isEmpty() ? "TEST" : repo.settings.defaultSellerInitials;
+        sample.cvrNumber = "00000000";
+        sample.companyName = "Webhook test";
+        sample.phoneNumber = "00000000";
+        sample.createdAt = QDateTime::currentDateTime();
+        sample.note = "Test fra Provi Tracker";
+        if (!repo.products.isEmpty()) {
+            sample.items.push_back({repo.products.first().key, 1});
+        }
+
+        QJsonObject payload = salesRegistrationPayload(sample);
+        payload["type"] = "sales_registration_test";
+        payload["isTest"] = true;
+
+        postSalesRegistrationPayloadAsync(
+            payload,
+            "Tester webflow...",
+            "Webflow test OK.",
+            true
+            );
     }
 
     void createOrder() {
@@ -3912,8 +4368,10 @@ QTableWidget::item {
         if (!s) return;
         OrderEditorDialog dlg(repo, s->id, std::nullopt, this);
         if (dlg.exec() == QDialog::Accepted) {
-            repo.orders.push_back(dlg.getOrder());
+            const Order order = dlg.getOrder();
+            repo.orders.push_back(order);
             repo.saveOrders();
+            submitSalesRegistrationAsync(order);
             refreshAll();
         }
     }

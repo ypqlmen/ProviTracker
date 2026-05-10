@@ -9,6 +9,26 @@ BASE_URL = "https://5r.intramanager.com/"
 LOGIN_URL = BASE_URL + "reports/history/"
 HISTORY_URL = BASE_URL + "reports/history/"
 PUNCH_URL = BASE_URL + "reports/punch-in/"
+OFFICE_ONLY_MESSAGE = "Man kan kun stemple ind eller ud på kontorets internet."
+
+
+def looks_office_only(text):
+    haystack = (text or "").lower()
+    markers = [
+        "ip-adresse",
+        "ip adresse",
+        "kontor",
+        "kontorets",
+        "netværk",
+        "netvaerk",
+        "adgang nægtet",
+        "adgang naegtet",
+        "ikke tilladt",
+        "not allowed",
+        "permission",
+        "forbidden",
+    ]
+    return any(marker in haystack for marker in markers)
 
 
 def output(obj):
@@ -383,6 +403,20 @@ def toggle_punch(page, args, debug_dir):
     except PlaywrightTimeoutError:
         pass
 
+    page_html = page.content()
+    if looks_office_only(page_html):
+        (debug_dir / "punch_office_only.html").write_text(
+            page_html,
+            encoding="utf-8"
+        )
+        return {
+            "success": False,
+            "stage": "punch_toggle",
+            "error": OFFICE_ONLY_MESSAGE,
+            "debugDir": str(debug_dir),
+            **before
+        }
+
     clicked = click_first_available(page, [
         'button:has-text("Stempel")',
         'button:has-text("Stempl")',
@@ -422,7 +456,7 @@ def toggle_punch(page, args, debug_dir):
         return {
             "success": False,
             "stage": "punch_toggle",
-            "error": "Intramanager svarede, men stempelstatus ændrede sig ikke.",
+            "error": OFFICE_ONLY_MESSAGE if not clicked else "Intramanager svarede, men stempelstatus ændrede sig ikke.",
             "debugDir": str(debug_dir),
             **after
         }
