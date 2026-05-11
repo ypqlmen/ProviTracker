@@ -361,6 +361,11 @@ def read_punch_state_from_history(page, target_date, debug_dir, prefix):
     search_history(page, target_date, target_date, debug_dir, prefix)
 
     rows = []
+    target_variants = {
+        target_date,
+        target_date.replace("-", "."),
+        target_date.replace("-", "/"),
+    }
 
     try:
         table_rows = page.locator("#main table tbody tr")
@@ -372,11 +377,28 @@ def read_punch_state_from_history(page, target_date, debug_dir, prefix):
             if len(cells) < 2:
                 continue
 
-            time_parts = text_lines(cells[1])
-            start_value = time_parts[0] if len(time_parts) >= 1 else ""
-            stop_value = time_parts[1] if len(time_parts) >= 2 else ""
+            row_lines = text_lines("\n".join(cells))
+            date_lines = [
+                line for line in row_lines
+                if any(variant in line for variant in target_variants)
+            ]
 
-            if not start_value.startswith(target_date):
+            start_value = date_lines[0] if len(date_lines) >= 1 else ""
+            stop_value = date_lines[1] if len(date_lines) >= 2 else ""
+
+            if not stop_value and start_value:
+                try:
+                    start_index = row_lines.index(start_value)
+                    trailing = row_lines[start_index + 1:]
+                    for candidate in trailing:
+                        lowered = candidate.lower()
+                        if lowered in {"-", "nu", "aktiv", "i gang", "igang"}:
+                            stop_value = candidate
+                            break
+                except ValueError:
+                    pass
+
+            if not start_value:
                 continue
 
             rows.append({
@@ -419,9 +441,135 @@ def read_punch_state_from_history(page, target_date, debug_dir, prefix):
     }
 
 
+def read_punch_state_from_punch_page(page, debug_dir, prefix):
+    page.screenshot(
+        path=str(debug_dir / f"{prefix}_page.png"),
+        full_page=True
+    )
+
+    page_html = page.content()
+    (debug_dir / f"{prefix}_page.html").write_text(
+        page_html,
+        encoding="utf-8"
+    )
+
+    if looks_office_only(page_html):
+        return {
+            "success": False,
+            "statusKnown": False,
+            "error": OFFICE_ONLY_MESSAGE,
+        }
+
+    try:
+        body_text = clean_text(page.locator("body").inner_text())
+    except Exception:
+        body_text = clean_text(page_html)
+
+    lower = body_text.lower()
+
+    button_texts = []
+    try:
+        buttons = page.locator("button, input[type='submit'], a.btn")
+        for i in range(buttons.count()):
+            text = ""
+            value = ""
+
+            try:
+                text = clean_text(buttons.nth(i).inner_text())
+            except Exception:
+                text = ""
+
+            try:
+                value = clean_text(buttons.nth(i).get_attribute("value") or "")
+            except Exception:
+                value = ""
+
+            combined = clean_text(text or value)
+            if combined:
+                button_texts.append(combined)
+    except Exception:
+        button_texts = []
+
+    buttons_lower = " ".join(button_texts).lower()
+    known = False
+    clocked_in = False
+
+    if "stemplet ind" in lower or "stempel ud" in buttons_lower or "stempl ud" in buttons_lower:
+        known = True
+        clocked_in = True
+    elif "stemplet ud" in lower or "stempel ind" in buttons_lower or "stempl ind" in buttons_lower:
+        known = True
+        clocked_in = False
+    elif "stop" in buttons_lower:
+        known = True
+        clocked_in = True
+    elif "start" in buttons_lower:
+        known = True
+        clocked_in = False
+
+    if not known:
+        return {
+            "success": True,
+            "statusKnown": False,
+            "clockedIn": False,
+            "statusText": "Status ukendt",
+            "detail": "Intramanager-stempelsiden blev hentet, men status kunne ikke afl??ses.",
+            "lastStart": "",
+            "lastStop": "",
+        }
+
+    status_text = "Stemplet ind" if clocked_in else "Stemplet ud"
+    detail = "Status afl??st fra Intramanager-stempelsiden."
+
+    return {
+        "success": True,
+        "statusKnown": True,
+        "clockedIn": clocked_in,
+        "statusText": status_text,
+        "detail": detail,
+        "lastStart": "",
+        "lastStop": "",
+    }
+
+
+def load_punch_page_state(page, debug_dir, prefix):
+    page.goto(
+        PUNCH_URL,
+        wait_until="domcontentloaded",
+        timeout=60000
+    )
+
+    page.wait_for_timeout(2500)
+
+    try:
+        page.wait_for_load_state("networkidle", timeout=30000)
+    except PlaywrightTimeoutError:
+        pass
+
+    return read_punch_state_from_punch_page(page, debug_dir, prefix)
+
+
 def fetch_punch_status(page, args, debug_dir):
     today = normalise_date(args.on_date)
-    state = read_punch_state_from_history(page, today, debug_dir, "punch_status")
+    page_state = load_punch_page_state(page, debug_dir, "punch_status_page")
+
+    if not page_state.get("success", True):
+        return {
+            "success": False,
+            "stage": "punch_status",
+            "debugDir": str(debug_dir),
+            **page_state
+        }
+
+    if page_state.get("statusKnown"):
+        return {
+            "success": True,
+            "stage": "punch_status",
+            "debugDir": str(debug_dir),
+            **page_state
+        }
+
+    state = read_punch_state_from_history(page, today, debug_dir, "punch_status_history")
     return {
         "success": True,
         "stage": "punch_status",
@@ -447,40 +595,42 @@ def click_first_available(page, selectors):
 
 def toggle_punch(page, args, debug_dir):
     today = normalise_date(args.on_date)
-    before = read_punch_state_from_history(page, today, debug_dir, "punch_before")
+    history_before = read_punch_state_from_history(page, today, debug_dir, "punch_before_history")
+    page_before = load_punch_page_state(page, debug_dir, "punch_before_page")
 
-    page.goto(
-        PUNCH_URL,
-        wait_until="domcontentloaded",
-        timeout=60000
-    )
-
-    page.wait_for_timeout(2500)
-
-    try:
-        page.wait_for_load_state("networkidle", timeout=30000)
-    except PlaywrightTimeoutError:
-        pass
-
-    page_html = page.content()
-    if looks_office_only(page_html):
-        (debug_dir / "punch_office_only.html").write_text(
-            page_html,
-            encoding="utf-8"
-        )
+    if not page_before.get("success", True):
         return {
             "success": False,
             "stage": "punch_toggle",
-            "error": OFFICE_ONLY_MESSAGE,
             "debugDir": str(debug_dir),
-            **before
+            **history_before,
+            **page_before,
         }
 
-    clicked = click_first_available(page, [
+    before = page_before if page_before.get("statusKnown") else history_before
+
+    if before.get("clockedIn"):
+        preferred_selectors = [
+            'button:has-text("Stempel ud")',
+            'button:has-text("Stempl ud")',
+            'input[value*="Stempel ud"]',
+            'input[value*="Stempl ud"]',
+            'button:has-text("Stop")',
+            'input[value*="Stop"]',
+        ]
+    else:
+        preferred_selectors = [
+            'button:has-text("Stempel ind")',
+            'button:has-text("Stempl ind")',
+            'input[value*="Stempel ind"]',
+            'input[value*="Stempl ind"]',
+            'button:has-text("Start")',
+            'input[value*="Start"]',
+        ]
+
+    clicked = click_first_available(page, preferred_selectors + [
         'button:has-text("Stempel")',
         'button:has-text("Stempl")',
-        'button:has-text("Start")',
-        'button:has-text("Stop")',
         'button[type="submit"]',
         'input[type="submit"]',
     ])
@@ -503,7 +653,17 @@ def toggle_punch(page, args, debug_dir):
         encoding="utf-8"
     )
 
-    after = read_punch_state_from_history(page, today, debug_dir, "punch_after")
+    page_after = read_punch_state_from_punch_page(page, debug_dir, "punch_after_page")
+    if not page_after.get("success", True):
+        return {
+            "success": False,
+            "stage": "punch_toggle",
+            "debugDir": str(debug_dir),
+            **history_before,
+            **page_after,
+        }
+
+    after = page_after if page_after.get("statusKnown") else read_punch_state_from_history(page, today, debug_dir, "punch_after_history")
 
     changed = (
         before.get("statusKnown")

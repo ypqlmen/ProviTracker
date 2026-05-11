@@ -1,8 +1,8 @@
 #define MyAppName "Provi Tracker"
 #define MyAppExeName "ProvisionTrackerV2.exe"
 #define MyAppPublisher "Victor Tang"
-#define MyAppVersion "1.3.11"
-#define MySetupBaseName "ProviBeregnerSetup-1.3.11"
+#define MyAppVersion "1.3.12"
+#define MySetupBaseName "ProviBeregnerSetup-1.3.12"
 #ifndef BuildDir
   #define BuildDir "..\build\installer_staging"
 #endif

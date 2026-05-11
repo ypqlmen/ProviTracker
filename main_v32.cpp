@@ -48,7 +48,7 @@ static void initAutoUpdate()
 
     if (init && set_url && set_details) {
         set_url("https://raw.githubusercontent.com/ypqlmen/ProviTracker/main/appcast.xml");
-        set_details(L"Victor Tang", L"Provi Tracker", L"1.3.11");
+        set_details(L"Victor Tang", L"Provi Tracker", L"1.3.12");
         init();
     }
 }
@@ -1302,6 +1302,16 @@ static QPair<QDateTime, QDateTime> payrollBonusRange(const QDate& date) {
     };
 }
 
+static QPair<QDateTime, QDateTime> payrollRangeEndingInMonth(const QDate& date) {
+    const QDate end(date.year(), date.month(), 20);
+    const QDate start = end.addMonths(-1).addDays(1);
+
+    return {
+        QDateTime(start, QTime(0, 0, 0)),
+        QDateTime(end, QTime(23, 59, 59))
+    };
+}
+
 static QPair<QDateTime, QDateTime> workWeekRange(const QDate& date) {
     const int dayOfWeek = date.dayOfWeek();
     const QDate monday = date.addDays(1 - dayOfWeek);
@@ -2247,6 +2257,7 @@ private:
     bool intramanagerPunchRunning = false;
     QTimer* intramanagerAutoSyncTimer = nullptr;
     QSet<QString> intramanagerPendingFetchKeys;
+    QMap<QString, QDateTime> intramanagerReportRefreshRequestedAt;
 
     QDoubleSpinBox* hourlyRateSpin = nullptr;
     QLineEdit* intramanagerUsernameEdit = nullptr;
@@ -2530,18 +2541,18 @@ private:
             return;
         }
 
-        intramanagerAutoSyncTimer = new QTimer(this);
-        intramanagerAutoSyncTimer->setInterval(15 * 60 * 1000);
-
-        connect(intramanagerAutoSyncTimer, &QTimer::timeout, this, [this]() {
-            refreshCurrentIntramanagerStateAsync();
-        });
-
-        intramanagerAutoSyncTimer->start();
-
         QTimer::singleShot(2500, this, [this]() {
             refreshCurrentIntramanagerStateAsync();
         });
+
+        intramanagerAutoSyncTimer = new QTimer(this);
+        intramanagerAutoSyncTimer->setInterval(5 * 60 * 1000);
+
+        connect(intramanagerAutoSyncTimer, &QTimer::timeout, this, [this]() {
+            refreshIntramanagerPunchStatusAsync(true);
+        });
+
+        intramanagerAutoSyncTimer->start();
     }
 
     void fetchIntramanagerHoursAsync(
@@ -4979,41 +4990,79 @@ QTableWidget::item {
         QString label;
         QDateTime from;
         QDateTime to;
+        QDateTime hoursFrom;
+        QDateTime hoursTo;
+        QDateTime dayBonusFrom;
+        QDateTime dayBonusTo;
     };
+
+    ReportRange makeReportRange(
+        const QString& label,
+        const QPair<QDateTime, QDateTime>& commissionRange,
+        std::optional<QPair<QDateTime, QDateTime>> payrollRange = std::nullopt
+        ) const {
+        const auto salaryRange = payrollRange.value_or(commissionRange);
+        return {
+            label,
+            commissionRange.first,
+            commissionRange.second,
+            salaryRange.first,
+            salaryRange.second,
+            salaryRange.first,
+            salaryRange.second
+        };
+    }
 
     ReportRange currentReportRange() const {
         const QDate now = QDate::currentDate();
 
         switch (reportPresetCombo->currentIndex()) {
             case 0:
-                return {"I dag", QDateTime(now, QTime(0,0,0)), QDateTime(now, QTime(23,59,59))};
+                return makeReportRange(
+                    "I dag",
+                    {QDateTime(now, QTime(0,0,0)), QDateTime(now, QTime(23,59,59))}
+                    );
 
             case 1: {
                 const auto r = workWeekRange(now);
-                return {"Denne arbejdsuge", r.first, r.second};
+                return makeReportRange("Denne arbejdsuge", r);
             }
 
             case 2: {
                 const auto r = previousAndCurrentWorkWeeksRange(now);
-                return {"Seneste 2 arbejdsuger", r.first, r.second};
+                return makeReportRange("Seneste 2 arbejdsuger", r);
             }
 
             case 3: {
+                {
+                    const auto r = monthRange(now);
+                    const auto salaryRange = payrollBonusRange(now);
+                    return makeReportRange("Denne m?ned", r, salaryRange);
+                }
                 const auto r = payrollBonusRange(now);
                 return {"Denne l?nm?ned", r.first, r.second};
             }
 
             case 4:
             default: {
+                {
+                    const auto r = monthRange(reportMonthEdit->date());
+                    const auto salaryRange = payrollRangeEndingInMonth(reportMonthEdit->date());
+                    return makeReportRange(monthKey(reportMonthEdit->date()), r, salaryRange);
+                }
                 const auto r = monthRange(reportMonthEdit->date());
                 return {monthKey(reportMonthEdit->date()), r.first, r.second};
             }
         }
     }
 
-    // Rapporten bruger timer for den valgte UI-periode, ikke bare "sidst hentet".
+    // Maanedsprovision bruger kalenderm?neden; timer og dagspointbonus f?lger l?nperioden 21.-20.
     QPair<QString, QString> reportHoursDates(const ReportRange& range) const {
-        return {intramanagerDate(range.from.date()), intramanagerDate(range.to.date())};
+        return {intramanagerDate(range.hoursFrom.date()), intramanagerDate(range.hoursTo.date())};
+    }
+
+    QPair<QDateTime, QDateTime> reportDayBonusPeriod(const ReportRange& range) const {
+        return {range.dayBonusFrom, range.dayBonusTo};
     }
 
     QString reportHoursKey(const ReportRange& range) const {
@@ -5052,7 +5101,7 @@ QTableWidget::item {
     }
 
     // Kun en worker pr. periode ad gangen; flere rapportopdateringer venter p? samme cache.
-    void requestReportHours(const ReportRange& range, std::function<void(bool)> afterFetch) {
+    void requestReportHours(const ReportRange& range, std::function<void(bool)> afterFetch, bool forceFetch = false) {
         if (!repo.settings.intramanagerEnabled) {
             if (afterFetch) afterFetch(false);
             return;
@@ -5061,12 +5110,17 @@ QTableWidget::item {
         const auto dates = reportHoursDates(range);
         const QString key = intramanagerPeriodKey(dates.first, dates.second);
 
+        if (!forceFetch && reportHoursForRange(range).has_value()) {
+            if (afterFetch) afterFetch(true);
+            return;
+        }
+
         if (intramanagerPendingFetchKeys.contains(key)) {
-            QTimer::singleShot(1500, this, [this, range, afterFetch]() {
-                if (reportHoursForRange(range).has_value()) {
+            QTimer::singleShot(1500, this, [this, range, afterFetch, forceFetch]() {
+                if (!forceFetch && reportHoursForRange(range).has_value()) {
                     if (afterFetch) afterFetch(true);
                 } else {
-                    requestReportHours(range, afterFetch);
+                    requestReportHours(range, afterFetch, forceFetch);
                 }
             });
             return;
@@ -5077,6 +5131,24 @@ QTableWidget::item {
             intramanagerPendingFetchKeys.remove(key);
             if (afterFetch) afterFetch(ok);
         });
+    }
+
+    void refreshCachedReportHoursIfNeeded(const ReportRange& range, const QString& requestedKey) {
+        if (!repo.settings.intramanagerEnabled) return;
+        if (!reportHoursForRange(range).has_value()) return;
+
+        const QDateTime nowUtc = QDateTime::currentDateTimeUtc();
+        const QDateTime lastRequested = intramanagerReportRefreshRequestedAt.value(requestedKey);
+        if (lastRequested.isValid() && lastRequested.secsTo(nowUtc) < 10 * 60) {
+            return;
+        }
+
+        intramanagerReportRefreshRequestedAt[requestedKey] = nowUtc;
+        requestReportHours(range, [this, requestedKey](bool ok) {
+            if (!ok) return;
+            if (reportHoursKey(currentReportRange()) != requestedKey) return;
+            generateReport();
+        }, true);
     }
 
     void generateReport() {
@@ -5115,7 +5187,9 @@ QTableWidget::item {
             return;
         }
 
-        const auto dayBonusPeriod = payrollBonusRange(range.to.date());
+        refreshCachedReportHoursIfNeeded(range, requestedKey);
+
+        const auto dayBonusPeriod = reportDayBonusPeriod(range);
 
         const auto m = CommissionEngine::calculate(
             repo,
@@ -5173,7 +5247,7 @@ QTableWidget::item {
             return;
         }
 
-        const auto dayBonusPeriod = payrollBonusRange(range.to.date());
+        const auto dayBonusPeriod = reportDayBonusPeriod(range);
 
         const auto m = CommissionEngine::calculate(
             repo,
