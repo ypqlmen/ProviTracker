@@ -9,7 +9,7 @@ BASE_URL = "https://5r.intramanager.com/"
 LOGIN_URL = BASE_URL + "reports/history/"
 HISTORY_URL = BASE_URL + "reports/history/"
 PUNCH_URL = BASE_URL + "reports/punch-in/"
-OFFICE_ONLY_MESSAGE = "Man kan kun stemple ind eller ud på kontorets internet."
+OFFICE_ONLY_MESSAGE = "Man kan kun stemple ind eller ud p? kontorets internet."
 
 
 def looks_office_only(text):
@@ -19,9 +19,9 @@ def looks_office_only(text):
         "ip adresse",
         "kontor",
         "kontorets",
-        "netværk",
+        "netv?rk",
         "netvaerk",
-        "adgang nægtet",
+        "adgang n?gtet",
         "adgang naegtet",
         "ikke tilladt",
         "not allowed",
@@ -247,6 +247,50 @@ def search_history(page, from_date, to_date, debug_dir, prefix):
     )
 
 
+def result_says_no_rows(page):
+    try:
+        main_text = clean_text(page.locator("#main").inner_text())
+    except Exception:
+        main_text = ""
+
+    return "intet blev fundet" in main_text.lower()
+
+
+def sum_hours_from_result_rows(page):
+    paid_hours = 0.0
+    phone_hours = 0.0
+    found_any = False
+
+    try:
+        rows = page.locator("#main tbody tr")
+
+        for i in range(rows.count()):
+            cells = rows.nth(i).locator("td").all_inner_texts()
+            if len(cells) < 3:
+                continue
+
+            hour_lines = text_lines(cells[2])
+            if not hour_lines:
+                continue
+
+            paid = parse_hours(hour_lines[0])
+            if paid is None:
+                continue
+
+            phone = parse_hours(hour_lines[1]) if len(hour_lines) >= 2 else 0.0
+            paid_hours += paid
+            phone_hours += phone or 0.0
+            found_any = True
+
+    except Exception:
+        return None, None
+
+    if not found_any:
+        return None, None
+
+    return round(paid_hours, 2), round(phone_hours, 2)
+
+
 def fetch_hours(page, args, debug_dir):
     search_history(page, args.from_date, args.to_date, debug_dir, "hours")
 
@@ -277,10 +321,25 @@ def fetch_hours(page, args, debug_dir):
         phone_hours = None
 
     if paid_hours is None:
+        paid_hours, phone_hours = sum_hours_from_result_rows(page)
+
+    if paid_hours is None and result_says_no_rows(page):
+        return {
+            "success": True,
+            "stage": "no_results",
+            "message": "Ingen timer fundet for perioden.",
+            "periodFrom": args.from_date,
+            "periodTo": args.to_date,
+            "hours": 0.0,
+            "phoneHours": 0.0,
+            "debugDir": str(debug_dir)
+        }
+
+    if paid_hours is None:
         return {
             "success": False,
             "stage": "parse_hours",
-            "error": "Kunne ikke finde total løntimer i resultattabellen.",
+            "error": "Kunne ikke finde total l?ntimer i resultattabellen.",
             "periodFrom": args.from_date,
             "periodTo": args.to_date,
             "debugDir": str(debug_dir)
@@ -334,7 +393,7 @@ def read_punch_state_from_history(page, target_date, debug_dir, prefix):
             "statusKnown": True,
             "clockedIn": False,
             "statusText": "Stemplet ud",
-            "detail": "Der er ikke fundet en åben stempling for i dag.",
+            "detail": "Der er ikke fundet en ?ben stempling for i dag.",
             "lastStart": "",
             "lastStop": ""
         }
@@ -456,7 +515,7 @@ def toggle_punch(page, args, debug_dir):
         return {
             "success": False,
             "stage": "punch_toggle",
-            "error": OFFICE_ONLY_MESSAGE if not clicked else "Intramanager svarede, men stempelstatus ændrede sig ikke.",
+            "error": OFFICE_ONLY_MESSAGE if not clicked else "Intramanager svarede, men stempelstatus ?ndrede sig ikke.",
             "debugDir": str(debug_dir),
             **after
         }
