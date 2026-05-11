@@ -30,7 +30,7 @@ Payloaden indeholder bl.a.:
 
 Et Power Automate-flow kan derfor bruge de faste felter til at oprette raekken i Excel Online og bruge `mailHtml` direkte som broedtekst i Outlook-mailen.
 
-Se `docs/power_automate_salgsregistrering.md` og `scripts/excel_online_sales_registration.ts` for den konkrete flow-opsaetning.
+Se `docs/power_automate_salgsregistrering.md`, `docs/microsoft_oauth_power_automate_setup.md` og `scripts/excel_online_sales_registration.ts` for den konkrete flow-opsaetning.
 
 ## Bonuslogik
 

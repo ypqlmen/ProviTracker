@@ -33,14 +33,14 @@ Scriptet finder kolonnerne ud fra overskrifter som `Dato`, `Initialer`, `OSE-nr`
 
 3. Tilfoej handlingen **Excel Online (Business) -> Run script**.
 4. Vaelg masterarket og scriptet `ProviTrackerSalesRegistration`.
-5. Sæt script-parameteren `payloadJson` til hele trigger body som string. Brug typisk udtrykket:
+5. S?t script-parameteren `payloadJson` til hele trigger body som string. Brug typisk udtrykket:
 
 ```text
 string(triggerBody())
 ```
 
 6. Tilfoej handlingen **Outlook -> Send an email (V2)**.
-7. Sæt **To** til `recipient`, **Subject** til `mailSubject`, og **Body** til `mailHtml`.
+7. S?t **To** til `recipient`, **Subject** til `mailSubject`, og **Body** til `mailHtml`.
 8. Slaa HTML-body til, hvis flow-designet viser den mulighed.
 9. Tilfoej handlingen **Response** med status `200` og body:
 
@@ -50,6 +50,8 @@ string(triggerBody())
 }
 ```
 
+Hvis flowet skal beskyttes med Microsoft OAuth/MFA, saa foelg ogsaa `docs/microsoft_oauth_power_automate_setup.md`.
+
 ## 3. Test fra appen
 
 1. Kopier HTTP POST URL'en fra flow-triggeren.
@@ -57,7 +59,7 @@ string(triggerBody())
 3. Udfyld modtager-mail og standard-initialer.
 4. Tryk **Test webflow**.
 
-Testkaldet sender `isTest: true`. Office Script returnerer derfor OK uden at oprette en rigtig salgsrække.
+Testkaldet sender `isTest: true`. Office Script returnerer derfor OK uden at oprette en rigtig salgsr?kke.
 
 ## 4. Intramanager-salgsregistrering
 
