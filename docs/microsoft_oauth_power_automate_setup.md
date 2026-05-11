@@ -12,6 +12,16 @@ Der er ikke `az`, `m365` eller `pac` installeret paa denne maskine, og der er in
 
 ## 1. Opret Entra app registration
 
+Hvis Azure CLI er installeret, kan app registration-delen laves automatisk med:
+
+```powershell
+.\scripts\setup_microsoft_power_automate_oauth_app.ps1
+```
+
+Scriptet logger ind med Microsoft, opretter/genbruger app registration, tilfoejer `http://localhost` som public redirect og proever at tilfoeje Power Automate Service delegated permission.
+
+Manuel opsaetning:
+
 1. Gaa til `https://portal.azure.com`.
 2. Aabn **Microsoft Entra ID -> App registrations -> New registration**.
 3. Navn: `Provi Tracker Power Automate`.
