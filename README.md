@@ -90,13 +90,13 @@ WinSparkle laeser appcast fra:
 
 `https://raw.githubusercontent.com/ypqlmen/ProviTracker/main/appcast.xml`
 
-GitHub Release-tagget til auto-update er `autoupdate`, og asset-navnet for version 1.3.9 er:
+GitHub Release-tagget til auto-update er `autoupdate`, og asset-navnet for version 1.3.10 er:
 
-`ProviBeregnerSetup-1.3.9.exe`
+`ProviBeregnerSetup-1.3.10.exe`
 
 Bem?rk: den oprindelige 1.1-build indeholdt WinSparkle DLL'en, men ikke en appcast-URL i selve programmet eller installeren. Brugere p? 1.1 skal derfor installere en nyere version manuelt ?n gang; derefter kan auto-update hente fremtidige versioner.
 
-Installeren fra 1.3.9 migrerer 1.1-data og afinstallerer den gamle 1.1-app, hvis den ligger i en separat mappe.
+Installeren fra 1.3.9 og nyere migrerer 1.1-data og afinstallerer den gamle 1.1-app, hvis den ligger i en separat mappe.
 
 Udgiv update naar GitHub CLI er installeret og logget ind:
 

@@ -43,7 +43,7 @@ static void initAutoUpdate()
 
     if (init && set_url && set_details) {
         set_url("https://raw.githubusercontent.com/ypqlmen/ProviTracker/main/appcast.xml");
-        set_details(L"Victor Tang", L"Provi Tracker", L"1.3.9");
+        set_details(L"Victor Tang", L"Provi Tracker", L"1.3.10");
         init();
     }
 }
@@ -2443,18 +2443,13 @@ private:
         intramanagerAutoSyncTimer->setInterval(15 * 60 * 1000);
 
         connect(intramanagerAutoSyncTimer, &QTimer::timeout, this, [this]() {
-            syncIntramanagerHoursAsync(true);
-            refreshIntramanagerPunchStatusAsync(true);
+            refreshCurrentIntramanagerStateAsync();
         });
 
         intramanagerAutoSyncTimer->start();
 
-        QTimer::singleShot(5000, this, [this]() {
-            syncIntramanagerHoursAsync(true);
-        });
-
-        QTimer::singleShot(1500, this, [this]() {
-            refreshIntramanagerPunchStatusAsync(true);
+        QTimer::singleShot(2500, this, [this]() {
+            refreshCurrentIntramanagerStateAsync();
         });
     }
 
@@ -2686,11 +2681,17 @@ private:
         runIntramanagerPunchWorker("punch-toggle", false);
     }
 
-    void syncIntramanagerHoursAsync(bool silent = false) {
+    void syncIntramanagerHoursAsync(bool silent = false, std::function<void(bool)> afterFetch = {}) {
         const auto period = payrollBonusRange(QDate::currentDate());
         const QString fromDate = intramanagerDate(period.first.date());
         const QString toDate = intramanagerDate(period.second.date());
-        fetchIntramanagerHoursAsync(fromDate, toDate, silent);
+        fetchIntramanagerHoursAsync(fromDate, toDate, silent, afterFetch ? afterFetch : [](bool) {});
+    }
+
+    void refreshCurrentIntramanagerStateAsync() {
+        syncIntramanagerHoursAsync(true, [this](bool) {
+            refreshIntramanagerPunchStatusAsync(true);
+        });
     }
 
     void syncIntramanagerHours() {
