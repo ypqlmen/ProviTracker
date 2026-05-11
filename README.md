@@ -20,6 +20,8 @@ Qt Widgets desktop-app i C++ med lokal JSON-lagring, per-user installation og Wi
 
 Programmet bruger ikke lokal Excel eller Outlook. Naar salgsregistrering er slaaet til i Indstillinger, sender appen en JSON-pakke til den webhook URL, der er gemt i indstillingerne.
 
+Hvis Power Automate-flowet er beskyttet med Microsoft OAuth, kan brugeren slaa "Brug Microsoft-login/MFA til Power Automate" til i Indstillinger. Programmet aabner Microsoft-login i browseren, saa MFA haandteres af Microsoft, og gemmer kun refresh-token i Windows Credential Manager. Programmet gemmer ikke Outlook-adgangskoder.
+
 Payloaden indeholder bl.a.:
 
 - `date`, `sellerInitials`, `orderNumber`, `cvrNumber`, `companyName`, `phoneNumber`
@@ -90,9 +92,9 @@ WinSparkle laeser appcast fra:
 
 `https://raw.githubusercontent.com/ypqlmen/ProviTracker/main/appcast.xml`
 
-GitHub Release-tagget til auto-update er `autoupdate`, og asset-navnet for version 1.3.10 er:
+GitHub Release-tagget til auto-update er `autoupdate`, og asset-navnet for version 1.3.11 er:
 
-`ProviBeregnerSetup-1.3.10.exe`
+`ProviBeregnerSetup-1.3.11.exe`
 
 Bem?rk: den oprindelige 1.1-build indeholdt WinSparkle DLL'en, men ikke en appcast-URL i selve programmet eller installeren. Brugere p? 1.1 skal derfor installere en nyere version manuelt ?n gang; derefter kan auto-update hente fremtidige versioner.
 
