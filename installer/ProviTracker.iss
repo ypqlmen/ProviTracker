@@ -1,8 +1,8 @@
 #define MyAppName "Provi Tracker"
 #define MyAppExeName "ProvisionTrackerV2.exe"
 #define MyAppPublisher "Victor Tang"
-#define MyAppVersion "1.3.8"
-#define MySetupBaseName "ProviBeregnerSetup-1.3.8"
+#define MyAppVersion "1.3.9"
+#define MySetupBaseName "ProviBeregnerSetup-1.3.9"
 #ifndef BuildDir
   #define BuildDir "..\build\installer_staging"
 #endif
@@ -61,3 +61,103 @@ Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: de
 
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; Flags: nowait postinstall skipifsilent
+
+[Code]
+const
+  Legacy11UninstallKey = 'Software\Microsoft\Windows\CurrentVersion\Uninstall\{CBA2670F-F574-46E0-8913-FBEF7822C1B7}_is1';
+
+procedure CopyFileIfMissing(Source, Target: string);
+begin
+  if FileExists(Source) and not FileExists(Target) then begin
+    ForceDirectories(ExtractFileDir(Target));
+    CopyFile(Source, Target, True);
+  end;
+end;
+
+procedure CopyDirContents(SourceDir, TargetDir: string);
+var
+  FindRec: TFindRec;
+  SourcePath: string;
+  TargetPath: string;
+begin
+  if not DirExists(SourceDir) then
+    exit;
+
+  ForceDirectories(TargetDir);
+
+  if FindFirst(AddBackslash(SourceDir) + '*', FindRec) then begin
+    try
+      repeat
+        if (FindRec.Name <> '.') and (FindRec.Name <> '..') then begin
+          SourcePath := AddBackslash(SourceDir) + FindRec.Name;
+          TargetPath := AddBackslash(TargetDir) + FindRec.Name;
+          if (FindRec.Attributes and FILE_ATTRIBUTE_DIRECTORY) <> 0 then begin
+            if not DirExists(TargetPath) then
+              CopyDirContents(SourcePath, TargetPath);
+          end else begin
+            CopyFileIfMissing(SourcePath, TargetPath);
+          end;
+        end;
+      until not FindNext(FindRec);
+    finally
+      FindClose(FindRec);
+    end;
+  end;
+end;
+
+procedure CopyDirIfMissing(SourceDir, TargetDir: string);
+begin
+  if DirExists(SourceDir) and not DirExists(TargetDir) then
+    CopyDirContents(SourceDir, TargetDir);
+end;
+
+procedure MigrateLegacyDataFrom(SourceDir: string);
+var
+  TargetDir: string;
+begin
+  if (SourceDir = '') or not DirExists(SourceDir) then
+    exit;
+
+  TargetDir := ExpandConstant('{localappdata}\ProvisionTrackerV2\ProviTracker');
+
+  CopyFileIfMissing(AddBackslash(SourceDir) + 'salespeople.json', AddBackslash(TargetDir) + 'salespeople.json');
+  CopyFileIfMissing(AddBackslash(SourceDir) + 'products.json', AddBackslash(TargetDir) + 'products.json');
+  CopyFileIfMissing(AddBackslash(SourceDir) + 'orders.json', AddBackslash(TargetDir) + 'orders.json');
+  CopyFileIfMissing(AddBackslash(SourceDir) + 'settings.json', AddBackslash(TargetDir) + 'settings.json');
+  CopyDirIfMissing(AddBackslash(SourceDir) + 'snapshots', AddBackslash(TargetDir) + 'snapshots');
+  CopyDirIfMissing(AddBackslash(SourceDir) + 'reports', AddBackslash(TargetDir) + 'reports');
+end;
+
+function SameDir(Left, Right: string): Boolean;
+begin
+  Result := CompareText(RemoveBackslashUnlessRoot(Left), RemoveBackslashUnlessRoot(Right)) = 0;
+end;
+
+procedure UninstallLegacy11IfSeparate(LegacyDir: string);
+var
+  UninstallString: string;
+  Uninstaller: string;
+  ResultCode: Integer;
+begin
+  if (LegacyDir = '') or SameDir(LegacyDir, ExpandConstant('{app}')) then
+    exit;
+
+  if RegQueryStringValue(HKCU, Legacy11UninstallKey, 'UninstallString', UninstallString) then begin
+    Uninstaller := RemoveQuotes(UninstallString);
+    if FileExists(Uninstaller) then
+      Exec(Uninstaller, '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  end;
+end;
+
+procedure CurStepChanged(CurStep: TSetupStep);
+var
+  LegacyDir: string;
+begin
+  if CurStep = ssPostInstall then begin
+    if RegQueryStringValue(HKCU, Legacy11UninstallKey, 'InstallLocation', LegacyDir) then begin
+      MigrateLegacyDataFrom(LegacyDir);
+      MigrateLegacyDataFrom(AddBackslash(LegacyDir) + 'data');
+      UninstallLegacy11IfSeparate(LegacyDir);
+    end;
+  end;
+end;

@@ -43,7 +43,7 @@ static void initAutoUpdate()
 
     if (init && set_url && set_details) {
         set_url("https://raw.githubusercontent.com/ypqlmen/ProviTracker/main/appcast.xml");
-        set_details(L"Victor Tang", L"Provi Tracker", L"1.3.8");
+        set_details(L"Victor Tang", L"Provi Tracker", L"1.3.9");
         init();
     }
 }
@@ -73,9 +73,48 @@ static void copyLegacyDataFiles(const QString& sourceDir, const QString& targetD
     }
 }
 
+static bool copyDirectoryContentsIfMissing(const QString& sourceDir, const QString& targetDir)
+{
+    if (sourceDir.isEmpty() || !QDir(sourceDir).exists() || QDir(targetDir).exists())
+        return false;
+
+    QDir().mkpath(targetDir);
+
+    QDir source(sourceDir);
+    const QFileInfoList entries = source.entryInfoList(
+        QDir::Files | QDir::Dirs | QDir::NoDotAndDotDot | QDir::Hidden | QDir::System
+        );
+
+    for (const QFileInfo& entry : entries) {
+        const QString dst = targetDir + "/" + entry.fileName();
+        if (entry.isDir()) {
+            copyDirectoryContentsIfMissing(entry.absoluteFilePath(), dst);
+        } else if (!QFileInfo::exists(dst)) {
+            QFile::copy(entry.absoluteFilePath(), dst);
+        }
+    }
+
+    return true;
+}
+
+static QString legacy11InstallLocation()
+{
+#ifdef Q_OS_WIN
+    QSettings legacyKey(
+        "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\{CBA2670F-F574-46E0-8913-FBEF7822C1B7}_is1",
+        QSettings::NativeFormat
+        );
+    return legacyKey.value("InstallLocation").toString();
+#else
+    return {};
+#endif
+}
+
 static void migrateLegacyDataIfNeeded() {
     const QString targetDir = appStorageDir();
-    const QString legacyInstallDir = QCoreApplication::applicationDirPath() + "/data";
+    const QString legacyInstallRoot = QCoreApplication::applicationDirPath();
+    const QString legacyInstallDir = legacyInstallRoot + "/data";
+    const QString legacy11Dir = legacy11InstallLocation();
     const QString legacyRoamingDir =
         QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)
         + "/ProviTracker";
@@ -89,8 +128,21 @@ static void migrateLegacyDataIfNeeded() {
 
     // Version 1.1 gemte JSON-filer ved siden af programmet. En tidligere
     // migrering kopierede dem til Roaming, s? begge kilder tjekkes her.
+    copyLegacyDataFiles(legacyInstallRoot, targetDir, files);
     copyLegacyDataFiles(legacyInstallDir, targetDir, files);
+    copyLegacyDataFiles(legacy11Dir, targetDir, files);
+    copyLegacyDataFiles(legacy11Dir + "/data", targetDir, files);
     copyLegacyDataFiles(legacyRoamingDir, targetDir, files);
+    copyDirectoryContentsIfMissing(legacyInstallRoot + "/snapshots", targetDir + "/snapshots");
+    copyDirectoryContentsIfMissing(legacyInstallDir + "/snapshots", targetDir + "/snapshots");
+    copyDirectoryContentsIfMissing(legacy11Dir + "/snapshots", targetDir + "/snapshots");
+    copyDirectoryContentsIfMissing(legacy11Dir + "/data/snapshots", targetDir + "/snapshots");
+    copyDirectoryContentsIfMissing(legacyRoamingDir + "/snapshots", targetDir + "/snapshots");
+    copyDirectoryContentsIfMissing(legacyInstallRoot + "/reports", targetDir + "/reports");
+    copyDirectoryContentsIfMissing(legacyInstallDir + "/reports", targetDir + "/reports");
+    copyDirectoryContentsIfMissing(legacy11Dir + "/reports", targetDir + "/reports");
+    copyDirectoryContentsIfMissing(legacy11Dir + "/data/reports", targetDir + "/reports");
+    copyDirectoryContentsIfMissing(legacyRoamingDir + "/reports", targetDir + "/reports");
 
     const QString marker = targetDir + "/.migrated";
     if (!QFileInfo::exists(marker)) {
