@@ -41,11 +41,21 @@ New-Item -ItemType Directory -Path $workerStage | Out-Null
 Copy-Item (Join-Path $releaseDir "intramanager_worker\intramanager_sync.exe") $workerStage -Force
 robocopy (Join-Path $releaseDir "intramanager_worker\_internal") (Join-Path $workerStage "_internal") /MIR /NFL /NDL /NJH /NJS /NP | Out-Null
 if ($LASTEXITCODE -gt 7) { throw "Kopiering af intramanager_worker fejlede." }
+$nestedBrowsers = Join-Path $workerStage "_internal\playwright\driver\package\.local-browsers"
+if (Test-Path $nestedBrowsers) {
+    Remove-Item -LiteralPath $nestedBrowsers -Recurse -Force
+}
+$browserSrc = Join-Path $releaseDir "intramanager_worker\b"
+if (!(Test-Path $browserSrc)) {
+    throw "Playwright browserpakken blev ikke fundet i den korte worker-mappe: $browserSrc"
+}
+robocopy $browserSrc (Join-Path $workerStage "b") /MIR /NFL /NDL /NJH /NJS /NP | Out-Null
+if ($LASTEXITCODE -gt 7) { throw "Kopiering af Playwright browserpakke fejlede." }
 
 & $iscc "/DBuildDir=$stageDir" $iss
 if ($LASTEXITCODE -ne 0) { throw "Inno Setup build fejlede." }
 
-$installer = Join-Path $root "dist\ProviBeregnerSetup-1.3.12.exe"
+$installer = Join-Path $root "dist\ProviBeregnerSetup-1.3.13.exe"
 if (!(Test-Path $installer)) { throw "Installer blev ikke oprettet: $installer" }
 
 Write-Host "Installer klar: $installer"

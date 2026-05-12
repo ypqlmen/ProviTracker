@@ -1,8 +1,8 @@
 #define MyAppName "Provi Tracker"
 #define MyAppExeName "ProvisionTrackerV2.exe"
 #define MyAppPublisher "Victor Tang"
-#define MyAppVersion "1.3.12"
-#define MySetupBaseName "ProviBeregnerSetup-1.3.12"
+#define MyAppVersion "1.3.13"
+#define MySetupBaseName "ProviBeregnerSetup-1.3.13"
 #ifndef BuildDir
   #define BuildDir "..\build\installer_staging"
 #endif
@@ -54,6 +54,7 @@ Source: "{#BuildDir}\translations\qt_da.qm"; DestDir: "{app}\translations"; Flag
 Source: "{#BuildDir}\translations\qt_en.qm"; DestDir: "{app}\translations"; Flags: ignoreversion skipifsourcedoesntexist
 Source: "{#BuildDir}\intramanager_worker\intramanager_sync.exe"; DestDir: "{app}\intramanager_worker"; Flags: ignoreversion
 Source: "{#BuildDir}\intramanager_worker\_internal\*"; DestDir: "{app}\intramanager_worker\_internal"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#BuildDir}\intramanager_worker\b\*"; DestDir: "{app}\intramanager_worker\b"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"

@@ -1,15 +1,45 @@
 import argparse
 import json
+import os
 import re
 import sys
 from pathlib import Path
-from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
 
 BASE_URL = "https://5r.intramanager.com/"
 LOGIN_URL = BASE_URL + "reports/history/"
 HISTORY_URL = BASE_URL + "reports/history/"
 PUNCH_URL = BASE_URL + "reports/punch-in/"
-OFFICE_ONLY_MESSAGE = "Man kan kun stemple ind eller ud p? kontorets internet."
+OFFICE_ONLY_MESSAGE = "Man kan kun stemple ind eller ud på kontorets internet."
+
+
+def configure_playwright_browser_path():
+    if os.environ.get("PLAYWRIGHT_BROWSERS_PATH"):
+        return
+
+    candidates = []
+
+    if getattr(sys, "frozen", False):
+        exe_dir = Path(sys.executable).resolve().parent
+        candidates.append(exe_dir / "b")
+        candidates.append(exe_dir / "pw-browsers")
+
+        meipass = getattr(sys, "_MEIPASS", "")
+        if meipass:
+            candidates.append(Path(meipass).resolve().parent / "b")
+            candidates.append(Path(meipass).resolve().parent / "pw-browsers")
+
+    candidates.append(Path(__file__).resolve().parent / "b")
+    candidates.append(Path(__file__).resolve().parent / "pw-browsers")
+
+    for candidate in candidates:
+        if candidate.exists():
+            os.environ["PLAYWRIGHT_BROWSERS_PATH"] = str(candidate)
+            return
+
+
+configure_playwright_browser_path()
+
+from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
 
 
 def looks_office_only(text):
@@ -19,9 +49,9 @@ def looks_office_only(text):
         "ip adresse",
         "kontor",
         "kontorets",
-        "netv?rk",
+        "netværk",
         "netvaerk",
-        "adgang n?gtet",
+        "adgang nægtet",
         "adgang naegtet",
         "ikke tilladt",
         "not allowed",
@@ -339,7 +369,7 @@ def fetch_hours(page, args, debug_dir):
         return {
             "success": False,
             "stage": "parse_hours",
-            "error": "Kunne ikke finde total l?ntimer i resultattabellen.",
+            "error": "Kunne ikke finde total løntimer i resultattabellen.",
             "periodFrom": args.from_date,
             "periodTo": args.to_date,
             "debugDir": str(debug_dir)
@@ -415,7 +445,7 @@ def read_punch_state_from_history(page, target_date, debug_dir, prefix):
             "statusKnown": True,
             "clockedIn": False,
             "statusText": "Stemplet ud",
-            "detail": "Der er ikke fundet en ?ben stempling for i dag.",
+            "detail": "Der er ikke fundet en åben stempling for i dag.",
             "lastStart": "",
             "lastStop": ""
         }
@@ -494,16 +524,19 @@ def read_punch_state_from_punch_page(page, debug_dir, prefix):
     known = False
     clocked_in = False
 
-    if "stemplet ind" in lower or "stempel ud" in buttons_lower or "stempl ud" in buttons_lower:
+    out_terms = ["stempel ud", "stempl ud", "check ud", "stop"]
+    in_terms = ["stempel ind", "stempl ind", "check ind", "start"]
+
+    if any(term in buttons_lower for term in out_terms):
         known = True
         clocked_in = True
-    elif "stemplet ud" in lower or "stempel ind" in buttons_lower or "stempl ind" in buttons_lower:
+    elif any(term in buttons_lower for term in in_terms):
         known = True
         clocked_in = False
-    elif "stop" in buttons_lower:
+    elif "stemplet ind" in lower:
         known = True
         clocked_in = True
-    elif "start" in buttons_lower:
+    elif "stemplet ud" in lower:
         known = True
         clocked_in = False
 
@@ -513,13 +546,13 @@ def read_punch_state_from_punch_page(page, debug_dir, prefix):
             "statusKnown": False,
             "clockedIn": False,
             "statusText": "Status ukendt",
-            "detail": "Intramanager-stempelsiden blev hentet, men status kunne ikke afl??ses.",
+            "detail": "Intramanager-stempelsiden blev hentet, men status kunne ikke aflæses.",
             "lastStart": "",
             "lastStop": "",
         }
 
     status_text = "Stemplet ind" if clocked_in else "Stemplet ud"
-    detail = "Status afl??st fra Intramanager-stempelsiden."
+    detail = "Status aflæst fra Intramanager-stempelsiden."
 
     return {
         "success": True,
@@ -593,6 +626,36 @@ def click_first_available(page, selectors):
     return False
 
 
+def click_control_by_terms(page, terms):
+    lowered_terms = [term.lower() for term in terms]
+
+    try:
+        controls = page.locator("button, input[type='submit'], input[type='button'], a")
+        for i in range(controls.count()):
+            control = controls.nth(i)
+            values = []
+
+            try:
+                values.append(clean_text(control.inner_text()))
+            except Exception:
+                pass
+
+            for attribute in ("value", "aria-label", "title"):
+                try:
+                    values.append(clean_text(control.get_attribute(attribute) or ""))
+                except Exception:
+                    pass
+
+            haystack = " ".join(value for value in values if value).lower()
+            if haystack and any(term in haystack for term in lowered_terms):
+                control.click()
+                return True
+    except Exception:
+        pass
+
+    return False
+
+
 def toggle_punch(page, args, debug_dir):
     today = normalise_date(args.on_date)
     history_before = read_punch_state_from_history(page, today, debug_dir, "punch_before_history")
@@ -608,32 +671,52 @@ def toggle_punch(page, args, debug_dir):
         }
 
     before = page_before if page_before.get("statusKnown") else history_before
+    target_action = clean_text(getattr(args, "target_action", "")).lower()
+    desired_clocked_in = None
+    if target_action in {"in", "ind"}:
+        desired_clocked_in = True
+    elif target_action in {"out", "ud"}:
+        desired_clocked_in = False
 
-    if before.get("clockedIn"):
+    wants_out = desired_clocked_in is False or (desired_clocked_in is None and before.get("clockedIn"))
+
+    if wants_out:
+        terms = ["stempel ud", "stempl ud", "check ud", "stop"]
         preferred_selectors = [
             'button:has-text("Stempel ud")',
             'button:has-text("Stempl ud")',
+            'a:has-text("Stempel ud")',
+            'a:has-text("Stempl ud")',
             'input[value*="Stempel ud"]',
             'input[value*="Stempl ud"]',
             'button:has-text("Stop")',
+            'a:has-text("Stop")',
             'input[value*="Stop"]',
         ]
     else:
+        terms = ["stempel ind", "stempl ind", "check ind", "start"]
         preferred_selectors = [
             'button:has-text("Stempel ind")',
             'button:has-text("Stempl ind")',
+            'a:has-text("Stempel ind")',
+            'a:has-text("Stempl ind")',
             'input[value*="Stempel ind"]',
             'input[value*="Stempl ind"]',
             'button:has-text("Start")',
+            'a:has-text("Start")',
             'input[value*="Start"]',
         ]
 
-    clicked = click_first_available(page, preferred_selectors + [
-        'button:has-text("Stempel")',
-        'button:has-text("Stempl")',
-        'button[type="submit"]',
-        'input[type="submit"]',
-    ])
+    clicked = click_first_available(page, preferred_selectors)
+    if not clicked:
+        clicked = click_control_by_terms(page, terms)
+    if not clicked and desired_clocked_in is None:
+        clicked = click_first_available(page, [
+            'button:has-text("Stempel")',
+            'button:has-text("Stempl")',
+            'button[type="submit"]',
+            'input[type="submit"]',
+        ])
 
     if clicked:
         page.wait_for_timeout(2500)
@@ -665,17 +748,21 @@ def toggle_punch(page, args, debug_dir):
 
     after = page_after if page_after.get("statusKnown") else read_punch_state_from_history(page, today, debug_dir, "punch_after_history")
 
-    changed = (
-        before.get("statusKnown")
-        and after.get("statusKnown")
-        and before.get("clockedIn") != after.get("clockedIn")
-    )
+    if desired_clocked_in is None:
+        changed = (
+            before.get("statusKnown")
+            and after.get("statusKnown")
+            and before.get("clockedIn") != after.get("clockedIn")
+        )
+    else:
+        changed = after.get("statusKnown") and after.get("clockedIn") == desired_clocked_in
 
     if not changed:
+        expected = "ind" if desired_clocked_in else "ud"
         return {
             "success": False,
             "stage": "punch_toggle",
-            "error": OFFICE_ONLY_MESSAGE if not clicked else "Intramanager svarede, men stempelstatus ?ndrede sig ikke.",
+            "error": OFFICE_ONLY_MESSAGE if not clicked else f"Intramanager svarede, men du blev ikke stemplet {expected}.",
             "debugDir": str(debug_dir),
             **after
         }
@@ -683,7 +770,7 @@ def toggle_punch(page, args, debug_dir):
     return {
         "success": True,
         "stage": "punch_toggle",
-        "message": after.get("statusText", "Stempelstatus opdateret."),
+        "message": "Stemplet ind" if after.get("clockedIn") else "Stemplet ud",
         "debugDir": str(debug_dir),
         **after
     }
@@ -703,6 +790,7 @@ def main():
 
     parser.add_argument("--debug-dir", default="debug_intramanager")
     parser.add_argument("--headed", action="store_true")
+    parser.add_argument("--target-action", choices=["in", "out"], required=False)
 
     args = parser.parse_args()
 
@@ -716,6 +804,7 @@ def main():
         args.from_date = payload.get("fromDate", args.from_date)
         args.to_date = payload.get("toDate", args.to_date)
         args.on_date = payload.get("onDate", args.on_date)
+        args.target_action = payload.get("targetAction", args.target_action)
 
     if not args.on_date:
         from datetime import datetime

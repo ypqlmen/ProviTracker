@@ -37,6 +37,10 @@ static void initAutoUpdate()
     typedef void (*init_t)();
     typedef void (*set_url_t)(const char*);
     typedef void (*set_details_t)(const wchar_t*, const wchar_t*, const wchar_t*);
+    typedef void (*set_auto_t)(int);
+    typedef void (*set_interval_t)(int);
+    typedef void (*check_without_ui_t)();
+    typedef void (*check_with_ui_and_install_t)();
 
     if (!sparkle.load()) {
         return;
@@ -45,11 +49,26 @@ static void initAutoUpdate()
     auto init = (init_t)sparkle.resolve("win_sparkle_init");
     auto set_url = (set_url_t)sparkle.resolve("win_sparkle_set_appcast_url");
     auto set_details = (set_details_t)sparkle.resolve("win_sparkle_set_app_details");
+    auto set_auto = (set_auto_t)sparkle.resolve("win_sparkle_set_automatic_check_for_updates");
+    auto set_interval = (set_interval_t)sparkle.resolve("win_sparkle_set_update_check_interval");
+    auto check_without_ui = (check_without_ui_t)sparkle.resolve("win_sparkle_check_update_without_ui");
+    auto check_with_ui_and_install = (check_with_ui_and_install_t)sparkle.resolve("win_sparkle_check_update_with_ui_and_install");
 
     if (init && set_url && set_details) {
         set_url("https://raw.githubusercontent.com/ypqlmen/ProviTracker/main/appcast.xml");
-        set_details(L"Victor Tang", L"Provi Tracker", L"1.3.12");
+        set_details(L"Victor Tang", L"Provi Tracker", L"1.3.13");
+        if (set_auto) set_auto(1);
+        if (set_interval) set_interval(60 * 60);
         init();
+        if (check_with_ui_and_install || check_without_ui) {
+            QTimer::singleShot(4000, qApp, [check_with_ui_and_install, check_without_ui]() {
+                if (check_with_ui_and_install) {
+                    check_with_ui_and_install();
+                } else {
+                    check_without_ui();
+                }
+            });
+        }
     }
 }
 
@@ -2227,6 +2246,7 @@ private:
     QLabel* kpiMonthCommissionLabel = nullptr;
     QLabel* kpiMonthSalesLabel = nullptr;
     QLabel* kpiMonthAddonsLabel = nullptr;
+    QLabel* kpiRemainingWorkDaysLabel = nullptr;
     QLabel* intramanagerPunchStatusLabel = nullptr;
     QLabel* intramanagerPunchDetailLabel = nullptr;
     QPushButton* intramanagerPunchButton = nullptr;
@@ -2475,19 +2495,29 @@ private:
         return "Opdateret " + synced.toString("dd-MM HH:mm");
     }
 
+    QString cleanPunchText(QString text) const {
+        text.replace(QString::fromUtf8("Ã¦"), QString::fromUtf8("æ"));
+        text.replace(QString::fromUtf8("Ã¸"), QString::fromUtf8("ø"));
+        text.replace(QString::fromUtf8("Ã¥"), QString::fromUtf8("å"));
+        text.replace(QString::fromUtf8("Ã†"), QString::fromUtf8("Æ"));
+        text.replace(QString::fromUtf8("Ã˜"), QString::fromUtf8("Ø"));
+        text.replace(QString::fromUtf8("Ã…"), QString::fromUtf8("Å"));
+        return text;
+    }
+
     QString punchDetailText() const {
         const auto& punch = repo.settings.intramanagerPunch;
         if (!repo.settings.intramanagerEnabled) {
             return "Gem Intramanager-login i Indstillinger for at bruge stempeluret.";
         }
         if (!punch.known) {
-            return punch.detail.isEmpty() ? "Status er ikke hentet endnu." : punch.detail;
+            return punch.detail.isEmpty() ? "Status er ikke hentet endnu." : cleanPunchText(punch.detail);
         }
 
         QStringList parts;
-        if (!punch.detail.isEmpty()) parts << punch.detail;
-        if (!punch.lastStart.isEmpty()) parts << "Seneste ind: " + punch.lastStart;
-        if (!punch.lastStop.isEmpty()) parts << "Seneste ud: " + punch.lastStop;
+        if (!punch.detail.isEmpty()) parts << cleanPunchText(punch.detail);
+        if (!punch.lastStart.isEmpty()) parts << "Seneste ind: " + cleanPunchText(punch.lastStart);
+        if (!punch.lastStop.isEmpty()) parts << "Seneste ud: " + cleanPunchText(punch.lastStop);
         parts << shortPunchSyncText();
         return parts.join("\n");
     }
@@ -2670,7 +2700,8 @@ private:
     void runIntramanagerPunchWorker(
         const QString& action,
         bool silent,
-        std::function<void(bool)> afterFetch = {}
+        std::function<void(bool)> afterFetch = {},
+        const QString& targetAction = {}
         ) {
         if (intramanagerPunchRunning) {
             if (afterFetch) afterFetch(false);
@@ -2698,6 +2729,9 @@ private:
         payload["password"] = password;
         payload["action"] = action;
         payload["onDate"] = intramanagerDate(QDate::currentDate());
+        if (!targetAction.isEmpty()) {
+            payload["targetAction"] = targetAction;
+        }
 
         connect(process, &QProcess::started, this, [process, payload]() {
             process->write(QJsonDocument(payload).toJson(QJsonDocument::Compact));
@@ -2737,7 +2771,11 @@ private:
                     refreshPunchCardUi();
 
                     if (!silent && action == "punch-toggle") {
-                        QMessageBox::information(this, "Intramanager", result.statusText);
+                        QMessageBox::information(
+                            this,
+                            "Intramanager",
+                            result.clockedIn ? "Du er stemplet ind." : "Du er stemplet ud."
+                            );
                     }
 
                     if (action == "punch-toggle") {
@@ -2780,7 +2818,8 @@ private:
             return;
         }
 
-        runIntramanagerPunchWorker("punch-toggle", false);
+        const QString targetAction = punch.clockedIn ? "out" : "in";
+        runIntramanagerPunchWorker("punch-toggle", false, {}, targetAction);
     }
 
     void syncIntramanagerHoursAsync(bool silent = false, std::function<void(bool)> afterFetch = {}) {
@@ -3259,11 +3298,13 @@ QTableWidget::item {
         auto k2 = createKpiCard("Løn denne måned");
         auto k3 = createKpiCard("Salg denne måned");
         auto k4 = createKpiCard("Tillæg denne måned");
+        auto k5 = createKpiCard("Resterende arbejdsdage");
 
         kpiTodayPointsLabel = k1.second;
         kpiMonthCommissionLabel = k2.second;
         kpiMonthSalesLabel = k3.second;
         kpiMonthAddonsLabel = k4.second;
+        kpiRemainingWorkDaysLabel = k5.second;
 
         auto* kpiGrid = new QGridLayout;
         kpiGrid->setHorizontalSpacing(14);
@@ -3272,6 +3313,7 @@ QTableWidget::item {
         kpiGrid->addWidget(k2.first, 0, 1);
         kpiGrid->addWidget(k3.first, 0, 2);
         kpiGrid->addWidget(k4.first, 0, 3);
+        kpiGrid->addWidget(k5.first, 0, 4);
         layout->addLayout(kpiGrid);
 
         auto punchCard = createCard("Stempelur");
@@ -4070,6 +4112,11 @@ QTableWidget::item {
         const int totalWorkingDays = workingDaysInMonth(now);
         const int elapsedWorkingDays = qMax(1, workingDaysElapsedInMonth(now));
         const int remainingWorkingDays = qMax(0, totalWorkingDays - elapsedWorkingDays);
+        if (kpiRemainingWorkDaysLabel) {
+            kpiRemainingWorkDaysLabel->setText(
+                QString("%1\narbejdsdage tilbage").arg(remainingWorkingDays)
+                );
+        }
         const double avgPointsPerActiveDay = activeDays > 0 ? (mMonth.totalPoints / activeDays) : 0.0;
         const double avgCommissionPerActiveDay = activeDays > 0 ? (mMonth.totalCommission / activeDays) : 0.0;
         const double pointsToTarget = qMax(0.0, repo.settings.bonus.monthlyTargetPoints - mMonth.totalPoints);
