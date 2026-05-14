@@ -19,6 +19,9 @@
 #include <wincred.h>
 #endif
 
+static constexpr const char* APP_VERSION = "1.3.14";
+static constexpr const wchar_t* APP_VERSION_W = L"1.3.14";
+
 // ============================================================
 // Domain
 // ============================================================
@@ -56,7 +59,7 @@ static void initAutoUpdate()
 
     if (init && set_url && set_details) {
         set_url("https://raw.githubusercontent.com/ypqlmen/ProviTracker/main/appcast.xml");
-        set_details(L"Victor Tang", L"Provi Tracker", L"1.3.13");
+        set_details(L"Victor Tang", L"Provi Tracker", APP_VERSION_W);
         if (set_auto) set_auto(1);
         if (set_interval) set_interval(60 * 60);
         init();
@@ -3293,6 +3296,16 @@ QTableWidget::item {
         auto* w = new QWidget;
         auto* layout = new QVBoxLayout(w);
         layout->setSpacing(14);
+
+        auto* dashboardTop = new QHBoxLayout;
+        dashboardTop->setContentsMargins(0, 0, 0, 0);
+        dashboardTop->addStretch();
+        auto* versionLabel = new QLabel(QString("Version %1").arg(QString::fromLatin1(APP_VERSION)));
+        versionLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+        versionLabel->setTextInteractionFlags(Qt::NoTextInteraction);
+        versionLabel->setStyleSheet("QLabel { color:#8FB7C9; font-size:12px; font-weight:800; background:transparent; }");
+        dashboardTop->addWidget(versionLabel);
+        layout->addLayout(dashboardTop);
 
         auto k1 = createKpiCard("Point i dag");
         auto k2 = createKpiCard("Løn denne måned");

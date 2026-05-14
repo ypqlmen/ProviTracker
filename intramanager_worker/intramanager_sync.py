@@ -499,7 +499,18 @@ def read_punch_state_from_punch_page(page, debug_dir, prefix):
 
     button_texts = []
     try:
-        buttons = page.locator("button, input[type='submit'], a.btn")
+        buttons = page.locator(", ".join([
+            "#main button",
+            "#main input[type='submit']",
+            "#main input[type='button']",
+            "#main a.btn",
+            "#main .stamp-list-item a",
+            "#main .punchin-link",
+            "#main .punch-link",
+            "#main a[href*='punch']",
+            "#main [onclick*='punch']",
+            "#main [onclick*='Punch']",
+        ]))
         for i in range(buttons.count()):
             text = ""
             value = ""
@@ -611,14 +622,79 @@ def fetch_punch_status(page, args, debug_dir):
     }
 
 
-def click_first_available(page, selectors):
+def locator_text(locator):
+    values = []
+
+    try:
+        values.append(clean_text(locator.inner_text(timeout=1000)))
+    except Exception:
+        pass
+
+    for attribute in (
+        "value",
+        "aria-label",
+        "title",
+        "data-original-title",
+        "href",
+        "onclick",
+        "class",
+        "id",
+    ):
+        try:
+            values.append(clean_text(locator.get_attribute(attribute) or ""))
+        except Exception:
+            pass
+
+    return clean_text(" ".join(value for value in values if value))
+
+
+def looks_like_cancel_control(text):
+    lower = (text or "").lower()
+    cancel_terms = [
+        "annuller",
+        "fortryd",
+        "cancel",
+        "luk",
+        "close",
+        "dismiss",
+    ]
+    return any(term in lower for term in cancel_terms)
+
+
+def click_locator(locator):
+    try:
+        if not locator.is_visible(timeout=500):
+            return False
+    except Exception:
+        return False
+
+    try:
+        if not locator.is_enabled(timeout=500):
+            return False
+    except Exception:
+        pass
+
+    try:
+        locator.scroll_into_view_if_needed(timeout=2000)
+    except Exception:
+        pass
+
+    try:
+        locator.click(timeout=5000)
+        return True
+    except Exception:
+        return False
+
+
+def click_first_available(page, selectors, max_matches=25):
     for sel in selectors:
         try:
-            loc = page.locator(sel).first
+            matches = page.locator(sel)
+            count = min(matches.count(), max_matches)
 
-            if loc.count() > 0:
-                loc.click()
-                return True
+            for i in range(count):
+                if click_locator(matches.nth(i)):
+                    return True
 
         except Exception:
             pass
@@ -626,34 +702,187 @@ def click_first_available(page, selectors):
     return False
 
 
-def click_control_by_terms(page, terms):
+def has_visible_dialog(page):
+    dialog_selectors = [
+        ".punch-in-dialog",
+        ".bootstrap-dialog",
+        ".modal-dialog",
+        ".modal.show",
+        "[role='dialog']",
+    ]
+
+    for sel in dialog_selectors:
+        try:
+            matches = page.locator(sel)
+            for i in range(min(matches.count(), 10)):
+                if matches.nth(i).is_visible(timeout=500):
+                    return True
+        except Exception:
+            pass
+
+    return False
+
+
+def wait_for_page_idle(page, timeout=30000):
+    try:
+        page.wait_for_load_state("networkidle", timeout=timeout)
+    except PlaywrightTimeoutError:
+        pass
+    except Exception:
+        pass
+
+
+def scoped_control_selector(scope):
+    prefix = f"{scope} " if scope else ""
+    return ", ".join([
+        f"{prefix}button",
+        f"{prefix}input[type='submit']",
+        f"{prefix}input[type='button']",
+        f"{prefix}a",
+        f"{prefix}[role='button']",
+        f"{prefix}[onclick]",
+    ])
+
+
+def click_control_by_terms(page, terms, scope="#main"):
     lowered_terms = [term.lower() for term in terms]
 
     try:
-        controls = page.locator("button, input[type='submit'], input[type='button'], a")
-        for i in range(controls.count()):
+        controls = page.locator(scoped_control_selector(scope))
+        for i in range(min(controls.count(), 80)):
             control = controls.nth(i)
-            values = []
+            haystack = locator_text(control).lower()
 
-            try:
-                values.append(clean_text(control.inner_text()))
-            except Exception:
-                pass
+            if not haystack or looks_like_cancel_control(haystack):
+                continue
 
-            for attribute in ("value", "aria-label", "title"):
-                try:
-                    values.append(clean_text(control.get_attribute(attribute) or ""))
-                except Exception:
-                    pass
-
-            haystack = " ".join(value for value in values if value).lower()
-            if haystack and any(term in haystack for term in lowered_terms):
-                control.click()
+            if any(term in haystack for term in lowered_terms) and click_locator(control):
                 return True
     except Exception:
         pass
 
     return False
+
+
+def click_punch_dialog_confirmation(page, wants_out):
+    if not has_visible_dialog(page):
+        return False
+
+    action_terms = (
+        ["stempel ud", "stempl ud", "check ud", "stop", "afslut"]
+        if wants_out
+        else ["stempel ind", "stempl ind", "check ind", "start"]
+    )
+    confirmation_terms = action_terms + ["bekræft", "bekraeft", "gem", "ja", "ok", "fortsæt", "fortsaet"]
+
+    dialog_scopes = [
+        ".punch-in-dialog",
+        ".bootstrap-dialog",
+        ".modal-dialog",
+        ".modal.show",
+        "[role='dialog']",
+    ]
+
+    preferred_selectors = []
+    for scope in dialog_scopes:
+        for term in action_terms:
+            preferred_selectors.extend([
+                f'{scope} button:has-text("{term}")',
+                f'{scope} a:has-text("{term}")',
+                f'{scope} input[value*="{term}"]',
+            ])
+
+        preferred_selectors.extend([
+            f"{scope} .bootstrap-dialog-footer-buttons button.btn-primary",
+            f"{scope} .bootstrap-dialog-footer-buttons button",
+            f"{scope} button.btn-primary",
+            f"{scope} a.btn-primary",
+            f"{scope} input[type='submit']",
+        ])
+
+    if click_first_available(page, preferred_selectors):
+        page.wait_for_timeout(1500)
+        wait_for_page_idle(page, timeout=15000)
+        return True
+
+    for scope in dialog_scopes:
+        if click_control_by_terms(page, confirmation_terms, scope):
+            page.wait_for_timeout(1500)
+            wait_for_page_idle(page, timeout=15000)
+            return True
+
+    return False
+
+
+def click_punch_control(page, wants_out, allow_generic=False):
+    if wants_out:
+        terms = ["stempel ud", "stempl ud", "check ud", "stop", "afslut"]
+        preferred_selectors = [
+            '#main button:has-text("Stempel ud")',
+            '#main button:has-text("Stempl ud")',
+            '#main a:has-text("Stempel ud")',
+            '#main a:has-text("Stempl ud")',
+            '#main input[value*="Stempel ud"]',
+            '#main input[value*="Stempl ud"]',
+            '#main button:has-text("Stop")',
+            '#main a:has-text("Stop")',
+            '#main input[value*="Stop"]',
+            '#main .punchin-link',
+            '#main .punch-link',
+            '#main a[href*="punch"]',
+            '#main [onclick*="punch"]',
+            '#main [onclick*="Punch"]',
+        ]
+    else:
+        terms = ["stempel ind", "stempl ind", "check ind", "start"]
+        preferred_selectors = [
+            '#main button:has-text("Stempel ind")',
+            '#main button:has-text("Stempl ind")',
+            '#main a:has-text("Stempel ind")',
+            '#main a:has-text("Stempl ind")',
+            '#main input[value*="Stempel ind"]',
+            '#main input[value*="Stempl ind"]',
+            '#main button:has-text("Start")',
+            '#main a:has-text("Start")',
+            '#main input[value*="Start"]',
+            "#main .stamp-list-item a",
+            "#main .punchin-link",
+            "#main .punch-link",
+            '#main a[href*="punch"]',
+            '#main [onclick*="punch"]',
+            '#main [onclick*="Punch"]',
+        ]
+
+    if click_first_available(page, preferred_selectors):
+        return True
+
+    if click_control_by_terms(page, terms, "#main"):
+        return True
+
+    if allow_generic:
+        return click_first_available(page, [
+            '#main button:has-text("Stempel")',
+            '#main button:has-text("Stempl")',
+            '#main a:has-text("Stempel")',
+            '#main a:has-text("Stempl")',
+            "#main button[type='submit']",
+            "#main input[type='submit']",
+        ])
+
+    return False
+
+
+def punch_state_matches(state, before, desired_clocked_in):
+    if not state.get("statusKnown"):
+        return False
+
+    if desired_clocked_in is None:
+        return (
+            before.get("statusKnown")
+            and state.get("clockedIn") != before.get("clockedIn")
+        )
+
+    return state.get("clockedIn") == desired_clocked_in
 
 
 def toggle_punch(page, args, debug_dir):
@@ -680,51 +909,31 @@ def toggle_punch(page, args, debug_dir):
 
     wants_out = desired_clocked_in is False or (desired_clocked_in is None and before.get("clockedIn"))
 
-    if wants_out:
-        terms = ["stempel ud", "stempl ud", "check ud", "stop"]
-        preferred_selectors = [
-            'button:has-text("Stempel ud")',
-            'button:has-text("Stempl ud")',
-            'a:has-text("Stempel ud")',
-            'a:has-text("Stempl ud")',
-            'input[value*="Stempel ud"]',
-            'input[value*="Stempl ud"]',
-            'button:has-text("Stop")',
-            'a:has-text("Stop")',
-            'input[value*="Stop"]',
-        ]
-    else:
-        terms = ["stempel ind", "stempl ind", "check ind", "start"]
-        preferred_selectors = [
-            'button:has-text("Stempel ind")',
-            'button:has-text("Stempl ind")',
-            'a:has-text("Stempel ind")',
-            'a:has-text("Stempl ind")',
-            'input[value*="Stempel ind"]',
-            'input[value*="Stempl ind"]',
-            'button:has-text("Start")',
-            'a:has-text("Start")',
-            'input[value*="Start"]',
-        ]
+    if (
+        desired_clocked_in is not None
+        and before.get("statusKnown")
+        and before.get("clockedIn") == desired_clocked_in
+    ):
+        return {
+            "success": True,
+            "stage": "punch_toggle",
+            "message": "Allerede stemplet ind" if desired_clocked_in else "Allerede stemplet ud",
+            "debugDir": str(debug_dir),
+            **before
+        }
 
-    clicked = click_first_available(page, preferred_selectors)
-    if not clicked:
-        clicked = click_control_by_terms(page, terms)
-    if not clicked and desired_clocked_in is None:
-        clicked = click_first_available(page, [
-            'button:has-text("Stempel")',
-            'button:has-text("Stempl")',
-            'button[type="submit"]',
-            'input[type="submit"]',
-        ])
+    clicked = click_punch_control(page, wants_out, desired_clocked_in is None)
 
     if clicked:
-        page.wait_for_timeout(2500)
+        page.wait_for_timeout(1500)
+        click_punch_dialog_confirmation(page, wants_out)
+        page.wait_for_timeout(3500)
+        wait_for_page_idle(page, timeout=30000)
 
-        try:
-            page.wait_for_load_state("networkidle", timeout=30000)
-        except PlaywrightTimeoutError:
-            pass
+        if has_visible_dialog(page):
+            click_punch_dialog_confirmation(page, wants_out)
+            page.wait_for_timeout(2500)
+            wait_for_page_idle(page, timeout=30000)
 
     page.screenshot(
         path=str(debug_dir / "punch_after_click.png"),
@@ -736,7 +945,7 @@ def toggle_punch(page, args, debug_dir):
         encoding="utf-8"
     )
 
-    page_after = read_punch_state_from_punch_page(page, debug_dir, "punch_after_page")
+    page_after = load_punch_page_state(page, debug_dir, "punch_after_page")
     if not page_after.get("success", True):
         return {
             "success": False,
@@ -746,19 +955,19 @@ def toggle_punch(page, args, debug_dir):
             **page_after,
         }
 
-    after = page_after if page_after.get("statusKnown") else read_punch_state_from_history(page, today, debug_dir, "punch_after_history")
-
-    if desired_clocked_in is None:
-        changed = (
-            before.get("statusKnown")
-            and after.get("statusKnown")
-            and before.get("clockedIn") != after.get("clockedIn")
-        )
-    else:
-        changed = after.get("statusKnown") and after.get("clockedIn") == desired_clocked_in
+    history_after = read_punch_state_from_history(page, today, debug_dir, "punch_after_history")
+    candidates = [page_after, history_after]
+    changed = any(punch_state_matches(candidate, before, desired_clocked_in) for candidate in candidates)
+    after = next(
+        (candidate for candidate in candidates if punch_state_matches(candidate, before, desired_clocked_in)),
+        page_after if page_after.get("statusKnown") else history_after
+    )
 
     if not changed:
-        expected = "ind" if desired_clocked_in else "ud"
+        if desired_clocked_in is None:
+            expected = "ind/ud"
+        else:
+            expected = "ind" if desired_clocked_in else "ud"
         return {
             "success": False,
             "stage": "punch_toggle",

@@ -2,7 +2,8 @@ $ErrorActionPreference = "Stop"
 
 $root = Split-Path -Parent $PSScriptRoot
 $releaseDir = Join-Path $root "build\Desktop_Qt_6_9_3_MinGW_64_bit-Release"
-$stageDir = "C:\ptstage\ProviTracker"
+$tempRoot = [System.IO.Path]::GetFullPath([System.IO.Path]::GetTempPath())
+$stageDir = Join-Path $tempRoot "ProviTrackerBuildStage"
 $cmake = "C:\Qt\Tools\CMake_64\bin\cmake.exe"
 $qtBin = "C:\Qt\6.9.3\mingw_64\bin"
 $mingwBin = "C:\Qt\Tools\mingw1310_64\bin"
@@ -23,7 +24,11 @@ if ($LASTEXITCODE -ne 0) { throw "Release build fejlede." }
 if ($LASTEXITCODE -ne 0) { throw "windeployqt fejlede." }
 
 if (Test-Path $stageDir) {
-    Remove-Item -LiteralPath $stageDir -Recurse -Force
+    $resolvedStage = [System.IO.Path]::GetFullPath((Resolve-Path -LiteralPath $stageDir).Path)
+    if (-not $resolvedStage.StartsWith($tempRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "Afviser at slette staging uden for tempmappen: $resolvedStage"
+    }
+    Remove-Item -LiteralPath $resolvedStage -Recurse -Force
 }
 New-Item -ItemType Directory -Path $stageDir | Out-Null
 
@@ -55,7 +60,7 @@ if ($LASTEXITCODE -gt 7) { throw "Kopiering af Playwright browserpakke fejlede."
 & $iscc "/DBuildDir=$stageDir" $iss
 if ($LASTEXITCODE -ne 0) { throw "Inno Setup build fejlede." }
 
-$installer = Join-Path $root "dist\ProviBeregnerSetup-1.3.13.exe"
+$installer = Join-Path $root "dist\ProviBeregnerSetup-1.3.14.exe"
 if (!(Test-Path $installer)) { throw "Installer blev ikke oprettet: $installer" }
 
 Write-Host "Installer klar: $installer"
