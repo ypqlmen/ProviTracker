@@ -19,8 +19,8 @@
 #include <wincred.h>
 #endif
 
-static constexpr const char* APP_VERSION = "1.3.15";
-static constexpr const wchar_t* APP_VERSION_W = L"1.3.15";
+static constexpr const char* APP_VERSION = "1.3.16";
+static constexpr const wchar_t* APP_VERSION_W = L"1.3.16";
 
 // ============================================================
 // Domain
@@ -2254,6 +2254,7 @@ private:
 
     QLabel* kpiTodayPointsLabel = nullptr;
     QLabel* kpiMonthCommissionLabel = nullptr;
+    QLabel* kpiNextMonthPayLabel = nullptr;
     QLabel* kpiMonthSalesLabel = nullptr;
     QLabel* kpiMonthAddonsLabel = nullptr;
     QLabel* kpiRemainingWorkDaysLabel = nullptr;
@@ -3309,16 +3310,19 @@ QTableWidget::item {
         layout->addLayout(dashboardTop);
 
         auto k1 = createKpiCard("Point i dag");
-        auto k2 = createKpiCard("Løn denne måned");
-        auto k3 = createKpiCard("Salg denne måned");
-        auto k4 = createKpiCard("Tillæg denne måned");
-        auto k5 = createKpiCard("Resterende arbejdsdage");
+        auto k2 = createKpiCard("Faktisk løn denne måned");
+        auto k3 = createKpiCard("Løn til næste måned");
+        auto k4 = createKpiCard("Salg denne måned");
+        auto k5 = createKpiCard("Tillæg denne måned");
+        auto k6 = createKpiCard("Resterende arbejdsdage");
 
         kpiTodayPointsLabel = k1.second;
         kpiMonthCommissionLabel = k2.second;
-        kpiMonthSalesLabel = k3.second;
-        kpiMonthAddonsLabel = k4.second;
-        kpiRemainingWorkDaysLabel = k5.second;
+        kpiNextMonthPayLabel = k3.second;
+        kpiMonthSalesLabel = k4.second;
+        kpiMonthAddonsLabel = k5.second;
+        kpiRemainingWorkDaysLabel = k6.second;
+        kpiRemainingWorkDaysLabel->setWordWrap(false);
 
         auto* kpiGrid = new QGridLayout;
         kpiGrid->setHorizontalSpacing(14);
@@ -3326,8 +3330,9 @@ QTableWidget::item {
         kpiGrid->addWidget(k1.first, 0, 0);
         kpiGrid->addWidget(k2.first, 0, 1);
         kpiGrid->addWidget(k3.first, 0, 2);
-        kpiGrid->addWidget(k4.first, 0, 3);
-        kpiGrid->addWidget(k5.first, 0, 4);
+        kpiGrid->addWidget(k4.first, 1, 0);
+        kpiGrid->addWidget(k5.first, 1, 1);
+        kpiGrid->addWidget(k6.first, 1, 2);
         layout->addLayout(kpiGrid);
 
         auto punchCard = createCard("Stempelur");
@@ -4073,7 +4078,20 @@ QTableWidget::item {
         const QDate now = QDate::currentDate();
         const auto todayRange = qMakePair(QDateTime(now, QTime(0,0,0)), QDateTime(now, QTime(23,59,59)));
         const auto calendarMonthRange = monthRange(now);
+        const auto previousCalendarMonthRange = monthRange(now.addMonths(-1));
+        const auto currentPayPeriod = payrollRangeEndingInMonth(now);
+        const auto nextPayPeriod = payrollRangeEndingInMonth(now.addMonths(1));
         const auto dayBonusPeriod = payrollBonusRange(now);
+        auto cachedHoursForRange = [this](const QPair<QDateTime, QDateTime>& range) {
+            const QString from = intramanagerDate(range.first.date());
+            const QString to = intramanagerDate(range.second.date());
+            return cachedIntramanagerHours(from, to)
+                .value_or(IntramanagerHoursEntry{from, to, 0.0, 0.0, QString()})
+                .hours;
+        };
+        auto delayedBonus = [](const Metrics& metrics) {
+            return metrics.monthlyBonus + metrics.simoBonus + metrics.voiceBonus;
+        };
 
         const auto mDay = CommissionEngine::calculate(repo, s->id, todayRange.first, todayRange.second);
         const auto mMonth = CommissionEngine::calculate(
@@ -4083,31 +4101,72 @@ QTableWidget::item {
             calendarMonthRange.second,
             dayBonusPeriod
             );
+        const auto previousMonthMetrics = CommissionEngine::calculate(
+            repo,
+            s->id,
+            previousCalendarMonthRange.first,
+            previousCalendarMonthRange.second
+            );
+        const auto currentPayPeriodMetrics = CommissionEngine::calculate(
+            repo,
+            s->id,
+            currentPayPeriod.first,
+            currentPayPeriod.second,
+            currentPayPeriod
+            );
+        const auto nextPayPeriodMetrics = CommissionEngine::calculate(
+            repo,
+            s->id,
+            nextPayPeriod.first,
+            nextPayPeriod.second,
+            nextPayPeriod
+            );
+        const auto currentCalendarMetrics = CommissionEngine::calculate(
+            repo,
+            s->id,
+            calendarMonthRange.first,
+            calendarMonthRange.second
+            );
 
         if (daySummaryLabel) daySummaryLabel->setText(summaryCardText(mDay));
         if (monthSummaryLabel) monthSummaryLabel->setText(summaryCardText(mMonth));
 
         if (kpiTodayPointsLabel) kpiTodayPointsLabel->setText(money(mDay.totalPoints));
 
-        const QString currentHoursFrom = intramanagerDate(dayBonusPeriod.first.date());
-        const QString currentHoursTo = intramanagerDate(dayBonusPeriod.second.date());
-        const double workedHoursForCurrentPeriod =
-            cachedIntramanagerHours(currentHoursFrom, currentHoursTo)
-                .value_or(IntramanagerHoursEntry{currentHoursFrom, currentHoursTo, 0.0, 0.0, QString()})
-                .hours;
-        const double baseSalary = workedHoursForCurrentPeriod * repo.settings.hourlyRate;
-        const double totalSalary = baseSalary + mMonth.totalCommission;
+        const double currentPayPeriodBaseSalary = cachedHoursForRange(currentPayPeriod) * repo.settings.hourlyRate;
+        const double currentPayPeriodBonus = currentPayPeriodMetrics.dayBonus;
+        const double backpaidBonusThisMonth = delayedBonus(previousMonthMetrics);
+        const double actualSalaryThisMonth =
+            currentPayPeriodBaseSalary + currentPayPeriodBonus + backpaidBonusThisMonth;
+
+        const double nextPayPeriodBaseSalary = cachedHoursForRange(nextPayPeriod) * repo.settings.hourlyRate;
+        const double nextPayPeriodBonus = nextPayPeriodMetrics.dayBonus;
+        const double backpaidBonusNextMonth = delayedBonus(currentCalendarMetrics);
+        const double salaryEarnedForNextMonth =
+            nextPayPeriodBaseSalary + nextPayPeriodBonus + backpaidBonusNextMonth;
 
         if (kpiMonthCommissionLabel) {
             kpiMonthCommissionLabel->setText(
                 QString(
-                    "Løn denne måned: %1 kr\n"
-                    "Grundløn indtil videre: %2 kr\n"
-                    "Provision indtil videre: %3 kr"
+                    "%1 kr\n"
+                    "Timer: %2 kr\n"
+                    "Bonusser: %3 kr"
                     )
-                    .arg(money(totalSalary))
-                    .arg(money(baseSalary))
-                    .arg(money(mMonth.totalCommission))
+                    .arg(money(actualSalaryThisMonth))
+                    .arg(money(currentPayPeriodBaseSalary))
+                    .arg(money(currentPayPeriodBonus + backpaidBonusThisMonth))
+                );
+        }
+        if (kpiNextMonthPayLabel) {
+            kpiNextMonthPayLabel->setText(
+                QString(
+                    "%1 kr\n"
+                    "Bagbetalt: %2 kr\n"
+                    "21.-20.: %3 kr"
+                    )
+                    .arg(money(salaryEarnedForNextMonth))
+                    .arg(money(backpaidBonusNextMonth))
+                    .arg(money(nextPayPeriodBaseSalary + nextPayPeriodBonus))
                 );
         }
 
@@ -4128,7 +4187,9 @@ QTableWidget::item {
         const int remainingWorkingDays = qMax(0, totalWorkingDays - elapsedWorkingDays);
         if (kpiRemainingWorkDaysLabel) {
             kpiRemainingWorkDaysLabel->setText(
-                QString("%1\narbejdsdage tilbage").arg(remainingWorkingDays)
+                remainingWorkingDays == 1
+                    ? QString("1 dag")
+                    : QString("%1 dage").arg(remainingWorkingDays)
                 );
         }
         const double avgPointsPerActiveDay = activeDays > 0 ? (mMonth.totalPoints / activeDays) : 0.0;
