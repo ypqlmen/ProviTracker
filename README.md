@@ -8,11 +8,11 @@ Qt Widgets desktop-app i C++ med lokal JSON-lagring, per-user installation og Wi
 - Aktiv saelger gemmes lokalt
 - Ordrer med flere produkter i samme ordre
 - Redigering og sletning af ordrer
-- Dashboard med KPI'er, maal og bonusstatus
+- Dashboard med KPI'er, maal og provisionsstatus
 - Rapporter i appen og PDF-eksport
 - Backup/import
 - Automatisk maanedsluk for tidligere maaneder med snapshots + PDF
-- Bonusmotor med 5-trinslaasning for SIMO og 10-trinslaasning for VOICE
+- Provisionsmotor med 5-trinslaasning for SIMO og 10-trinslaasning for VOICE
 - Intramanager-timer caches pr. rapportperiode
 - Webhook-baseret salgsregistrering til Excel Online/Outlook via fx Power Automate
 
@@ -32,12 +32,12 @@ Et Power Automate-flow kan derfor bruge de faste felter til at oprette raekken i
 
 Se `docs/power_automate_salgsregistrering.md`, `docs/microsoft_oauth_power_automate_setup.md` og `scripts/excel_online_sales_registration.ts` for den konkrete flow-opsaetning.
 
-## Bonuslogik
+## Provisionslogik
 
-- Dagsbonus = point * 50
-- Maanedsbonus = alle maanedens point afregnes til hoejeste naaede sats
-- SIMO bonus = hvis SIMO < 5 => 0, ellers `floor(SIMO / 5) * 5 * 200`
-- VOICE bonus = hvis VOICE < 20 => 0, ellers `floor(VOICE / 10) * 10 * 200`
+- Dagsprovision = point * 50
+- Maanedsprovision = alle maanedens point afregnes til hoejeste naaede sats
+- SIMO provision = hvis SIMO < 5 => 0, ellers `floor(SIMO / 5) * 5 * 200`
+- VOICE provision = hvis VOICE < 20 => 0, ellers `floor(VOICE / 10) * 10 * 200`
 
 Eksempler:
 
@@ -92,9 +92,9 @@ WinSparkle laeser appcast fra:
 
 `https://raw.githubusercontent.com/ypqlmen/ProviTracker/main/appcast.xml`
 
-GitHub Release-tagget til auto-update er `autoupdate`, og asset-navnet for version 1.3.17 er:
+GitHub Release-tagget til auto-update er `autoupdate`, og asset-navnet for version 1.3.18 er:
 
-`ProviBeregnerSetup-1.3.17.exe`
+`ProviBeregnerSetup-1.3.18.exe`
 
 Bemærk: den oprindelige 1.1-build indeholdt WinSparkle DLL'en, men ikke en appcast-URL i selve programmet eller installeren. Brugere på 1.1 skal derfor installere en nyere version manuelt én gang; derefter kan auto-update hente fremtidige versioner.
 

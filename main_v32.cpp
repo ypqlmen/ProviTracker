@@ -19,8 +19,8 @@
 #include <wincred.h>
 #endif
 
-static constexpr const char* APP_VERSION = "1.3.17";
-static constexpr const wchar_t* APP_VERSION_W = L"1.3.17";
+static constexpr const char* APP_VERSION = "1.3.18";
+static constexpr const wchar_t* APP_VERSION_W = L"1.3.18";
 
 // ============================================================
 // Domain
@@ -1437,6 +1437,17 @@ static QString nextMonthlyTierHint(double points, const BonusSettings& b) {
     return "Du er allerede på højeste point-tier";
 }
 
+struct ReportSalaryBreakdown {
+    bool usesPaymentMonthRules = false;
+    double baseSalary = 0.0;
+    double periodProvision = 0.0;
+    double delayedProvision = 0.0;
+    double totalProvision = 0.0;
+    double totalSalary = 0.0;
+    QString salaryPeriod;
+    QString delayedPeriod;
+};
+
 // ============================================================
 // Reports / snapshots
 // ============================================================
@@ -1478,15 +1489,19 @@ public:
         const Metrics& m,
         double workedHours = 0.0,
         double hourlyRate = 0.0,
-        const QString& hoursPeriod = QString()
+        const QString& hoursPeriod = QString(),
+        ReportSalaryBreakdown salary = ReportSalaryBreakdown()
         ) {
         const double rate = CommissionEngine::monthlyRatePerPoint(m.totalPoints, repo.settings.bonus);
         const int activeDays = activeDayCount(m);
         const double avgPointsPerActiveDay = activeDays > 0 ? (m.totalPoints / activeDays) : 0.0;
         const double avgCommissionPerActiveDay = activeDays > 0 ? (m.totalCommission / activeDays) : 0.0;
         const auto bestDay = bestDayByPoints(m);
-        const double baseSalary = workedHours * hourlyRate;
-        const double totalSalary = baseSalary + m.totalCommission;
+        if (!salary.usesPaymentMonthRules) {
+            salary.baseSalary = workedHours * hourlyRate;
+            salary.totalProvision = m.totalCommission;
+            salary.totalSalary = salary.baseSalary + salary.totalProvision;
+        }
 
         QString html;
         QTextStream ts(&html);
@@ -1530,9 +1545,9 @@ public:
         addCard("Point nu", money(m.totalPoints));
         addCard("Løntimer", money(workedHours) + " timer");
         addCard("Timeløn", money(hourlyRate) + " kr/t");
-        addCard("Grundløn", money(baseSalary) + " kr");
-        addCard("Provision nu", money(m.totalCommission) + " kr");
-        addCard("Total løn", money(totalSalary) + " kr");
+        addCard("Timer", money(salary.baseSalary) + " kr");
+        addCard("Provision", money(salary.totalProvision) + " kr");
+        addCard("Løn", money(salary.totalSalary) + " kr");
         addCard("Aktive salgsdage", QString::number(activeDays));
         addCard("Snit point pr aktiv dag", money(avgPointsPerActiveDay));
         addCard("Snit provision pr aktiv dag", money(avgCommissionPerActiveDay) + " kr");
@@ -1553,14 +1568,22 @@ public:
         ts << "</table>";
 
         ts << "<div class=\"hint\">" << nextMonthlyTierHint(m.totalPoints, repo.settings.bonus).toHtmlEscaped() << "</div>";
-        ts << "<h2>Løn samlet</h2><div class=\"hint\">Her kombineres løntimer fra Intramanager med provisionen i Provi Tracker.</div><table>";
+        ts << "<h2>Løn</h2><div class=\"hint\">Her kombineres timer fra Intramanager med provision efter samme regler som dashboardet.</div><table>";
         ts << "<tr><th>Felt</th><th>Værdi</th></tr>";
         ts << "<tr><td>Lønperiode</td><td>" << hoursPeriod.toHtmlEscaped() << "</td></tr>";
         ts << "<tr><td>Løntimer</td><td>" << money(workedHours) << " timer</td></tr>";
         ts << "<tr><td>Timeløn</td><td>" << money(hourlyRate) << " kr/t</td></tr>";
-        ts << "<tr><td>Grundløn</td><td>" << money(baseSalary) << " kr</td></tr>";
-        ts << "<tr><td>Provision</td><td>" << money(m.totalCommission) << " kr</td></tr>";
-        ts << "<tr><td><strong>Total løn</strong></td><td><strong>" << money(totalSalary) << " kr</strong></td></tr>";
+        ts << "<tr><td>Timer</td><td>" << money(salary.baseSalary) << " kr</td></tr>";
+        ts << "<tr><td>Provision</td><td>" << money(salary.totalProvision) << " kr</td></tr>";
+        if (salary.usesPaymentMonthRules) {
+            ts << "<tr><td>Provision i lønperioden</td><td>" << money(salary.periodProvision) << " kr";
+            if (!salary.salaryPeriod.isEmpty()) ts << " (" << salary.salaryPeriod.toHtmlEscaped() << ")";
+            ts << "</td></tr>";
+            ts << "<tr><td>Bagbetalt provision</td><td>" << money(salary.delayedProvision) << " kr";
+            if (!salary.delayedPeriod.isEmpty()) ts << " (" << salary.delayedPeriod.toHtmlEscaped() << ")";
+            ts << "</td></tr>";
+        }
+        ts << "<tr><td><strong>Løn</strong></td><td><strong>" << money(salary.totalSalary) << " kr</strong></td></tr>";
         ts << "</table>";
 
         ts << "<h2>Sådan ligger du lige nu</h2><div class=\"hint\">Her kan du se om du er foran, bagud eller lige på kanten af næste løft.</div><table>";
@@ -1581,12 +1604,12 @@ public:
         }
         ts << "</td></tr></table>";
 
-        ts << "<h2>Bonus og næste løft</h2><div class=\"hint\">Når du er tæt på bonus, bliver de næste pengehop fremhævet tydeligt.</div><table>";
+        ts << "<h2>Provision og næste løft</h2><div class=\"hint\">Når du er tæt på provision, bliver de næste pengehop fremhævet tydeligt.</div><table>";
         ts << "<tr><th>Felt</th><th>Værdi</th></tr>";
-        ts << "<tr><td>Dagsbonus / pointbonus (21.–20.)</td><td>" << money(m.dayBonus) << " kr</td></tr>";
-        ts << "<tr><td>Månedsbonus</td><td>" << money(m.monthlyBonus) << " kr</td></tr>";
-        ts << "<tr><td>SIMO bonus</td><td>" << money(m.simoBonus) << " kr</td></tr>";
-        ts << "<tr><td>VOICE bonus</td><td>" << money(m.voiceBonus) << " kr</td></tr>";
+        ts << "<tr><td>Dagsprovision / pointprovision (21.–20.)</td><td>" << money(m.dayBonus) << " kr</td></tr>";
+        ts << "<tr><td>Månedsprovision</td><td>" << money(m.monthlyBonus) << " kr</td></tr>";
+        ts << "<tr><td>SIMO provision</td><td>" << money(m.simoBonus) << " kr</td></tr>";
+        ts << "<tr><td>VOICE provision</td><td>" << money(m.voiceBonus) << " kr</td></tr>";
         ts << "</table>";
 
         ts << "<h2>Det du har lukket</h2><table><tr><th>Produkt</th><th>Antal</th><th>Point</th></tr>";
@@ -1615,10 +1638,11 @@ public:
         const Metrics& m,
         double workedHours = 0.0,
         double hourlyRate = 0.0,
-        const QString& hoursPeriod = QString()
+        const QString& hoursPeriod = QString(),
+        ReportSalaryBreakdown salary = ReportSalaryBreakdown()
         ) {
         QTextDocument doc;
-        doc.setHtml(buildHtmlReport(repo, s, label, m, workedHours, hourlyRate, hoursPeriod));
+        doc.setHtml(buildHtmlReport(repo, s, label, m, workedHours, hourlyRate, hoursPeriod, salary));
         QPrinter printer(QPrinter::HighResolution);
         printer.setOutputFormat(QPrinter::PdfFormat);
         printer.setOutputFileName(path);
@@ -3359,7 +3383,7 @@ QTableWidget::item {
         punchCard.second->addWidget(intramanagerPunchDetailLabel);
         layout->addWidget(punchCard.first);
 
-        auto progressCard = createCard("Mål, bonus og næste løft");
+        auto progressCard = createCard("Mål, provision og næste løft");
         auto* progressLayout = new QGridLayout;
         progressLayout->setHorizontalSpacing(14);
         progressLayout->setVerticalSpacing(14);
@@ -4253,7 +4277,7 @@ QTableWidget::item {
             if (mMonth.simoCount < repo.settings.bonus.simoMinEligible) {
                 simoProgressHintLabel->setText(QString("SIMO åbner ved <b>%1</b>. Du mangler <b>%2</b> for at tænde pengesporet.").arg(repo.settings.bonus.simoMinEligible).arg(qMax(0, repo.settings.bonus.simoMinEligible - mMonth.simoCount)));
             } else {
-                simoProgressHintLabel->setText(QString("Næste SIMO-hop ligger ved <b>%1</b>. Du mangler <b>%2</b>, og så står bonussen på %3.").arg(nextSimoStep).arg(missingToNextSimo).arg(moneySpan(nextSimoBonus, missingToNextSimo <= 1 ? "#22C55E" : "#34D399")));
+                simoProgressHintLabel->setText(QString("Næste SIMO-hop ligger ved <b>%1</b>. Du mangler <b>%2</b>, og så står provisionen på %3.").arg(nextSimoStep).arg(missingToNextSimo).arg(moneySpan(nextSimoBonus, missingToNextSimo <= 1 ? "#22C55E" : "#34D399")));
             }
         }
 
@@ -4274,7 +4298,7 @@ QTableWidget::item {
             if (mMonth.voiceCount < repo.settings.bonus.voiceMinEligible) {
                 voiceProgressHintLabel->setText(QString("VOICE åbner ved <b>%1</b>. Du mangler <b>%2</b>, og derefter hopper den for hver <b>10</b>.").arg(repo.settings.bonus.voiceMinEligible).arg(qMax(0, repo.settings.bonus.voiceMinEligible - mMonth.voiceCount)));
             } else {
-                voiceProgressHintLabel->setText(QString("Næste VOICE-hop ligger ved <b>%1</b>. Du mangler <b>%2</b>, og så står bonussen på %3.").arg(nextVoiceStep).arg(missingToNextVoice).arg(moneySpan(nextVoiceBonus, missingToNextVoice <= 2 ? "#22C55E" : "#34D399")));
+                voiceProgressHintLabel->setText(QString("Næste VOICE-hop ligger ved <b>%1</b>. Du mangler <b>%2</b>, og så står provisionen på %3.").arg(nextVoiceStep).arg(missingToNextVoice).arg(moneySpan(nextVoiceBonus, missingToNextVoice <= 2 ? "#22C55E" : "#34D399")));
             }
         }
 
@@ -5116,12 +5140,14 @@ QTableWidget::item {
         QDateTime hoursTo;
         QDateTime dayBonusFrom;
         QDateTime dayBonusTo;
+        QDate paymentMonth;
     };
 
     ReportRange makeReportRange(
         const QString& label,
         const QPair<QDateTime, QDateTime>& commissionRange,
-        std::optional<QPair<QDateTime, QDateTime>> payrollRange = std::nullopt
+        std::optional<QPair<QDateTime, QDateTime>> payrollRange = std::nullopt,
+        QDate paymentMonth = QDate()
         ) const {
         const auto salaryRange = payrollRange.value_or(commissionRange);
         return {
@@ -5131,7 +5157,8 @@ QTableWidget::item {
             salaryRange.first,
             salaryRange.second,
             salaryRange.first,
-            salaryRange.second
+            salaryRange.second,
+            paymentMonth
         };
     }
 
@@ -5157,15 +5184,16 @@ QTableWidget::item {
 
             case 3: {
                 const auto r = monthRange(now);
-                const auto salaryRange = payrollBonusRange(now);
-                return makeReportRange("Denne måned", r, salaryRange);
+                const auto salaryRange = payrollRangeEndingInMonth(now);
+                return makeReportRange("Denne måned", r, salaryRange, now);
             }
 
             case 4:
             default: {
-                const auto r = monthRange(reportMonthEdit->date());
-                const auto salaryRange = payrollRangeEndingInMonth(reportMonthEdit->date());
-                return makeReportRange(monthKey(reportMonthEdit->date()), r, salaryRange);
+                const QDate paymentMonth = reportMonthEdit->date();
+                const auto r = monthRange(paymentMonth);
+                const auto salaryRange = payrollRangeEndingInMonth(paymentMonth);
+                return makeReportRange(monthKey(paymentMonth), r, salaryRange, paymentMonth);
             }
         }
     }
@@ -5177,6 +5205,50 @@ QTableWidget::item {
 
     QPair<QDateTime, QDateTime> reportDayBonusPeriod(const ReportRange& range) const {
         return {range.dayBonusFrom, range.dayBonusTo};
+    }
+
+    ReportSalaryBreakdown reportSalaryBreakdown(
+        const ReportRange& range,
+        const Salesperson& salesperson,
+        const IntramanagerHoursEntry& hoursEntry
+        ) const {
+        ReportSalaryBreakdown salary;
+        if (!range.paymentMonth.isValid()) {
+            return salary;
+        }
+
+        const QDate paymentMonth(range.paymentMonth.year(), range.paymentMonth.month(), 1);
+        const QDate previousMonth = paymentMonth.addMonths(-1);
+        const auto payrollRange = payrollRangeEndingInMonth(paymentMonth);
+        const auto previousMonthRange = monthRange(previousMonth);
+
+        const auto payrollMetrics = CommissionEngine::calculate(
+            repo,
+            salesperson.id,
+            payrollRange.first,
+            payrollRange.second,
+            payrollRange
+            );
+        const auto previousMonthMetrics = CommissionEngine::calculate(
+            repo,
+            salesperson.id,
+            previousMonthRange.first,
+            previousMonthRange.second
+            );
+
+        salary.usesPaymentMonthRules = true;
+        salary.baseSalary = hoursEntry.hours * repo.settings.hourlyRate;
+        salary.periodProvision = payrollMetrics.dayBonus;
+        salary.delayedProvision =
+            previousMonthMetrics.monthlyBonus + previousMonthMetrics.simoBonus + previousMonthMetrics.voiceBonus;
+        salary.totalProvision = salary.periodProvision + salary.delayedProvision;
+        salary.totalSalary = salary.baseSalary + salary.totalProvision;
+        salary.salaryPeriod = intramanagerPeriodLabel(
+            intramanagerDate(payrollRange.first.date()),
+            intramanagerDate(payrollRange.second.date())
+            );
+        salary.delayedPeriod = QLocale(QLocale::Danish, QLocale::Denmark).toString(previousMonth, "MMMM yyyy");
+        return salary;
     }
 
     QString reportHoursKey(const ReportRange& range) const {
@@ -5314,6 +5386,7 @@ QTableWidget::item {
             );
 
         const QString hoursPeriod = intramanagerPeriodLabel(hoursEntry->fromDate, hoursEntry->toDate);
+        const auto salary = reportSalaryBreakdown(range, *s, *hoursEntry);
 
         reportText->setHtml(
             ReportService::buildHtmlReport(
@@ -5323,7 +5396,8 @@ QTableWidget::item {
                 m,
                 hoursEntry->hours,
                 repo.settings.hourlyRate,
-                hoursPeriod
+                hoursPeriod,
+                salary
                 )
             );
     }
@@ -5377,6 +5451,7 @@ QTableWidget::item {
         const QString path = QFileDialog::getSaveFileName(this, "Gem rapport", defaultPath, "PDF-filer (*.pdf)");
         if (path.isEmpty()) return;
         const QString hoursPeriod = intramanagerPeriodLabel(hoursEntry->fromDate, hoursEntry->toDate);
+        const auto salary = reportSalaryBreakdown(range, *s, *hoursEntry);
 
         if (ReportService::exportPdf(
                 path,
@@ -5386,7 +5461,8 @@ QTableWidget::item {
                 m,
                 hoursEntry->hours,
                 repo.settings.hourlyRate,
-                hoursPeriod
+                hoursPeriod,
+                salary
                 )) {
             QMessageBox::information(this, "Eksporteret", "Rapport gemt.");
         } else {
