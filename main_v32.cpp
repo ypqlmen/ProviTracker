@@ -19,8 +19,8 @@
 #include <wincred.h>
 #endif
 
-static constexpr const char* APP_VERSION = "1.3.18";
-static constexpr const wchar_t* APP_VERSION_W = L"1.3.18";
+static constexpr const char* APP_VERSION = "1.3.19";
+static constexpr const wchar_t* APP_VERSION_W = L"1.3.19";
 
 // ============================================================
 // Domain
@@ -410,8 +410,8 @@ static bool confirmQuestion(QWidget* parent, const QString& title, const QString
 static QPair<QFrame*, QLabel*> createKpiCard(const QString& title) {
     auto card = createCard(title);
 
-    card.first->setMinimumHeight(108);
-    card.first->setMaximumHeight(126);
+    card.first->setMinimumHeight(116);
+    card.first->setMaximumHeight(148);
     card.first->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
 
     auto* valueLabel = new QLabel("-");
@@ -1339,6 +1339,18 @@ static QPair<QDateTime, QDateTime> payrollRangeEndingInMonth(const QDate& date) 
         QDateTime(start, QTime(0, 0, 0)),
         QDateTime(end, QTime(23, 59, 59))
     };
+}
+
+static QDate payoutDateForMonth(const QDate& date) {
+    QDate payout(date.year(), date.month(), date.daysInMonth());
+    while (payout.dayOfWeek() > Qt::Friday) {
+        payout = payout.addDays(-1);
+    }
+    return payout;
+}
+
+static QString payoutDateLabel(const QDate& date) {
+    return QLocale(QLocale::Danish, QLocale::Denmark).toString(payoutDateForMonth(date), "dddd dd-MM-yyyy");
 }
 
 static QPair<QDateTime, QDateTime> workWeekRange(const QDate& date) {
@@ -3346,6 +3358,8 @@ QTableWidget::item {
         kpiMonthSalesLabel = k4.second;
         kpiMonthAddonsLabel = k5.second;
         kpiRemainingWorkDaysLabel = k6.second;
+        kpiMonthCommissionLabel->setTextFormat(Qt::RichText);
+        kpiNextMonthPayLabel->setTextFormat(Qt::RichText);
         kpiRemainingWorkDaysLabel->setWordWrap(false);
 
         auto* kpiGrid = new QGridLayout;
@@ -4080,6 +4094,19 @@ QTableWidget::item {
         return QString("<span style=\"color:%1;font-weight:700;\">%2</span>").arg(color).arg(value);
     }
 
+    QString salaryKpiText(double totalSalary, double baseSalary, double provision, const QDate& payoutMonth) const {
+        return QString(
+            "<span style=\"font-size:19px;font-weight:900;color:#FFFFFF;\">%1 kr</span><br>"
+            "<span style=\"font-size:13px;font-weight:900;color:#D8F5FF;\">Udbetales: %2</span><br>"
+            "<span style=\"font-size:12px;font-weight:800;color:#BFD7EE;\">Timer: %3 kr</span><br>"
+            "<span style=\"font-size:12px;font-weight:800;color:#BFD7EE;\">Provision: %4 kr</span>"
+            )
+            .arg(money(totalSalary))
+            .arg(payoutDateLabel(payoutMonth).toHtmlEscaped())
+            .arg(money(baseSalary))
+            .arg(money(provision));
+    }
+
     QString plainBadgeText(const QString& label, const QString& value) const {
         return QString("<span style=\"color:#9CC7E8;\">%1</span> <span style=\"color:#F8FBFF;font-weight:700;\">%2</span>").arg(label, value);
     }
@@ -4170,28 +4197,20 @@ QTableWidget::item {
             nextPayPeriodBaseSalary + nextPayPeriodBonus + backpaidBonusNextMonth;
 
         if (kpiMonthCommissionLabel) {
-            kpiMonthCommissionLabel->setText(
-                QString(
-                    "%1 kr\n"
-                    "Timer: %2 kr\n"
-                    "Provision: %3 kr"
-                    )
-                    .arg(money(actualSalaryThisMonth))
-                    .arg(money(currentPayPeriodBaseSalary))
-                    .arg(money(currentPayPeriodBonus + backpaidBonusThisMonth))
-                );
+            kpiMonthCommissionLabel->setText(salaryKpiText(
+                actualSalaryThisMonth,
+                currentPayPeriodBaseSalary,
+                currentPayPeriodBonus + backpaidBonusThisMonth,
+                now
+                ));
         }
         if (kpiNextMonthPayLabel) {
-            kpiNextMonthPayLabel->setText(
-                QString(
-                    "%1 kr\n"
-                    "Timer: %2 kr\n"
-                    "Provision: %3 kr"
-                    )
-                    .arg(money(salaryEarnedForNextMonth))
-                    .arg(money(nextPayPeriodBaseSalary))
-                    .arg(money(nextPayPeriodBonus + backpaidBonusNextMonth))
-                );
+            kpiNextMonthPayLabel->setText(salaryKpiText(
+                salaryEarnedForNextMonth,
+                nextPayPeriodBaseSalary,
+                nextPayPeriodBonus + backpaidBonusNextMonth,
+                now.addMonths(1)
+                ));
         }
 
         if (kpiMonthSalesLabel) kpiMonthSalesLabel->setText(QString::number(mMonth.salesCount));
