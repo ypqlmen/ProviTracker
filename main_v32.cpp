@@ -19,8 +19,8 @@
 #include <wincred.h>
 #endif
 
-static constexpr const char* APP_VERSION = "1.3.16";
-static constexpr const wchar_t* APP_VERSION_W = L"1.3.16";
+static constexpr const char* APP_VERSION = "1.3.17";
+static constexpr const wchar_t* APP_VERSION_W = L"1.3.17";
 
 // ============================================================
 // Domain
@@ -3310,7 +3310,7 @@ QTableWidget::item {
         layout->addLayout(dashboardTop);
 
         auto k1 = createKpiCard("Point i dag");
-        auto k2 = createKpiCard("Faktisk løn denne måned");
+        auto k2 = createKpiCard("Løn denne måned");
         auto k3 = createKpiCard("Løn til næste måned");
         auto k4 = createKpiCard("Salg denne måned");
         auto k5 = createKpiCard("Tillæg denne måned");
@@ -4150,7 +4150,7 @@ QTableWidget::item {
                 QString(
                     "%1 kr\n"
                     "Timer: %2 kr\n"
-                    "Bonusser: %3 kr"
+                    "Provision: %3 kr"
                     )
                     .arg(money(actualSalaryThisMonth))
                     .arg(money(currentPayPeriodBaseSalary))
@@ -4161,12 +4161,12 @@ QTableWidget::item {
             kpiNextMonthPayLabel->setText(
                 QString(
                     "%1 kr\n"
-                    "Bagbetalt: %2 kr\n"
-                    "21.-20.: %3 kr"
+                    "Timer: %2 kr\n"
+                    "Provision: %3 kr"
                     )
                     .arg(money(salaryEarnedForNextMonth))
-                    .arg(money(backpaidBonusNextMonth))
-                    .arg(money(nextPayPeriodBaseSalary + nextPayPeriodBonus))
+                    .arg(money(nextPayPeriodBaseSalary))
+                    .arg(money(nextPayPeriodBonus + backpaidBonusNextMonth))
                 );
         }
 
