@@ -5,13 +5,13 @@
     <title>Provi Tracker Updates</title>
 
     <item>
-      <title>Version 1.3.16</title>
+      <title>Version 1.3.17</title>
       <pubDate>Sat, 16 May 2026 00:00:00 +0000</pubDate>
       <enclosure
-        url="https://github.com/ypqlmen/ProviTracker/releases/download/autoupdate/ProviBeregnerSetup-1.3.16.exe"
-        length="273660130"
-        sparkle:version="1.3.16"
-        sparkle:shortVersionString="1.3.16"
+        url="https://github.com/ypqlmen/ProviTracker/releases/download/autoupdate/ProviBeregnerSetup-1.3.17.exe"
+        length="273677673"
+        sparkle:version="1.3.17"
+        sparkle:shortVersionString="1.3.17"
         sparkle:installerArguments="/VERYSILENT /SUPPRESSMSGBOXES /NORESTART"
         type="application/octet-stream" />
     </item>
