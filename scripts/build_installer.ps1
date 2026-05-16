@@ -10,15 +10,19 @@ $mingwBin = "C:\Qt\Tools\mingw1310_64\bin"
 $windeployqt = Join-Path $qtBin "windeployqt.exe"
 $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
 $iss = Join-Path $root "installer\ProviTracker.iss"
+$winSparkleDll = Join-Path $root "third_party\winsparkle\bin\WinSparkle.dll"
 
 if (!(Test-Path $cmake)) { throw "CMake blev ikke fundet: $cmake" }
 if (!(Test-Path $windeployqt)) { throw "windeployqt blev ikke fundet: $windeployqt" }
 if (!(Test-Path $iscc)) { throw "Inno Setup compiler blev ikke fundet: $iscc" }
+if (!(Test-Path $winSparkleDll)) { throw "WinSparkle.dll blev ikke fundet: $winSparkleDll" }
 
 $env:Path = "$mingwBin;$qtBin;$env:Path"
 
 & $cmake --build $releaseDir --config Release
 if ($LASTEXITCODE -ne 0) { throw "Release build fejlede." }
+
+Copy-Item -LiteralPath $winSparkleDll -Destination $releaseDir -Force
 
 & $windeployqt --release --compiler-runtime (Join-Path $releaseDir "ProvisionTrackerV2.exe")
 if ($LASTEXITCODE -ne 0) { throw "windeployqt fejlede." }
@@ -60,7 +64,7 @@ if ($LASTEXITCODE -gt 7) { throw "Kopiering af Playwright browserpakke fejlede."
 & $iscc "/DBuildDir=$stageDir" $iss
 if ($LASTEXITCODE -ne 0) { throw "Inno Setup build fejlede." }
 
-$installer = Join-Path $root "dist\ProviBeregnerSetup-1.3.14.exe"
+$installer = Join-Path $root "dist\ProviBeregnerSetup-1.3.15.exe"
 if (!(Test-Path $installer)) { throw "Installer blev ikke oprettet: $installer" }
 
 Write-Host "Installer klar: $installer"

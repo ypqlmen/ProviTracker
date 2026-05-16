@@ -19,8 +19,8 @@
 #include <wincred.h>
 #endif
 
-static constexpr const char* APP_VERSION = "1.3.14";
-static constexpr const wchar_t* APP_VERSION_W = L"1.3.14";
+static constexpr const char* APP_VERSION = "1.3.15";
+static constexpr const wchar_t* APP_VERSION_W = L"1.3.15";
 
 // ============================================================
 // Domain
@@ -44,6 +44,7 @@ static void initAutoUpdate()
     typedef void (*set_interval_t)(int);
     typedef void (*check_without_ui_t)();
     typedef void (*check_with_ui_and_install_t)();
+    typedef void (*cleanup_t)();
 
     if (!sparkle.load()) {
         return;
@@ -56,6 +57,7 @@ static void initAutoUpdate()
     auto set_interval = (set_interval_t)sparkle.resolve("win_sparkle_set_update_check_interval");
     auto check_without_ui = (check_without_ui_t)sparkle.resolve("win_sparkle_check_update_without_ui");
     auto check_with_ui_and_install = (check_with_ui_and_install_t)sparkle.resolve("win_sparkle_check_update_with_ui_and_install");
+    auto cleanup = (cleanup_t)sparkle.resolve("win_sparkle_cleanup");
 
     if (init && set_url && set_details) {
         set_url("https://raw.githubusercontent.com/ypqlmen/ProviTracker/main/appcast.xml");
@@ -63,6 +65,11 @@ static void initAutoUpdate()
         if (set_auto) set_auto(1);
         if (set_interval) set_interval(60 * 60);
         init();
+        if (cleanup) {
+            QObject::connect(qApp, &QCoreApplication::aboutToQuit, qApp, [cleanup]() {
+                cleanup();
+            });
+        }
         if (check_with_ui_and_install || check_without_ui) {
             QTimer::singleShot(4000, qApp, [check_with_ui_and_install, check_without_ui]() {
                 if (check_with_ui_and_install) {
@@ -2582,7 +2589,7 @@ private:
         intramanagerAutoSyncTimer->setInterval(5 * 60 * 1000);
 
         connect(intramanagerAutoSyncTimer, &QTimer::timeout, this, [this]() {
-            refreshIntramanagerPunchStatusAsync(true);
+            refreshCurrentIntramanagerStateAsync();
         });
 
         intramanagerAutoSyncTimer->start();
@@ -2595,15 +2602,9 @@ private:
         std::function<void(bool)> afterFetch = {}
         ) {
         if (intramanagerSyncRunning) {
-            if (afterFetch) {
-                QTimer::singleShot(1500, this, [this, fromDate, toDate, silent, afterFetch]() {
-                    if (hasCachedIntramanagerHours(fromDate, toDate)) {
-                        afterFetch(true);
-                    } else {
-                        fetchIntramanagerHoursAsync(fromDate, toDate, silent, afterFetch);
-                    }
-                });
-            }
+            QTimer::singleShot(1500, this, [this, fromDate, toDate, silent, afterFetch]() {
+                fetchIntramanagerHoursAsync(fromDate, toDate, silent, afterFetch);
+            });
             return;
         }
 
@@ -5342,10 +5343,13 @@ protected:
 
 int main(int argc, char *argv[]) {
     QApplication app(argc, argv);
-    initAutoUpdate();
 
     MainWindow w;
     w.show();
+
+    QTimer::singleShot(1500, &app, []() {
+        initAutoUpdate();
+    });
 
     return app.exec();
 }
