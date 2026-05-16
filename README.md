@@ -51,6 +51,16 @@ Eksempler:
 - 29 VOICE = 4000
 - 30 VOICE = 6000
 
+## Kodestruktur
+
+- `main_v32.cpp` indeholder app-start, hovedvindue, UI-opbygning og brugerflows.
+- `storage_paths.h` indeholder AppData-stier og migration fra gamle installationer.
+- `domain.h` indeholder modeller, settings og JSON-serialisering.
+- `credentials.h` indeholder Windows Credential Manager-hjælpere.
+- `repository.h` indeholder lokal JSON-lagring og produktkatalog-migration.
+- `commission.h` indeholder provisions-, lønperiode- og datoberegninger.
+- `report_service.h` indeholder HTML/PDF-rapportgenerering og månedsluk.
+
 ## Byg med CMake + Qt 6
 
 ```powershell
