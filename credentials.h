@@ -2,8 +2,10 @@
 
 #include <QtCore>
 #include <string>
+#include "storage_paths.h"
 #ifdef Q_OS_WIN
 #include <windows.h>
+#include <wincrypt.h>
 #include <wincred.h>
 #endif
 
@@ -18,34 +20,113 @@ static QString wStringToQString(const std::wstring& s) {
     return QString::fromWCharArray(s.c_str(), static_cast<int>(s.size()));
 }
 
-static bool saveIntramanagerPassword(const QString& username, const QString& password) {
+static QString intramanagerPasswordStorePath() {
+    return appStorageDir() + "/intramanager_login.json";
+}
+
+static QByteArray intramanagerPasswordEntropy() {
+    return QByteArrayLiteral("ProviTracker.Intramanager.Password.v1");
+}
+
+static bool protectForCurrentWindowsUser(const QByteArray& plainText, QByteArray* protectedDataOut) {
 #ifdef Q_OS_WIN
-    if (username.trimmed().isEmpty() || password.isEmpty()) {
+    if (plainText.isEmpty() || !protectedDataOut) {
         return false;
     }
 
-    const std::wstring user = qStringToWString(username);
-    const std::wstring pass = qStringToWString(password);
+    const QByteArray entropy = intramanagerPasswordEntropy();
 
-    CREDENTIALW cred;
-    ZeroMemory(&cred, sizeof(cred));
+    DATA_BLOB plainBlob;
+    plainBlob.cbData = static_cast<DWORD>(plainText.size());
+    plainBlob.pbData = reinterpret_cast<BYTE*>(const_cast<char*>(plainText.constData()));
 
-    cred.Type = CRED_TYPE_GENERIC;
-    cred.TargetName = const_cast<LPWSTR>(INTRAMANAGER_CREDENTIAL_TARGET);
-    cred.UserName = const_cast<LPWSTR>(user.c_str());
-    cred.CredentialBlobSize = static_cast<DWORD>(pass.size() * sizeof(wchar_t));
-    cred.CredentialBlob = reinterpret_cast<LPBYTE>(const_cast<wchar_t*>(pass.c_str()));
-    cred.Persist = CRED_PERSIST_LOCAL_MACHINE;
+    DATA_BLOB entropyBlob;
+    entropyBlob.cbData = static_cast<DWORD>(entropy.size());
+    entropyBlob.pbData = reinterpret_cast<BYTE*>(const_cast<char*>(entropy.constData()));
 
-    return CredWriteW(&cred, 0) == TRUE;
+    DATA_BLOB protectedBlob;
+    ZeroMemory(&protectedBlob, sizeof(protectedBlob));
+
+    const BOOL ok = CryptProtectData(
+        &plainBlob,
+        L"ProviTracker Intramanager password",
+        &entropyBlob,
+        nullptr,
+        nullptr,
+        CRYPTPROTECT_UI_FORBIDDEN,
+        &protectedBlob
+        );
+
+    if (!ok) {
+        return false;
+    }
+
+    *protectedDataOut = QByteArray(
+        reinterpret_cast<const char*>(protectedBlob.pbData),
+        static_cast<int>(protectedBlob.cbData)
+        );
+    LocalFree(protectedBlob.pbData);
+    return true;
 #else
-    Q_UNUSED(username);
-    Q_UNUSED(password);
+    Q_UNUSED(plainText);
+    Q_UNUSED(protectedDataOut);
     return false;
 #endif
 }
 
-static bool loadIntramanagerPassword(QString* usernameOut, QString* passwordOut) {
+static bool unprotectForCurrentWindowsUser(const QByteArray& protectedData, QByteArray* plainTextOut) {
+#ifdef Q_OS_WIN
+    if (protectedData.isEmpty() || !plainTextOut) {
+        return false;
+    }
+
+    const QByteArray entropy = intramanagerPasswordEntropy();
+
+    DATA_BLOB protectedBlob;
+    protectedBlob.cbData = static_cast<DWORD>(protectedData.size());
+    protectedBlob.pbData = reinterpret_cast<BYTE*>(const_cast<char*>(protectedData.constData()));
+
+    DATA_BLOB entropyBlob;
+    entropyBlob.cbData = static_cast<DWORD>(entropy.size());
+    entropyBlob.pbData = reinterpret_cast<BYTE*>(const_cast<char*>(entropy.constData()));
+
+    DATA_BLOB plainBlob;
+    ZeroMemory(&plainBlob, sizeof(plainBlob));
+
+    const BOOL ok = CryptUnprotectData(
+        &protectedBlob,
+        nullptr,
+        &entropyBlob,
+        nullptr,
+        nullptr,
+        CRYPTPROTECT_UI_FORBIDDEN,
+        &plainBlob
+        );
+
+    if (!ok) {
+        return false;
+    }
+
+    *plainTextOut = QByteArray(
+        reinterpret_cast<const char*>(plainBlob.pbData),
+        static_cast<int>(plainBlob.cbData)
+        );
+    LocalFree(plainBlob.pbData);
+    return true;
+#else
+    Q_UNUSED(protectedData);
+    Q_UNUSED(plainTextOut);
+    return false;
+#endif
+}
+
+static void deleteLegacyIntramanagerCredential() {
+#ifdef Q_OS_WIN
+    CredDeleteW(INTRAMANAGER_CREDENTIAL_TARGET, CRED_TYPE_GENERIC, 0);
+#endif
+}
+
+static bool loadLegacyIntramanagerCredential(QString* usernameOut, QString* passwordOut) {
 #ifdef Q_OS_WIN
     PCREDENTIALW cred = nullptr;
 
@@ -72,6 +153,104 @@ static bool loadIntramanagerPassword(QString* usernameOut, QString* passwordOut)
     Q_UNUSED(passwordOut);
     return false;
 #endif
+}
+
+static bool saveIntramanagerPassword(const QString& username, const QString& password) {
+    if (username.trimmed().isEmpty() || password.isEmpty()) {
+        return false;
+    }
+
+    QByteArray protectedPassword;
+    if (!protectForCurrentWindowsUser(password.toUtf8(), &protectedPassword)) {
+        return false;
+    }
+
+    QDir().mkpath(appStorageDir());
+
+    QJsonObject login;
+    login["format"] = "dpapi-current-user-v1";
+    login["username"] = username.trimmed();
+    login["password"] = QString::fromLatin1(protectedPassword.toBase64());
+    login["savedAt"] = QDateTime::currentDateTime().toString(Qt::ISODate);
+
+    QSaveFile file(intramanagerPasswordStorePath());
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        return false;
+    }
+
+    file.write(QJsonDocument(login).toJson(QJsonDocument::Indented));
+    if (!file.commit()) {
+        return false;
+    }
+
+    deleteLegacyIntramanagerCredential();
+    return true;
+}
+
+static bool loadStoredIntramanagerPassword(QString* usernameOut, QString* passwordOut) {
+    QFile file(intramanagerPasswordStorePath());
+    if (!file.open(QIODevice::ReadOnly)) {
+        return false;
+    }
+
+    QJsonParseError error;
+    const QJsonDocument doc = QJsonDocument::fromJson(file.readAll(), &error);
+    if (error.error != QJsonParseError::NoError || !doc.isObject()) {
+        return false;
+    }
+
+    const QJsonObject login = doc.object();
+    if (login.value("format").toString() != "dpapi-current-user-v1") {
+        return false;
+    }
+
+    const QByteArray protectedPassword = QByteArray::fromBase64(
+        login.value("password").toString().toLatin1()
+        );
+
+    QByteArray plainPassword;
+    if (!unprotectForCurrentWindowsUser(protectedPassword, &plainPassword)) {
+        return false;
+    }
+
+    const QString password = QString::fromUtf8(plainPassword);
+    if (password.isEmpty()) {
+        return false;
+    }
+
+    if (usernameOut) {
+        *usernameOut = login.value("username").toString();
+    }
+    if (passwordOut) {
+        *passwordOut = password;
+    }
+
+    return true;
+}
+
+static bool loadIntramanagerPassword(QString* usernameOut, QString* passwordOut) {
+    if (loadStoredIntramanagerPassword(usernameOut, passwordOut)) {
+        return true;
+    }
+
+    QString legacyUsername;
+    QString legacyPassword;
+    if (!loadLegacyIntramanagerCredential(&legacyUsername, &legacyPassword) || legacyPassword.isEmpty()) {
+        return false;
+    }
+
+    if (usernameOut) {
+        *usernameOut = legacyUsername;
+    }
+    if (passwordOut) {
+        *passwordOut = legacyPassword;
+    }
+
+    if (!legacyUsername.trimmed().isEmpty()) {
+        saveIntramanagerPassword(legacyUsername, legacyPassword);
+    }
+
+    return true;
 }
 
 static bool saveMicrosoftRefreshToken(const QString& accountHint, const QString& refreshToken) {

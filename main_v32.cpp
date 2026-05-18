@@ -21,8 +21,8 @@
 #include "commission.h"
 #include "report_service.h"
 
-static constexpr const char* APP_VERSION = "1.3.19";
-static constexpr const wchar_t* APP_VERSION_W = L"1.3.19";
+static constexpr const char* APP_VERSION = "1.3.20";
+static constexpr const wchar_t* APP_VERSION_W = L"1.3.20";
 
 
 static void initAutoUpdate()
@@ -360,16 +360,16 @@ class SalespersonPickerDialog : public QDialog {
 public:
     SalespersonPickerDialog(Repository& repo, QWidget* parent = nullptr)
         : QDialog(parent), repo(repo) {
-        setWindowTitle("Vælg sælger");
+        setWindowTitle("V?lg s?lger");
         resize(420, 300);
         auto* layout = new QVBoxLayout(this);
         list = new QListWidget;
         for (const auto& s : repo.salespeople) list->addItem(s.name);
         nameEdit = new QLineEdit;
-        nameEdit->setPlaceholderText("Opret ny sælger...");
+        nameEdit->setPlaceholderText("Opret ny s?lger...");
         auto* createBtn = new QPushButton("Opret ny");
-        auto* selectBtn = new QPushButton("Brug valgt sælger");
-        layout->addWidget(new QLabel("Vælg aktiv sælger eller opret en ny:"));
+        auto* selectBtn = new QPushButton("Brug valgt s?lger");
+        layout->addWidget(new QLabel("V?lg aktiv s?lger eller opret en ny:"));
         layout->addWidget(list);
         layout->addWidget(nameEdit);
         auto* row = new QHBoxLayout;
@@ -420,7 +420,7 @@ public:
         detailsGrid->setHorizontalSpacing(12);
         detailsGrid->setVerticalSpacing(10);
         idEdit = new QLineEdit(order.id);
-        idEdit->setPlaceholderText("Indtast eller indsæt ordre-ID...");
+        idEdit->setPlaceholderText("Indtast eller inds?t ordre-ID...");
         idEdit->setClearButtonEnabled(true);
         idEdit->setMinimumWidth(240);
         dateEdit = new QDateTimeEdit(order.createdAt);
@@ -508,7 +508,7 @@ public:
         auto* btnRow = new QHBoxLayout;
         btnRow->setContentsMargins(0, 0, 0, 0);
 
-        auto* addLineBtn = new QPushButton("Tilføj produkt");
+        auto* addLineBtn = new QPushButton("Tilf?j produkt");
         auto* duplicateLastBtn = new QPushButton("Gentag sidste produkt");
         auto* saveBtn = new QPushButton("Gem ordre");
         auto* cancelBtn = new QPushButton("Annuller");
@@ -557,7 +557,7 @@ public:
         connect(saveBtn, &QPushButton::clicked, this, [this]() {
             order.id = idEdit->text().trimmed();
             if (order.id.isEmpty()) {
-                QMessageBox::warning(this, "Manglende ordre-ID", "Du skal indtaste eller indsætte et ordre-ID.");
+                QMessageBox::warning(this, "Manglende ordre-ID", "Du skal indtaste eller inds?tte et ordre-ID.");
                 return;
             }
             order.sellerInitials = initialsEdit->text().trimmed();
@@ -586,7 +586,7 @@ public:
                 order.items.push_back({productKey, qty});
             }
             if (order.items.isEmpty()) {
-                QMessageBox::warning(this, "Tom ordre", "Du skal tilføje mindst ét produkt.");
+                QMessageBox::warning(this, "Tom ordre", "Du skal tilf?je mindst ?t produkt.");
                 return;
             }
             accept();
@@ -671,7 +671,7 @@ private:
             const auto* p = repo.findProduct(productKey);
             if (!p) continue;
             auto* btn = new QPushButton(p->displayName);
-            btn->setToolTip(QString("Tilføj %1").arg(p->displayName));
+            btn->setToolTip(QString("Tilf?j %1").arg(p->displayName));
             layout->addWidget(btn);
             connect(btn, &QPushButton::clicked, this, [this, productKey]() { addFavoriteProduct(productKey); });
         }
@@ -692,7 +692,7 @@ private:
             const auto* p = repo.findProduct(productKey);
             if (!p) continue;
             auto* btn = new QPushButton(p->displayName);
-            btn->setToolTip(QString("Tilføj %1 igen").arg(p->displayName));
+            btn->setToolTip(QString("Tilf?j %1 igen").arg(p->displayName));
             layout->addWidget(btn);
             connect(btn, &QPushButton::clicked, this, [this, productKey]() { addFavoriteProduct(productKey); });
         }
@@ -715,17 +715,17 @@ private:
             if (b == "Fiber") return false;
             if (a == "FWA") return true;
             if (b == "FWA") return false;
-            if (a == "Mobilt bredbånd") return true;
-            if (b == "Mobilt bredbånd") return false;
-            if (a == "Tillæg") return false;
-            if (b == "Tillæg") return true;
+            if (a == "Mobilt bredb?nd") return true;
+            if (b == "Mobilt bredb?nd") return false;
+            if (a == "Till?g") return false;
+            if (b == "Till?g") return true;
             return a.localeAwareCompare(b) < 0;
         });
         return out;
     }
 
     QString productInfoText(const Product* p) const {
-        if (!p) return "Vælg produkt";
+        if (!p) return "V?lg produkt";
         return QString("%1 point | %2").arg(money(p->points), countModeBadge(p->countMode));
     }
 
@@ -1151,7 +1151,7 @@ private:
         if (lower.contains("kontorets") || lower.contains("kontor")
             || lower.contains("ip-adresse") || lower.contains("ip adresse")
             || lower.contains("forbidden") || lower.contains("permission")) {
-            return "Man kan kun stemple ind eller ud på kontorets internet.";
+            return "Man kan kun stemple ind eller ud p? kontorets internet.";
         }
         return text.isEmpty() ? "Ukendt fejl ved stempelstatus." : text;
     }
@@ -1191,12 +1191,12 @@ private:
     }
 
     QString cleanPunchText(QString text) const {
-        text.replace(QString::fromUtf8("Ã¦"), QString::fromUtf8("æ"));
-        text.replace(QString::fromUtf8("Ã¸"), QString::fromUtf8("ø"));
-        text.replace(QString::fromUtf8("Ã¥"), QString::fromUtf8("å"));
-        text.replace(QString::fromUtf8("Ã†"), QString::fromUtf8("Æ"));
-        text.replace(QString::fromUtf8("Ã˜"), QString::fromUtf8("Ø"));
-        text.replace(QString::fromUtf8("Ã…"), QString::fromUtf8("Å"));
+        text.replace(QString::fromUtf8("??"), QString::fromUtf8("?"));
+        text.replace(QString::fromUtf8("??"), QString::fromUtf8("?"));
+        text.replace(QString::fromUtf8("??"), QString::fromUtf8("?"));
+        text.replace(QString::fromUtf8("??"), QString::fromUtf8("?"));
+        text.replace(QString::fromUtf8("??"), QString::fromUtf8("?"));
+        text.replace(QString::fromUtf8("??"), QString::fromUtf8("?"));
         return text;
     }
 
@@ -1244,7 +1244,7 @@ private:
         if (intramanagerPunchButton) {
             intramanagerPunchButton->setEnabled(repo.settings.intramanagerEnabled && !intramanagerPunchRunning);
             if (!repo.settings.intramanagerEnabled) {
-                intramanagerPunchButton->setText("Kræver login");
+                intramanagerPunchButton->setText("Kr?ver login");
             } else if (intramanagerPunchRunning) {
                 intramanagerPunchButton->setText("Arbejder...");
             } else if (!punch.known) {
@@ -1562,7 +1562,7 @@ private:
                 this,
                 "Intramanager",
                 "Worker-filen blev ikke fundet:\n" + workerPath +
-                    "\n\nKopiér mappen intramanager_worker ind ved siden af .exe-filen."
+                    "\n\nKopi?r mappen intramanager_worker ind ved siden af .exe-filen."
                 );
             return;
         }
@@ -1911,7 +1911,7 @@ QTableWidget::item {
         auto* topBar = new QHBoxLayout;
         activeSalespersonLabel = new QLabel;
         activeSalespersonLabel->setStyleSheet("QLabel { color: #F8FBFF; font-size: 14px; font-weight: 700; }");
-        auto* switchBtn = new QPushButton("Skift sælger");
+        auto* switchBtn = new QPushButton("Skift s?lger");
         auto* newOrderBtn = new QPushButton("Ny ordre");
         topBar->addWidget(activeSalespersonLabel);
         topBar->addStretch();
@@ -1994,10 +1994,10 @@ QTableWidget::item {
         layout->addLayout(dashboardTop);
 
         auto k1 = createKpiCard("Point i dag");
-        auto k2 = createKpiCard("Løn denne måned");
-        auto k3 = createKpiCard("Løn til næste måned");
-        auto k4 = createKpiCard("Salg denne måned");
-        auto k5 = createKpiCard("Tillæg denne måned");
+        auto k2 = createKpiCard("L?n denne m?ned");
+        auto k3 = createKpiCard("L?n til n?ste m?ned");
+        auto k4 = createKpiCard("Salg denne m?ned");
+        auto k5 = createKpiCard("Till?g denne m?ned");
         auto k6 = createKpiCard("Resterende arbejdsdage");
 
         kpiTodayPointsLabel = k1.second;
@@ -2045,15 +2045,15 @@ QTableWidget::item {
         punchCard.second->addWidget(intramanagerPunchDetailLabel);
         layout->addWidget(punchCard.first);
 
-        auto progressCard = createCard("Mål, provision og næste løft");
+        auto progressCard = createCard("M?l, provision og n?ste l?ft");
         auto* progressLayout = new QGridLayout;
         progressLayout->setHorizontalSpacing(14);
         progressLayout->setVerticalSpacing(14);
 
-        progressLayout->addWidget(createProgressCard("Point mod månedens mål", &targetProgressBar, &targetProgressHintLabel), 0, 0);
-        progressLayout->addWidget(createProgressCard("Salg mod månedens mål", &salesTargetProgressBar, &salesTargetProgressHintLabel), 0, 1);
-        progressLayout->addWidget(createProgressCard("SIMO · næste pengehop", &simoProgressBar, &simoProgressHintLabel), 1, 0);
-        progressLayout->addWidget(createProgressCard("VOICE · næste pengehop", &voiceProgressBar, &voiceProgressHintLabel), 1, 1);
+        progressLayout->addWidget(createProgressCard("Point mod m?nedens m?l", &targetProgressBar, &targetProgressHintLabel), 0, 0);
+        progressLayout->addWidget(createProgressCard("Salg mod m?nedens m?l", &salesTargetProgressBar, &salesTargetProgressHintLabel), 0, 1);
+        progressLayout->addWidget(createProgressCard("SIMO ? n?ste pengehop", &simoProgressBar, &simoProgressHintLabel), 1, 0);
+        progressLayout->addWidget(createProgressCard("VOICE ? n?ste pengehop", &voiceProgressBar, &voiceProgressHintLabel), 1, 1);
 
         progressCard.second->addLayout(progressLayout);
         layout->addWidget(progressCard.first);
@@ -2124,7 +2124,7 @@ QTableWidget::item {
         tableCard.second->addStretch();
         layout->addWidget(tableCard.first, 1);
 
-        // 🔌 CONNECTS (HER SKAL DE STÅ)
+        // ?? CONNECTS (HER SKAL DE ST?)
         connect(refreshBtn, &QPushButton::clicked, this, [this]() {
             refreshOrdersTable();
         });
@@ -2154,7 +2154,7 @@ QTableWidget::item {
         top->setContentsMargins(0, 0, 0, 0);
 
         reportPresetCombo = new QComboBox;
-        reportPresetCombo->addItems({"I dag", "Denne arbejdsuge", "Seneste 2 arbejdsuger", "Denne lønmåned", "Vælg måned"});
+        reportPresetCombo->addItems({"I dag", "Denne arbejdsuge", "Seneste 2 arbejdsuger", "Denne l?nm?ned", "V?lg m?ned"});
 
         reportMonthEdit = new QDateEdit(QDate::currentDate());
         reportMonthEdit->setDisplayFormat("MMMM yyyy");
@@ -2166,7 +2166,7 @@ QTableWidget::item {
 
         top->addWidget(new QLabel("Visning:"));
         top->addWidget(reportPresetCombo);
-        top->addWidget(new QLabel("Måned:"));
+        top->addWidget(new QLabel("M?ned:"));
         top->addWidget(reportMonthEdit);
         top->addWidget(exportBtn);
         top->addStretch();
@@ -2211,7 +2211,7 @@ QTableWidget::item {
         auto* left = new QVBoxLayout;
         left->setSpacing(18);
 
-        auto goalCard = createCard("Mål");
+        auto goalCard = createCard("M?l");
         auto* form = new QFormLayout;
         form->setSpacing(12);
         form->setLabelAlignment(Qt::AlignLeft | Qt::AlignVCenter);
@@ -2226,22 +2226,22 @@ QTableWidget::item {
         monthlySalesTargetSpin->setRange(0, 100000);
         monthlySalesTargetSpin->setButtonSymbols(QAbstractSpinBox::NoButtons);
 
-        form->addRow("Pointmål for måneden", targetSpin);
-        form->addRow("Salgsmål for måneden", monthlySalesTargetSpin);
+        form->addRow("Pointm?l for m?neden", targetSpin);
+        form->addRow("Salgsm?l for m?neden", monthlySalesTargetSpin);
 
-        auto* saveGoalBtn = new QPushButton("Gem mål");
+        auto* saveGoalBtn = new QPushButton("Gem m?l");
         form->addRow(saveGoalBtn);
 
         goalCard.second->addLayout(form);
         goalCard.second->addStretch();
         left->addWidget(goalCard.first, 1);
 
-        auto intramanagerCard = createCard("Intramanager og timeløn");
+        auto intramanagerCard = createCard("Intramanager og timel?n");
 
         auto* imForm = new QFormLayout;
         imForm->setSpacing(12);
 
-        intramanagerEnabledCheck = new QCheckBox("Aktivér Intramanager og automatisk timehentning");
+        intramanagerEnabledCheck = new QCheckBox("Aktiv?r Intramanager og automatisk timehentning");
         intramanagerEnabledCheck->setFocusPolicy(Qt::NoFocus);
 
         intramanagerUsernameEdit = new QLineEdit;
@@ -2257,16 +2257,16 @@ QTableWidget::item {
         hourlyRateSpin->setSuffix(" kr/t");
         hourlyRateSpin->setButtonSymbols(QAbstractSpinBox::NoButtons);
 
-        auto* saveIntramanagerBtn = new QPushButton("Gem Intramanager og timeløn");
+        auto* saveIntramanagerBtn = new QPushButton("Gem Intramanager og timel?n");
 
-        intramanagerStatusLabel = new QLabel("Timer hentes automatisk, når rapporter har brug for dem.");
+        intramanagerStatusLabel = new QLabel("Timer hentes automatisk, n?r rapporter har brug for dem.");
         intramanagerStatusLabel->setWordWrap(true);
         intramanagerStatusLabel->setTextInteractionFlags(Qt::NoTextInteraction);
 
         imForm->addRow(intramanagerEnabledCheck);
         imForm->addRow("Brugernavn", intramanagerUsernameEdit);
         imForm->addRow("Adgangskode", intramanagerPasswordEdit);
-        imForm->addRow("Timeløn", hourlyRateSpin);
+        imForm->addRow("Timel?n", hourlyRateSpin);
         imForm->addRow(saveIntramanagerBtn);
         imForm->addRow("Status", intramanagerStatusLabel);
 
@@ -2315,7 +2315,7 @@ QTableWidget::item {
         salesRegistrationStatusLabel->setWordWrap(true);
         salesRegistrationStatusLabel->setTextInteractionFlags(Qt::NoTextInteraction);
 
-        salesRegForm->addRow("Sælger initialer", defaultSellerInitialsEdit);
+        salesRegForm->addRow("S?lger initialer", defaultSellerInitialsEdit);
         salesRegForm->addRow("Webhook URL", salesRegistrationWebhookEdit);
         salesRegForm->addRow("Modtager-mail", salesRegistrationRecipientEdit);
         salesRegForm->addRow(salesRegistrationEnabledCheck);
@@ -2335,15 +2335,15 @@ QTableWidget::item {
         auto* right = new QVBoxLayout;
         right->setSpacing(18);
 
-        auto sellerCard = createCard("Sælgere");
+        auto sellerCard = createCard("S?lgere");
         salespeopleList = new QListWidget;
 
         auto* sellerNameEdit = new QLineEdit;
-        sellerNameEdit->setPlaceholderText("Nyt sælgernavn");
+        sellerNameEdit->setPlaceholderText("Nyt s?lgernavn");
 
-        auto* addSellerBtn = new QPushButton("Tilføj sælger");
-        auto* activateBtn = new QPushButton("Sæt som aktiv");
-        auto* deleteSellerBtn = new QPushButton("Slet valgt sælger");
+        auto* addSellerBtn = new QPushButton("Tilf?j s?lger");
+        auto* activateBtn = new QPushButton("S?t som aktiv");
+        auto* deleteSellerBtn = new QPushButton("Slet valgt s?lger");
 
         sellerCard.second->addWidget(salespeopleList);
         sellerCard.second->addWidget(sellerNameEdit);
@@ -2355,8 +2355,8 @@ QTableWidget::item {
         right->addWidget(sellerCard.first, 1);
 
         auto backupCard = createCard("Backup");
-        auto* exportBackupBtn = new QPushButton("Eksportér backup");
-        auto* importBackupBtn = new QPushButton("Importér backup");
+        auto* exportBackupBtn = new QPushButton("Eksport?r backup");
+        auto* importBackupBtn = new QPushButton("Import?r backup");
 
         backupCard.second->addWidget(exportBackupBtn);
         backupCard.second->addWidget(importBackupBtn);
@@ -2391,11 +2391,11 @@ QTableWidget::item {
             }
 
             if (!passwordSaved) {
-                intramanagerStatusLabel->setText("Indstillinger gemt, men adgangskoden kunne ikke gemmes sikkert.");
+                intramanagerStatusLabel->setText("Indstillinger gemt, men adgangskoden kunne ikke gemmes krypteret.");
             } else {
-                intramanagerStatusLabel->setText("Intramanager og timeløn er gemt.");
+                intramanagerStatusLabel->setText("Intramanager og timel?n er gemt.");
                 intramanagerPasswordEdit->clear();
-                intramanagerPasswordEdit->setPlaceholderText("Adgangskode er gemt sikkert");
+                intramanagerPasswordEdit->setPlaceholderText("Adgangskode er gemt krypteret lokalt");
             }
 
             refreshAll();
@@ -2456,12 +2456,12 @@ QTableWidget::item {
             const int row = salespeopleList->currentRow();
             if (row < 0 || row >= static_cast<int>(repo.salespeople.size())) return;
             if (repo.salespeople.size() <= 1) {
-                QMessageBox::warning(this, "Kan ikke slette", "Der skal være mindst én sælger i programmet.");
+                QMessageBox::warning(this, "Kan ikke slette", "Der skal v?re mindst ?n s?lger i programmet.");
                 return;
             }
 
             const auto seller = repo.salespeople[row];
-            if (!confirmQuestion(this, "Slet sælger", QString("Er du sikker på, at du vil slette '%1'?").arg(seller.name))) {
+            if (!confirmQuestion(this, "Slet s?lger", QString("Er du sikker p?, at du vil slette '%1'?").arg(seller.name))) {
                 return;
             }
 
@@ -2480,7 +2480,7 @@ QTableWidget::item {
         connect(exportBackupBtn, &QPushButton::clicked, this, [this]() {
             const QString path = QFileDialog::getSaveFileName(
                 this,
-                "Eksportér backup",
+                "Eksport?r backup",
                 repo.baseDir() + "/backup.json",
                 "JSON files (*.json)"
                 );
@@ -2514,7 +2514,7 @@ QTableWidget::item {
         connect(importBackupBtn, &QPushButton::clicked, this, [this]() {
             const QString path = QFileDialog::getOpenFileName(
                 this,
-                "Importér backup",
+                "Import?r backup",
                 repo.baseDir(),
                 "JSON files (*.json)"
                 );
@@ -2522,7 +2522,7 @@ QTableWidget::item {
 
             QFile f(path);
             if (!f.open(QIODevice::ReadOnly)) {
-                QMessageBox::warning(this, "Fejl", "Kunne ikke åbne backup-filen.");
+                QMessageBox::warning(this, "Fejl", "Kunne ikke ?bne backup-filen.");
                 return;
             }
 
@@ -2595,29 +2595,29 @@ QTableWidget::item {
     }
 
     bool importBackup() {
-        const QString path = QFileDialog::getOpenFileName(this, "Vælg backup-fil", repo.baseDir(), "JSON-filer (*.json)");
+        const QString path = QFileDialog::getOpenFileName(this, "V?lg backup-fil", repo.baseDir(), "JSON-filer (*.json)");
         if (path.isEmpty()) return false;
 
-        if (!confirmQuestion(this, "Importér backup", "Det her overskriver nuværende lokale data. Vil du fortsætte?")) {
+        if (!confirmQuestion(this, "Import?r backup", "Det her overskriver nuv?rende lokale data. Vil du forts?tte?")) {
             return false;
         }
 
         QFile file(path);
         if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
-            QMessageBox::warning(this, "Fejl", "Kunne ikke åbne backup-filen.");
+            QMessageBox::warning(this, "Fejl", "Kunne ikke ?bne backup-filen.");
             return false;
         }
 
         QJsonParseError err;
         const auto doc = QJsonDocument::fromJson(file.readAll(), &err);
         if (err.error != QJsonParseError::NoError || !doc.isObject()) {
-            QMessageBox::warning(this, "Fejl", "Backup-filen kunne ikke læses.");
+            QMessageBox::warning(this, "Fejl", "Backup-filen kunne ikke l?ses.");
             return false;
         }
 
         const QJsonObject root = doc.object();
         if (!root.contains("salespeople") || !root.contains("products") || !root.contains("orders") || !root.contains("settings")) {
-            QMessageBox::warning(this, "Fejl", "Backup-filen mangler nødvendige felter.");
+            QMessageBox::warning(this, "Fejl", "Backup-filen mangler n?dvendige felter.");
             return false;
         }
 
@@ -2630,7 +2630,7 @@ QTableWidget::item {
         const auto importedSettings = fromSettingsJson(root["settings"].toObject());
 
         if (importedSalespeople.isEmpty()) {
-            QMessageBox::warning(this, "Fejl", "Backup-filen indeholder ingen sælgere.");
+            QMessageBox::warning(this, "Fejl", "Backup-filen indeholder ingen s?lgere.");
             return false;
         }
 
@@ -2761,7 +2761,7 @@ QTableWidget::item {
 
     void refreshAll() {
         const auto* s = activeSalesperson();
-        activeSalespersonLabel->setText(s ? QString("Du arbejder som <b>%1</b>").arg(s->name) : "Ingen aktiv sælger");
+        activeSalespersonLabel->setText(s ? QString("Du arbejder som <b>%1</b>").arg(s->name) : "Ingen aktiv s?lger");
         refreshDashboard();
         refreshOrdersTable();
         refreshSalespeopleUi();
@@ -2903,7 +2903,7 @@ QTableWidget::item {
             if (pointsToTarget > 0.0) {
                 targetProgressHintLabel->setText(QString("Du mangler <b>%1 point</b>. Det svarer til cirka <b>%2 point</b> pr. resterende arbejdsdag.").arg(money(pointsToTarget)).arg(money(requiredPointsPerRemainingDay)));
             } else {
-                targetProgressHintLabel->setText(QString("Pointmålet er hjemme. Du ligger <b>%1 point</b> over målet.").arg(money(mMonth.totalPoints - repo.settings.bonus.monthlyTargetPoints)));
+                targetProgressHintLabel->setText(QString("Pointm?let er hjemme. Du ligger <b>%1 point</b> over m?let.").arg(money(mMonth.totalPoints - repo.settings.bonus.monthlyTargetPoints)));
             }
         }
 
@@ -2919,11 +2919,11 @@ QTableWidget::item {
         }
         if (salesTargetProgressHintLabel) {
             if (repo.settings.monthlySalesTarget <= 0) {
-                salesTargetProgressHintLabel->setText("Sæt et salgsmål i Indstillinger for at få live fremdrift på måneden.");
+                salesTargetProgressHintLabel->setText("S?t et salgsm?l i Indstillinger for at f? live fremdrift p? m?neden.");
             } else if (missingSalesToTarget > 0) {
-                salesTargetProgressHintLabel->setText(QString("Du mangler <b>%1 salg</b> for at ramme målet denne måned.").arg(missingSalesToTarget));
+                salesTargetProgressHintLabel->setText(QString("Du mangler <b>%1 salg</b> for at ramme m?let denne m?ned.").arg(missingSalesToTarget));
             } else {
-                salesTargetProgressHintLabel->setText(QString("Salgsmålet er ramt. Du ligger <b>%1 salg</b> over målet.").arg(mMonth.salesCount - repo.settings.monthlySalesTarget));
+                salesTargetProgressHintLabel->setText(QString("Salgsm?let er ramt. Du ligger <b>%1 salg</b> over m?let.").arg(mMonth.salesCount - repo.settings.monthlySalesTarget));
             }
         }
 
@@ -2942,9 +2942,9 @@ QTableWidget::item {
         }
         if (simoProgressHintLabel) {
             if (mMonth.simoCount < repo.settings.bonus.simoMinEligible) {
-                simoProgressHintLabel->setText(QString("SIMO åbner ved <b>%1</b>. Du mangler <b>%2</b> for at tænde pengesporet.").arg(repo.settings.bonus.simoMinEligible).arg(qMax(0, repo.settings.bonus.simoMinEligible - mMonth.simoCount)));
+                simoProgressHintLabel->setText(QString("SIMO ?bner ved <b>%1</b>. Du mangler <b>%2</b> for at t?nde pengesporet.").arg(repo.settings.bonus.simoMinEligible).arg(qMax(0, repo.settings.bonus.simoMinEligible - mMonth.simoCount)));
             } else {
-                simoProgressHintLabel->setText(QString("Næste SIMO-hop ligger ved <b>%1</b>. Du mangler <b>%2</b>, og så står provisionen på %3.").arg(nextSimoStep).arg(missingToNextSimo).arg(moneySpan(nextSimoBonus, missingToNextSimo <= 1 ? "#22C55E" : "#34D399")));
+                simoProgressHintLabel->setText(QString("N?ste SIMO-hop ligger ved <b>%1</b>. Du mangler <b>%2</b>, og s? st?r provisionen p? %3.").arg(nextSimoStep).arg(missingToNextSimo).arg(moneySpan(nextSimoBonus, missingToNextSimo <= 1 ? "#22C55E" : "#34D399")));
             }
         }
 
@@ -2963,25 +2963,25 @@ QTableWidget::item {
         }
         if (voiceProgressHintLabel) {
             if (mMonth.voiceCount < repo.settings.bonus.voiceMinEligible) {
-                voiceProgressHintLabel->setText(QString("VOICE åbner ved <b>%1</b>. Du mangler <b>%2</b>, og derefter hopper den for hver <b>10</b>.").arg(repo.settings.bonus.voiceMinEligible).arg(qMax(0, repo.settings.bonus.voiceMinEligible - mMonth.voiceCount)));
+                voiceProgressHintLabel->setText(QString("VOICE ?bner ved <b>%1</b>. Du mangler <b>%2</b>, og derefter hopper den for hver <b>10</b>.").arg(repo.settings.bonus.voiceMinEligible).arg(qMax(0, repo.settings.bonus.voiceMinEligible - mMonth.voiceCount)));
             } else {
-                voiceProgressHintLabel->setText(QString("Næste VOICE-hop ligger ved <b>%1</b>. Du mangler <b>%2</b>, og så står provisionen på %3.").arg(nextVoiceStep).arg(missingToNextVoice).arg(moneySpan(nextVoiceBonus, missingToNextVoice <= 2 ? "#22C55E" : "#34D399")));
+                voiceProgressHintLabel->setText(QString("N?ste VOICE-hop ligger ved <b>%1</b>. Du mangler <b>%2</b>, og s? st?r provisionen p? %3.").arg(nextVoiceStep).arg(missingToNextVoice).arg(moneySpan(nextVoiceBonus, missingToNextVoice <= 2 ? "#22C55E" : "#34D399")));
             }
         }
 
         QString targetText;
         QTextStream targetTs(&targetText);
-        targetTs << "Du står på " << money(mMonth.totalPoints) << " point og " << mMonth.salesCount << " salg lige nu.\n";
-        targetTs << "Tillæg lukket: " << mMonth.addOnCount << "  •  SIMO/VOICE: " << mMonth.simoCount << "/" << mMonth.voiceCount << "\n";
+        targetTs << "Du st?r p? " << money(mMonth.totalPoints) << " point og " << mMonth.salesCount << " salg lige nu.\n";
+        targetTs << "Till?g lukket: " << mMonth.addOnCount << "  ?  SIMO/VOICE: " << mMonth.simoCount << "/" << mMonth.voiceCount << "\n";
         if (repo.settings.monthlySalesTarget > 0) {
-            targetTs << "Du mangler " << missingSalesToTarget << " salg for at ramme månedens mål.\n";
+            targetTs << "Du mangler " << missingSalesToTarget << " salg for at ramme m?nedens m?l.\n";
         }
         targetTs << nextMonthlyTierHint(mMonth.totalPoints, repo.settings.bonus);
         if (targetSummaryLabel) targetSummaryLabel->setText(targetText);
 
         QString perfText;
         QTextStream perfTs(&perfText);
-        perfTs << "Aktive salgsdage: " << activeDays << "  •  Bedste dag: ";
+        perfTs << "Aktive salgsdage: " << activeDays << "  ?  Bedste dag: ";
         if (!bestDay.first.isEmpty()) {
             perfTs << bestDay.first << " (" << money(bestDay.second) << " point)";
         } else {
@@ -2989,28 +2989,28 @@ QTableWidget::item {
         }
         perfTs << "\n";
         perfTs << "Snit point pr aktiv dag: " << money(avgPointsPerActiveDay)
-               << "  •  Snit provision pr aktiv dag: " << money(avgCommissionPerActiveDay) << " kr\n";
-        perfTs << "Hvis du holder tempoet, lander du omkring " << money(projectedPoints) << " point ved månedens slut.\n";
+               << "  ?  Snit provision pr aktiv dag: " << money(avgCommissionPerActiveDay) << " kr\n";
+        perfTs << "Hvis du holder tempoet, lander du omkring " << money(projectedPoints) << " point ved m?nedens slut.\n";
         if (projectedGap >= 0) {
-            perfTs << "Du ligger lige nu til at lande " << money(projectedGap) << " point over målet.";
+            perfTs << "Du ligger lige nu til at lande " << money(projectedGap) << " point over m?let.";
         } else {
-            perfTs << "Du ligger lige nu " << money(-projectedGap) << " point bag målet.";
+            perfTs << "Du ligger lige nu " << money(-projectedGap) << " point bag m?let.";
         }
         if (performanceSummaryLabel) performanceSummaryLabel->setText(perfText);
 
         QString simText;
         QTextStream simTs(&simText);
-        simTs << "SIMO: næste hop ved " << nextSimoStep << "  •  mangler " << missingToNextSimo
-              << "  •  næste niveau giver " << money(nextSimoBonus) << " kr\n";
+        simTs << "SIMO: n?ste hop ved " << nextSimoStep << "  ?  mangler " << missingToNextSimo
+              << "  ?  n?ste niveau giver " << money(nextSimoBonus) << " kr\n";
         if (mMonth.voiceCount < repo.settings.bonus.voiceMinEligible) {
-            simTs << "VOICE åbner ved " << repo.settings.bonus.voiceMinEligible
-                  << "  •  mangler " << qMax(0, repo.settings.bonus.voiceMinEligible - mMonth.voiceCount)
-                  << "  •  hopper derefter for hver 10\n";
+            simTs << "VOICE ?bner ved " << repo.settings.bonus.voiceMinEligible
+                  << "  ?  mangler " << qMax(0, repo.settings.bonus.voiceMinEligible - mMonth.voiceCount)
+                  << "  ?  hopper derefter for hver 10\n";
         } else {
-            simTs << "VOICE: næste hop ved " << nextVoiceStep << "  •  mangler " << missingToNextVoice
-                  << "  •  næste niveau giver " << money(nextVoiceBonus) << " kr\n";
+            simTs << "VOICE: n?ste hop ved " << nextVoiceStep << "  ?  mangler " << missingToNextVoice
+                  << "  ?  n?ste niveau giver " << money(nextVoiceBonus) << " kr\n";
         }
-        simTs << "Resterende arbejdsdage i måneden: " << remainingWorkingDays;
+        simTs << "Resterende arbejdsdage i m?neden: " << remainingWorkingDays;
         if (simulatorSummaryLabel) simulatorSummaryLabel->setText(simText);
 
         QString recentText;
@@ -3021,7 +3021,7 @@ QTableWidget::item {
             const auto& order = repo.orders[idxs[i]];
             double pts = 0.0;
             const QString products = orderProductsSummary(order, &pts);
-            recentTs << order.createdAt.toString("dd-MM HH:mm") << "  •  " << products.left(72) << "  •  " << money(pts) << " point\n";
+            recentTs << order.createdAt.toString("dd-MM HH:mm") << "  ?  " << products.left(72) << "  ?  " << money(pts) << " point\n";
         }
         if (shown == 0) recentTs << "Der er ikke lagt nye ordrer ind endnu.";
         if (recentActivityLabel) recentActivityLabel->setText(recentText);
@@ -3030,15 +3030,15 @@ QTableWidget::item {
     QString summaryCardText(const Metrics& m) const {
         QString out;
         QTextStream ts(&out);
-        ts << QString("Ordrer %1 · Salg %2 · Tillæg %3\n")
+        ts << QString("Ordrer %1 ? Salg %2 ? Till?g %3\n")
                   .arg(m.totalOrders)
                   .arg(m.salesCount)
                   .arg(m.addOnCount);
 
-        ts << QString("Point %1 · Provision %2 kr\n")
+        ts << QString("Point %1 ? Provision %2 kr\n")
                   .arg(money(m.totalPoints))
                   .arg(money(m.totalCommission));
-        ts << "SIMO " << m.simoCount << " · VOICE " << m.voiceCount;
+        ts << "SIMO " << m.simoCount << " ? VOICE " << m.voiceCount;
         return out;
     }
 
@@ -3321,7 +3321,7 @@ QTableWidget::item {
                 const bool ok = !code.isEmpty() && returnedState == state;
                 const QByteArray html = ok
                     ? QByteArray("<!doctype html><html><body style=\"font-family:Segoe UI,Arial,sans-serif;\"><h2>Microsoft-login er klar</h2><p>Du kan lukke dette vindue og vende tilbage til Provi Tracker.</p></body></html>")
-                    : QByteArray("<!doctype html><html><body style=\"font-family:Segoe UI,Arial,sans-serif;\"><h2>Microsoft-login fejlede</h2><p>Du kan lukke dette vindue og prøve igen i Provi Tracker.</p></body></html>");
+                    : QByteArray("<!doctype html><html><body style=\"font-family:Segoe UI,Arial,sans-serif;\"><h2>Microsoft-login fejlede</h2><p>Du kan lukke dette vindue og pr?ve igen i Provi Tracker.</p></body></html>");
                 const QByteArray response = "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: "
                     + QByteArray::number(html.size()) + "\r\nConnection: close\r\n\r\n" + html;
                 socket->write(response);
@@ -3353,16 +3353,16 @@ QTableWidget::item {
                 return;
             }
             finishMicrosoftOAuthServer();
-            if (done) done(false, QString(), "Microsoft-login udløb. Prøv igen.");
+            if (done) done(false, QString(), "Microsoft-login udl?b. Pr?v igen.");
         });
 
         if (salesRegistrationStatusLabel) {
-            salesRegistrationStatusLabel->setText("Microsoft-login åbner i browseren...");
+            salesRegistrationStatusLabel->setText("Microsoft-login ?bner i browseren...");
         }
 
         if (!QDesktopServices::openUrl(authorizeUrl)) {
             finishMicrosoftOAuthServer();
-            if (done) done(false, QString(), "Kunne ikke åbne browseren til Microsoft-login.");
+            if (done) done(false, QString(), "Kunne ikke ?bne browseren til Microsoft-login.");
         }
     }
 
@@ -3455,14 +3455,14 @@ QTableWidget::item {
             intramanagerPasswordEdit->clear();
 
             if (hasPassword && !storedPass.isEmpty()) {
-                intramanagerPasswordEdit->setPlaceholderText("Adgangskode er gemt sikkert");
+                intramanagerPasswordEdit->setPlaceholderText("Adgangskode er gemt krypteret lokalt");
             } else {
                 intramanagerPasswordEdit->setPlaceholderText("Indtast Intramanager adgangskode");
             }
         }
 
         if (intramanagerStatusLabel) {
-            intramanagerStatusLabel->setText("Timer hentes automatisk, når rapporter har brug for dem.");
+            intramanagerStatusLabel->setText("Timer hentes automatisk, n?r rapporter har brug for dem.");
         }
 
         if (defaultSellerInitialsEdit) {
@@ -3511,9 +3511,9 @@ QTableWidget::item {
         aliases << product.displayName << product.key;
 
         QString trimmed = product.displayName;
-        trimmed.remove("Tillæg ", Qt::CaseInsensitive);
+        trimmed.remove("Till?g ", Qt::CaseInsensitive);
         trimmed.remove("Mobil ", Qt::CaseInsensitive);
-        trimmed.remove("Mobilt bredbånd ", Qt::CaseInsensitive);
+        trimmed.remove("Mobilt bredb?nd ", Qt::CaseInsensitive);
         trimmed.remove("mdr", Qt::CaseInsensitive);
         aliases << trimmed.trimmed();
 
@@ -3529,8 +3529,8 @@ QTableWidget::item {
 
     QString salesRegistrationCategoryColor(const QString& category) const {
         if (category.compare("Mobil", Qt::CaseInsensitive) == 0) return "#92D050";
-        if (category.compare("Tillæg", Qt::CaseInsensitive) == 0) return "#FFC000";
-        if (category.compare("Mobilt bredbånd", Qt::CaseInsensitive) == 0) return "#00B0F0";
+        if (category.compare("Till?g", Qt::CaseInsensitive) == 0) return "#FFC000";
+        if (category.compare("Mobilt bredb?nd", Qt::CaseInsensitive) == 0) return "#00B0F0";
         if (category.compare("FWA", Qt::CaseInsensitive) == 0) return "#ED7D31";
         if (category.compare("Fiber", Qt::CaseInsensitive) == 0) return "#FF66A1";
         return "#BFBFBF";
@@ -3792,7 +3792,7 @@ QTableWidget::item {
     void deleteSelectedOrder() {
         const int repoIndex = selectedOrderRepoIndex();
         if (repoIndex < 0) return;
-        if (confirmQuestion(this, "Slet ordre", "Er du sikker på, at du vil slette den valgte ordre?")) {
+        if (confirmQuestion(this, "Slet ordre", "Er du sikker p?, at du vil slette den valgte ordre?")) {
             repo.orders.removeAt(repoIndex);
             repo.saveOrders();
             refreshAll();
@@ -3852,7 +3852,7 @@ QTableWidget::item {
             case 3: {
                 const auto r = monthRange(now);
                 const auto salaryRange = payrollRangeEndingInMonth(now);
-                return makeReportRange("Denne måned", r, salaryRange, now);
+                return makeReportRange("Denne m?ned", r, salaryRange, now);
             }
 
             case 4:
@@ -3865,7 +3865,7 @@ QTableWidget::item {
         }
     }
 
-    // Maanedsprovision bruger kalendermåneden; timer og dagspointbonus følger lønperioden 21.-20.
+    // Maanedsprovision bruger kalenderm?neden; timer og dagspointbonus f?lger l?nperioden 21.-20.
     QPair<QString, QString> reportHoursDates(const ReportRange& range) const {
         return {intramanagerDate(range.hoursFrom.date()), intramanagerDate(range.hoursTo.date())};
     }
@@ -3953,7 +3953,7 @@ QTableWidget::item {
         return std::nullopt;
     }
 
-    // Kun en worker pr. periode ad gangen; flere rapportopdateringer venter på samme cache.
+    // Kun en worker pr. periode ad gangen; flere rapportopdateringer venter p? samme cache.
     void requestReportHours(const ReportRange& range, std::function<void(bool)> afterFetch, bool forceFetch = false) {
         if (!repo.settings.intramanagerEnabled) {
             if (afterFetch) afterFetch(false);
@@ -4082,7 +4082,7 @@ QTableWidget::item {
                 reportStatusHtml(
                     "timer hentes...",
                     "Intramanager henter timer for " + intramanagerPeriodLabel(dates.first, dates.second) + ".",
-                    "Eksporten fortsætter, når timerne er klar."
+                    "Eksporten forts?tter, n?r timerne er klar."
                     )
                 );
 
@@ -4139,7 +4139,7 @@ QTableWidget::item {
 
 protected:
     void closeEvent(QCloseEvent* event) override {
-        // Lukning skal aldrig vente på netværk/worker; det ville fryse appen for almindelige brugere.
+        // Lukning skal aldrig vente p? netv?rk/worker; det ville fryse appen for almindelige brugere.
         createAutoBackup();
         QMainWindow::closeEvent(event);
     }
