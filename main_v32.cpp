@@ -21,8 +21,8 @@
 #include "commission.h"
 #include "report_service.h"
 
-static constexpr const char* APP_VERSION = "1.3.20";
-static constexpr const wchar_t* APP_VERSION_W = L"1.3.20";
+static constexpr const char* APP_VERSION = "1.3.21";
+static constexpr const wchar_t* APP_VERSION_W = L"1.3.21";
 
 
 static void initAutoUpdate()
@@ -971,6 +971,7 @@ private:
     bool intramanagerSyncRunning = false;
     bool intramanagerPunchRunning = false;
     QTimer* intramanagerAutoSyncTimer = nullptr;
+    QDateTime intramanagerLastAutoHoursRefreshUtc;
     QSet<QString> intramanagerPendingFetchKeys;
     QMap<QString, QDateTime> intramanagerReportRefreshRequestedAt;
 
@@ -980,7 +981,6 @@ private:
     QCheckBox* intramanagerEnabledCheck = nullptr;
     QLabel* intramanagerStatusLabel = nullptr;
     QLineEdit* defaultSellerInitialsEdit = nullptr;
-    QLineEdit* salesRegistrationWebhookEdit = nullptr;
     QLineEdit* salesRegistrationRecipientEdit = nullptr;
     QCheckBox* salesRegistrationEnabledCheck = nullptr;
     QCheckBox* salesRegistrationOAuthCheck = nullptr;
@@ -1034,6 +1034,20 @@ private:
             return std::nullopt;
         }
         return repo.settings.intramanagerHoursCache.value(key);
+    }
+
+    bool intramanagerHoursEntryIsFresh(const IntramanagerHoursEntry& entry, int maxAgeMinutes) const {
+        const QDateTime synced = QDateTime::fromString(entry.syncedAt, Qt::ISODate);
+        if (!synced.isValid()) {
+            return false;
+        }
+
+        return synced.toUTC().secsTo(QDateTime::currentDateTimeUtc()) < maxAgeMinutes * 60;
+    }
+
+    bool intramanagerHoursCacheIsFresh(const QString& fromDate, const QString& toDate, int maxAgeMinutes) const {
+        const auto cached = cachedIntramanagerHours(fromDate, toDate);
+        return cached.has_value() && intramanagerHoursEntryIsFresh(*cached, maxAgeMinutes);
     }
 
     QString intramanagerWorkerPath() const {
@@ -1266,15 +1280,20 @@ private:
             return;
         }
 
-        QTimer::singleShot(2500, this, [this]() {
-            refreshCurrentIntramanagerStateAsync();
+        QTimer::singleShot(800, this, [this]() {
+            refreshIntramanagerPunchStatusAsync(true);
+        });
+
+        QTimer::singleShot(8000, this, [this]() {
+            refreshCurrentPayrollHoursIfStaleAsync();
         });
 
         intramanagerAutoSyncTimer = new QTimer(this);
         intramanagerAutoSyncTimer->setInterval(5 * 60 * 1000);
 
         connect(intramanagerAutoSyncTimer, &QTimer::timeout, this, [this]() {
-            refreshCurrentIntramanagerStateAsync();
+            refreshIntramanagerPunchStatusAsync(true);
+            refreshCurrentPayrollHoursIfStaleAsync();
         });
 
         intramanagerAutoSyncTimer->start();
@@ -1518,10 +1537,31 @@ private:
         fetchIntramanagerHoursAsync(fromDate, toDate, silent, afterFetch ? afterFetch : [](bool) {});
     }
 
+    void refreshCurrentPayrollHoursIfStaleAsync(int maxAgeMinutes = 60) {
+        if (!repo.settings.intramanagerEnabled || intramanagerSyncRunning) {
+            return;
+        }
+
+        const QDateTime nowUtc = QDateTime::currentDateTimeUtc();
+        if (intramanagerLastAutoHoursRefreshUtc.isValid()
+            && intramanagerLastAutoHoursRefreshUtc.secsTo(nowUtc) < 15 * 60) {
+            return;
+        }
+
+        const auto period = payrollBonusRange(QDate::currentDate());
+        const QString fromDate = intramanagerDate(period.first.date());
+        const QString toDate = intramanagerDate(period.second.date());
+        if (intramanagerHoursCacheIsFresh(fromDate, toDate, maxAgeMinutes)) {
+            return;
+        }
+
+        intramanagerLastAutoHoursRefreshUtc = nowUtc;
+        fetchIntramanagerHoursAsync(fromDate, toDate, true);
+    }
+
     void refreshCurrentIntramanagerStateAsync() {
-        syncIntramanagerHoursAsync(true, [this](bool) {
-            refreshIntramanagerPunchStatusAsync(true);
-        });
+        refreshIntramanagerPunchStatusAsync(true);
+        refreshCurrentPayrollHoursIfStaleAsync();
     }
 
     void syncIntramanagerHours() {
@@ -2278,21 +2318,22 @@ QTableWidget::item {
         auto salesRegistrationCard = createCard("Salgsregistrering");
         auto* salesRegForm = new QFormLayout;
         salesRegForm->setSpacing(12);
+        salesRegForm->setLabelAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+        salesRegForm->setFormAlignment(Qt::AlignTop);
+        salesRegForm->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
 
         defaultSellerInitialsEdit = new QLineEdit;
         defaultSellerInitialsEdit->setPlaceholderText("Standard initialer ved nye ordrer");
 
-        salesRegistrationWebhookEdit = new QLineEdit;
-        salesRegistrationWebhookEdit->setPlaceholderText("Power Automate webhook URL");
-
         salesRegistrationRecipientEdit = new QLineEdit;
-        salesRegistrationRecipientEdit->setPlaceholderText("Mail der skal modtage salgs-reg");
+        salesRegistrationRecipientEdit->setPlaceholderText("Mailboks som modtager salgs-reg mails");
 
         salesRegistrationEnabledCheck = new QCheckBox("Send salgs-reg automatisk ved ny ordre");
         salesRegistrationEnabledCheck->setFocusPolicy(Qt::NoFocus);
 
-        salesRegistrationOAuthCheck = new QCheckBox("Brug Microsoft-login/MFA til Power Automate");
+        salesRegistrationOAuthCheck = new QCheckBox("Brug Microsoft-login til mailflow");
         salesRegistrationOAuthCheck->setFocusPolicy(Qt::NoFocus);
+        salesRegistrationOAuthCheck->setChecked(true);
 
         microsoftTenantIdEdit = new QLineEdit;
         microsoftTenantIdEdit->setPlaceholderText("organizations eller tenant-id");
@@ -2301,31 +2342,40 @@ QTableWidget::item {
         microsoftClientIdEdit->setPlaceholderText("Client ID fra Entra app registration");
 
         microsoftScopeEdit = new QLineEdit;
-        microsoftScopeEdit->setPlaceholderText("https://service.flow.microsoft.com//.default");
+        microsoftScopeEdit->setPlaceholderText("https://graph.microsoft.com/Mail.Send");
 
         auto* saveSalesRegistrationBtn = new QPushButton("Gem salgsregistrering");
-        auto* testSalesRegistrationBtn = new QPushButton("Test webflow");
-        auto* microsoftLoginBtn = new QPushButton("Log ind med Microsoft");
-        auto* microsoftLogoutBtn = new QPushButton("Log ud af Microsoft");
+        auto* testSalesRegistrationBtn = new QPushButton("Send testmail");
+        auto* microsoftLoginBtn = new QPushButton("Log ind");
+        auto* microsoftLogoutBtn = new QPushButton("Log ud");
         auto* microsoftButtonRow = new QHBoxLayout;
+        microsoftButtonRow->setSpacing(12);
         microsoftButtonRow->addWidget(microsoftLoginBtn);
         microsoftButtonRow->addWidget(microsoftLogoutBtn);
 
-        salesRegistrationStatusLabel = new QLabel("Sender salgs-reg til en webflow, der opdaterer Excel Online og Outlook.");
+        auto* salesActionRow = new QHBoxLayout;
+        salesActionRow->setSpacing(12);
+        salesActionRow->addWidget(saveSalesRegistrationBtn);
+        salesActionRow->addWidget(testSalesRegistrationBtn);
+
+        for (auto* button : {saveSalesRegistrationBtn, testSalesRegistrationBtn, microsoftLoginBtn, microsoftLogoutBtn}) {
+            button->setMinimumHeight(38);
+            button->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+        }
+
+        salesRegistrationStatusLabel = new QLabel("Sender salgs-reg som Microsoft-mail med JSON til mailflow.");
         salesRegistrationStatusLabel->setWordWrap(true);
         salesRegistrationStatusLabel->setTextInteractionFlags(Qt::NoTextInteraction);
 
         salesRegForm->addRow("S?lger initialer", defaultSellerInitialsEdit);
-        salesRegForm->addRow("Webhook URL", salesRegistrationWebhookEdit);
-        salesRegForm->addRow("Modtager-mail", salesRegistrationRecipientEdit);
+        salesRegForm->addRow("Flow-mail", salesRegistrationRecipientEdit);
         salesRegForm->addRow(salesRegistrationEnabledCheck);
         salesRegForm->addRow(salesRegistrationOAuthCheck);
         salesRegForm->addRow("Microsoft tenant", microsoftTenantIdEdit);
         salesRegForm->addRow("Microsoft client ID", microsoftClientIdEdit);
         salesRegForm->addRow("OAuth scope", microsoftScopeEdit);
-        salesRegForm->addRow(microsoftButtonRow);
-        salesRegForm->addRow(saveSalesRegistrationBtn);
-        salesRegForm->addRow(testSalesRegistrationBtn);
+        salesRegForm->addRow("Microsoft-login", microsoftButtonRow);
+        salesRegForm->addRow("Handlinger", salesActionRow);
         salesRegForm->addRow("Status", salesRegistrationStatusLabel);
 
         salesRegistrationCard.second->addLayout(salesRegForm);
@@ -2412,7 +2462,7 @@ QTableWidget::item {
 
         connect(testSalesRegistrationBtn, &QPushButton::clicked, this, [this]() {
             saveSalesRegistrationSettingsFromUi();
-            testSalesRegistrationWebhookAsync();
+            testSalesRegistrationMailflowAsync();
         });
 
         connect(microsoftLoginBtn, &QPushButton::clicked, this, [this]() {
@@ -3083,7 +3133,7 @@ QTableWidget::item {
     }
 
     QString defaultMicrosoftScope() const {
-        return "https://service.flow.microsoft.com//.default";
+        return "https://graph.microsoft.com/Mail.Send";
     }
 
     QString microsoftTenantId() const {
@@ -3097,6 +3147,9 @@ QTableWidget::item {
 
     QString microsoftScope() const {
         const QString scope = repo.settings.microsoftScope.trimmed();
+        if (scope.contains("service.flow.microsoft.com", Qt::CaseInsensitive)) {
+            return defaultMicrosoftScope();
+        }
         return scope.isEmpty() ? defaultMicrosoftScope() : scope;
     }
 
@@ -3172,9 +3225,6 @@ QTableWidget::item {
         if (defaultSellerInitialsEdit) {
             repo.settings.defaultSellerInitials = defaultSellerInitialsEdit->text().trimmed();
         }
-        if (salesRegistrationWebhookEdit) {
-            repo.settings.salesRegistrationWebhookUrl = salesRegistrationWebhookEdit->text().trimmed();
-        }
         if (salesRegistrationRecipientEdit) {
             repo.settings.salesRegistrationRecipient = salesRegistrationRecipientEdit->text().trimmed();
         }
@@ -3183,6 +3233,8 @@ QTableWidget::item {
         }
         if (salesRegistrationOAuthCheck) {
             repo.settings.salesRegistrationOAuthEnabled = salesRegistrationOAuthCheck->isChecked();
+        } else {
+            repo.settings.salesRegistrationOAuthEnabled = true;
         }
         if (microsoftTenantIdEdit) {
             repo.settings.microsoftTenantId = microsoftTenantIdEdit->text().trimmed();
@@ -3468,9 +3520,6 @@ QTableWidget::item {
         if (defaultSellerInitialsEdit) {
             defaultSellerInitialsEdit->setText(repo.settings.defaultSellerInitials);
         }
-        if (salesRegistrationWebhookEdit) {
-            salesRegistrationWebhookEdit->setText(repo.settings.salesRegistrationWebhookUrl);
-        }
         if (salesRegistrationRecipientEdit) {
             salesRegistrationRecipientEdit->setText(repo.settings.salesRegistrationRecipient);
         }
@@ -3478,7 +3527,10 @@ QTableWidget::item {
             salesRegistrationEnabledCheck->setChecked(repo.settings.salesRegistrationEnabled);
         }
         if (salesRegistrationOAuthCheck) {
-            salesRegistrationOAuthCheck->setChecked(repo.settings.salesRegistrationOAuthEnabled);
+            salesRegistrationOAuthCheck->setChecked(true);
+        }
+        if (!repo.settings.salesRegistrationOAuthEnabled) {
+            repo.settings.salesRegistrationOAuthEnabled = true;
         }
         if (microsoftTenantIdEdit) {
             microsoftTenantIdEdit->setText(repo.settings.microsoftTenantId);
@@ -3487,7 +3539,7 @@ QTableWidget::item {
             microsoftClientIdEdit->setText(repo.settings.microsoftClientId);
         }
         if (microsoftScopeEdit) {
-            microsoftScopeEdit->setText(repo.settings.microsoftScope);
+            microsoftScopeEdit->setText(microsoftScope());
         }
         if (salesRegistrationStatusLabel) {
             QString storedAccount;
@@ -3496,10 +3548,10 @@ QTableWidget::item {
                 && !storedRefreshToken.isEmpty();
             if (repo.settings.salesRegistrationOAuthEnabled) {
                 salesRegistrationStatusLabel->setText(hasMicrosoftLogin
-                    ? "Microsoft-login er gemt sikkert og bruges til Power Automate."
-                    : "OAuth er aktivt. Log ind med Microsoft for at sende salgs-reg.");
+                    ? "Microsoft-login er gemt og bruges til mailflow."
+                    : "Log ind med Microsoft for at sende salgs-reg mails.");
             } else {
-                salesRegistrationStatusLabel->setText("Sender salgs-reg til en webflow, der opdaterer Excel Online og Outlook.");
+                salesRegistrationStatusLabel->setText("Microsoft-login skal v??re aktivt for mailflow.");
             }
         }
 
@@ -3624,19 +3676,24 @@ QTableWidget::item {
         return payload;
     }
 
-    bool prepareSalesRegistrationWebhook(QUrl* urlOut, QString* errorOut) const {
-        const QUrl webhookUrl(repo.settings.salesRegistrationWebhookUrl.trimmed());
-        if (!webhookUrl.isValid() || webhookUrl.scheme().isEmpty()
-            || (webhookUrl.scheme() != "https" && webhookUrl.scheme() != "http")
-            || repo.settings.salesRegistrationRecipient.trimmed().isEmpty()) {
+    bool prepareSalesRegistrationMail(QString* recipientOut, QString* errorOut) const {
+        const QString recipient = repo.settings.salesRegistrationRecipient.trimmed();
+        if (recipient.isEmpty() || !recipient.contains('@')) {
             if (errorOut) {
-                *errorOut = "Salgsregistrering mangler webhook URL eller modtager-mail.";
+                *errorOut = "Salgsregistrering mangler en gyldig flow-mail.";
             }
             return false;
         }
 
-        if (urlOut) {
-            *urlOut = webhookUrl;
+        if (microsoftClientId().isEmpty()) {
+            if (errorOut) {
+                *errorOut = "Microsoft client ID mangler i Indstillinger.";
+            }
+            return false;
+        }
+
+        if (recipientOut) {
+            *recipientOut = recipient;
         }
         return true;
     }
@@ -3647,11 +3704,14 @@ QTableWidget::item {
         const QString& defaultSuccessText,
         bool showWarnings
         ) {
-        QUrl webhookUrl;
+        QString recipient;
         QString configError;
-        if (!prepareSalesRegistrationWebhook(&webhookUrl, &configError)) {
+        if (!prepareSalesRegistrationMail(&recipient, &configError)) {
             if (salesRegistrationStatusLabel) {
                 salesRegistrationStatusLabel->setText(configError);
+            }
+            if (showWarnings) {
+                QMessageBox::warning(this, "Salgsregistrering", configError);
             }
             return;
         }
@@ -3660,17 +3720,52 @@ QTableWidget::item {
             salesRegistrationStatusLabel->setText(sendingText);
         }
 
-        auto sendPayload = [this, webhookUrl, payload, defaultSuccessText, showWarnings](const QString& bearerToken) {
+        repo.settings.salesRegistrationOAuthEnabled = true;
+        if (salesRegistrationOAuthCheck) {
+            salesRegistrationOAuthCheck->setChecked(true);
+        }
+        repo.saveSettings();
+
+        auto sendPayload = [this, recipient, payload, defaultSuccessText, showWarnings](const QString& bearerToken) {
             auto* manager = new QNetworkAccessManager(this);
-            QNetworkRequest request(webhookUrl);
+            QNetworkRequest request(QUrl("https://graph.microsoft.com/v1.0/me/sendMail"));
             request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json; charset=utf-8");
             request.setTransferTimeout(60000);
-            if (!bearerToken.isEmpty()) {
-                request.setRawHeader("Authorization", "Bearer " + bearerToken.toUtf8());
-            }
+            request.setRawHeader("Authorization", "Bearer " + bearerToken.toUtf8());
 
-            const QByteArray body = QJsonDocument(payload).toJson(QJsonDocument::Compact);
-            QNetworkReply* reply = manager->post(request, body);
+            const QByteArray payloadJson = QJsonDocument(payload).toJson(QJsonDocument::Indented);
+
+            QJsonObject emailAddress;
+            emailAddress["address"] = recipient;
+
+            QJsonObject toRecipient;
+            toRecipient["emailAddress"] = emailAddress;
+
+            QJsonObject body;
+            body["contentType"] = "HTML";
+            body["content"] =
+                "<p>Salgsregistrering fra Provi Tracker.</p>"
+                + payload.value("mailHtml").toString()
+                + "<p>JSON-data er vedhaeftet til Power Automate-mailflowet.</p>";
+
+            QJsonObject attachment;
+            attachment["@odata.type"] = "#microsoft.graph.fileAttachment";
+            attachment["name"] = QString("provi-sales-reg-%1.json")
+                .arg(payload.value("orderNumber").toString("test"));
+            attachment["contentType"] = "application/json";
+            attachment["contentBytes"] = QString::fromLatin1(payloadJson.toBase64());
+
+            QJsonObject message;
+            message["subject"] = payload.value("mailSubject").toString("Salgs reg - Provi Tracker");
+            message["body"] = body;
+            message["toRecipients"] = QJsonArray{toRecipient};
+            message["attachments"] = QJsonArray{attachment};
+
+            QJsonObject requestBody;
+            requestBody["message"] = message;
+            requestBody["saveToSentItems"] = true;
+
+            QNetworkReply* reply = manager->post(request, QJsonDocument(requestBody).toJson(QJsonDocument::Compact));
 
             connect(reply, &QNetworkReply::finished, this, [this, manager, reply, defaultSuccessText, showWarnings]() {
                 const int statusCode = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
@@ -3682,7 +3777,7 @@ QTableWidget::item {
                 manager->deleteLater();
 
                 if (!ok) {
-                    const QString message = QString("Salgs-reg kunne ikke sendes til webflow (%1).").arg(statusCode > 0 ? QString::number(statusCode) : networkError);
+                    const QString message = QString("Salgs-reg kunne ikke sendes via Microsoft-mail (%1).").arg(statusCode > 0 ? QString::number(statusCode) : networkError);
                     if (salesRegistrationStatusLabel) salesRegistrationStatusLabel->setText(message);
                     if (showWarnings) {
                         QMessageBox::warning(this, "Salgsregistrering", message + "\n\n" + QString::fromUtf8(responseBody));
@@ -3690,16 +3785,7 @@ QTableWidget::item {
                     return;
                 }
 
-                QString message = defaultSuccessText;
-                QJsonParseError err;
-                const auto doc = QJsonDocument::fromJson(responseBody, &err);
-                if (err.error == QJsonParseError::NoError && doc.isObject()) {
-                    const QString flowMessage = doc.object().value("message").toString();
-                    if (!flowMessage.isEmpty()) {
-                        message = flowMessage;
-                    }
-                }
-                if (salesRegistrationStatusLabel) salesRegistrationStatusLabel->setText(message);
+                if (salesRegistrationStatusLabel) salesRegistrationStatusLabel->setText(defaultSuccessText);
             });
         };
 
@@ -3724,19 +3810,19 @@ QTableWidget::item {
 
         postSalesRegistrationPayloadAsync(
             salesRegistrationPayload(order),
-            "Salgs-reg sendes til webflow...",
-            "Salgs-reg sendt til webflow.",
+            "Salgs-reg sendes som Microsoft-mail...",
+            "Salgs-reg sendt som mail.",
             true
             );
     }
 
-    void testSalesRegistrationWebhookAsync() {
+    void testSalesRegistrationMailflowAsync() {
         Order sample;
         sample.id = "TEST-" + QDateTime::currentDateTime().toString("yyyyMMddHHmmss");
         sample.salespersonId = repo.settings.activeSalespersonId;
         sample.sellerInitials = repo.settings.defaultSellerInitials.isEmpty() ? "TEST" : repo.settings.defaultSellerInitials;
         sample.cvrNumber = "00000000";
-        sample.companyName = "Webhook test";
+        sample.companyName = "Mailflow test";
         sample.phoneNumber = "00000000";
         sample.createdAt = QDateTime::currentDateTime();
         sample.note = "Test fra Provi Tracker";
@@ -3750,8 +3836,8 @@ QTableWidget::item {
 
         postSalesRegistrationPayloadAsync(
             payload,
-            "Tester webflow...",
-            "Webflow test OK.",
+            "Sender testmail...",
+            "Mailflow test sendt.",
             true
             );
     }
@@ -3988,11 +4074,14 @@ QTableWidget::item {
 
     void refreshCachedReportHoursIfNeeded(const ReportRange& range, const QString& requestedKey) {
         if (!repo.settings.intramanagerEnabled) return;
-        if (!reportHoursForRange(range).has_value()) return;
+        const auto dates = reportHoursDates(range);
+        const auto cached = cachedIntramanagerHours(dates.first, dates.second);
+        if (!cached.has_value()) return;
+        if (intramanagerHoursEntryIsFresh(*cached, 60)) return;
 
         const QDateTime nowUtc = QDateTime::currentDateTimeUtc();
         const QDateTime lastRequested = intramanagerReportRefreshRequestedAt.value(requestedKey);
-        if (lastRequested.isValid() && lastRequested.secsTo(nowUtc) < 10 * 60) {
+        if (lastRequested.isValid() && lastRequested.secsTo(nowUtc) < 30 * 60) {
             return;
         }
 

@@ -3,13 +3,10 @@ param(
     [string]$ClientId,
 
     [Parameter(Mandatory = $true)]
-    [string]$WebhookUrl,
-
-    [Parameter(Mandatory = $true)]
     [string]$Recipient,
 
     [string]$TenantId = "organizations",
-    [string]$Scope = "https://service.flow.microsoft.com//.default"
+    [string]$Scope = "https://graph.microsoft.com/Mail.Send"
 )
 
 $ErrorActionPreference = "Stop"
@@ -82,7 +79,7 @@ if (-not $token -or -not $token.access_token) {
     throw "Microsoft-login blev ikke gennemfoert inden tidsfristen."
 }
 
-$payload = @{
+$payloadObject = @{
     source = "Provi Tracker"
     type = "sales_registration_test"
     isTest = $true
@@ -92,11 +89,11 @@ $payload = @{
     sellerInitials = "TEST"
     orderNumber = "TEST-" + (Get-Date).ToString("yyyyMMddHHmmss")
     cvrNumber = "00000000"
-    companyName = "OAuth test"
+    companyName = "Mailflow test"
     phoneNumber = "00000000"
-    note = "OAuth test fra Provi Tracker"
-    mailSubject = "Salgs reg - OAuth test"
-    mailHtml = "<table><tr><td>OAuth test fra Provi Tracker</td></tr></table>"
+    note = "Mailflow test fra Provi Tracker"
+    mailSubject = "Salgs reg - Mailflow test"
+    mailHtml = "<table><tr><td>Mailflow test fra Provi Tracker</td></tr></table>"
     items = @(
         @{
             key = "til_1000gb_data"
@@ -107,14 +104,42 @@ $payload = @{
             aliases = @("1000GB data", "1000 GB data")
         }
     )
-} | ConvertTo-Json -Depth 10
+}
 
-$result = Invoke-RestMethod `
+$payloadJson = $payloadObject | ConvertTo-Json -Depth 10
+$attachmentBytes = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($payloadJson))
+
+$mail = @{
+    message = @{
+        subject = $payloadObject.mailSubject
+        body = @{
+            contentType = "HTML"
+            content = "<p>Salgsregistrering fra Provi Tracker.</p>$($payloadObject.mailHtml)<p>JSON-data er vedhaeftet til Power Automate-mailflowet.</p>"
+        }
+        toRecipients = @(
+            @{
+                emailAddress = @{
+                    address = $Recipient
+                }
+            }
+        )
+        attachments = @(
+            @{
+                "@odata.type" = "#microsoft.graph.fileAttachment"
+                name = "provi-sales-reg-$($payloadObject.orderNumber).json"
+                contentType = "application/json"
+                contentBytes = $attachmentBytes
+            }
+        )
+    }
+    saveToSentItems = $true
+} | ConvertTo-Json -Depth 20
+
+Invoke-RestMethod `
     -Method Post `
-    -Uri $WebhookUrl `
+    -Uri "https://graph.microsoft.com/v1.0/me/sendMail" `
     -Headers @{ Authorization = "Bearer $($token.access_token)" } `
     -ContentType "application/json; charset=utf-8" `
-    -Body $payload
+    -Body $mail | Out-Null
 
-Write-Host "Power Automate OAuth test OK:"
-$result | ConvertTo-Json -Depth 10
+Write-Host "Microsoft Graph mailflow test sendt til $Recipient."

@@ -1,6 +1,13 @@
-# Salgsregistrering via Power Automate
+# Salgsregistrering via mailflow
 
-Programmet sender salgs-reg som JSON til en webhook. Flowet skal derefter opdatere Excel Online og sende Outlook-mailen.
+Programmet bruger ikke laengere Power Automate-triggeren **When an HTTP request is received**. Den trigger er ofte premium/lukket for almindelige brugere.
+
+I stedet sender Provi Tracker en Microsoft Graph-mail til en valgt flow-mailboks. Mailen indeholder:
+
+- HTML-tabellen til menneskelig laesning.
+- En JSON-vedhaeftning med hele salgsregistreringen.
+
+Power Automate kan derfor starte paa den almindelige Outlook-trigger **When a new email arrives**, hente JSON-vedhaeftningen og koere Office Scriptet mod Excel Online.
 
 ## 1. Klargoer masterarket
 
@@ -14,56 +21,41 @@ Scriptet finder kolonnerne ud fra overskrifter som `Dato`, `Initialer`, `OSE-nr`
 
 ## 2. Opret Power Automate-flow
 
-1. Opret et cloud flow med triggeren **When an HTTP request is received**.
-2. Brug denne simple JSON-schema:
-
-```json
-{
-  "type": "object",
-  "properties": {
-    "type": { "type": "string" },
-    "isTest": { "type": "boolean" },
-    "recipient": { "type": "string" },
-    "mailSubject": { "type": "string" },
-    "mailHtml": { "type": "string" }
-  },
-  "additionalProperties": true
-}
-```
-
-3. Tilfoej handlingen **Excel Online (Business) -> Run script**.
-4. Vaelg masterarket og scriptet `ProviTrackerSalesRegistration`.
-5. S?t script-parameteren `payloadJson` til hele trigger body som string. Brug typisk udtrykket:
+1. Opret et automated cloud flow.
+2. Vaelg triggeren **Outlook -> When a new email arrives (V3)**.
+3. Saet mailboksen/mappe til den flow-mail, Provi Tracker sender til.
+4. Filtrer gerne paa emne, fx `Salgs reg -`.
+5. Tilfoej **Get attachment (V2)** eller tilsvarende handling for JSON-vedhaeftningen.
+6. Tilfoej **Compose** og lav attachment-content om til tekst. Brug typisk et udtryk i stil med:
 
 ```text
-string(triggerBody())
+base64ToString(body('Get_attachment_(V2)')?['contentBytes'])
 ```
 
-6. Tilfoej handlingen **Outlook -> Send an email (V2)**.
-7. S?t **To** til `recipient`, **Subject** til `mailSubject`, og **Body** til `mailHtml`.
-8. Slaa HTML-body til, hvis flow-designet viser den mulighed.
-9. Tilfoej handlingen **Response** med status `200` og body:
+Navnet paa feltet kan variere lidt i Power Automate. Det vigtige er, at Office Scriptet modtager JSON-teksten fra vedhaeftningen.
 
-```json
-{
-  "message": "Salgs-reg sendt."
-}
-```
+7. Tilfoej **Excel Online (Business) -> Run script**.
+8. Vaelg masterarket og scriptet `ProviTrackerSalesRegistration`.
+9. Saet script-parameteren `payloadJson` til outputtet fra Compose.
 
-Hvis flowet skal beskyttes med Microsoft OAuth/MFA, saa foelg ogsaa `docs/microsoft_oauth_power_automate_setup.md`.
+Testmails har `isTest: true`, saa Office Scriptet returnerer OK uden at oprette en rigtig salgsraekke.
 
-## 3. Test fra appen
+## 3. Indstil Provi Tracker
 
-1. Kopier HTTP POST URL'en fra flow-triggeren.
-2. Saet URL'en ind i Provi Tracker under **Indstillinger -> Salgsregistrering**.
-3. Udfyld modtager-mail og standard-initialer.
-4. Tryk **Test webflow**.
+I **Indstillinger -> Salgsregistrering**:
 
-Testkaldet sender `isTest: true`. Office Script returnerer derfor OK uden at oprette en rigtig salgsr?kke.
+1. Udfyld **Flow-mail** med den mailboks flowet overvager.
+2. Udfyld saelgerinitialer.
+3. Slaa **Send salgs-reg automatisk ved ny ordre** til.
+4. Udfyld Microsoft tenant og client ID.
+5. Lad OAuth scope staa som `https://graph.microsoft.com/Mail.Send`, medmindre tenant setup kraever andet.
+6. Tryk **Gem salgsregistrering**.
+7. Tryk **Log ind** og gennemfoer Microsoft-login/MFA.
+8. Tryk **Send testmail**.
 
 ## 4. Intramanager-salgsregistrering
 
-Den sikre vej er at lave en separat discovery-runde paa Intramanager:
+Den sikre vej er stadig at lave en separat discovery-runde paa Intramanager, foer appen nogensinde skriver direkte dertil:
 
 1. Log ind med Playwright-workeren.
 2. Find dagens relevante rapportlinje i `reports/history/`.
@@ -72,4 +64,4 @@ Den sikre vej er at lave en separat discovery-runde paa Intramanager:
 5. Bekraeft endpoint, CSRF/FMK-token, feltnavne og produkt-ID'er i et testmiljoe eller paa en aftalt testregistrering.
 6. Foerst derefter tilfoejes en worker-action som fx `--action sale-register`.
 
-Jeg har ikke hardcodet et live POST-kald, fordi det kan oprette rigtige salg i Intramanager. Debug-HTML viser kun historik og popover-loaderen, ikke et dokumenteret eller sikkert write-endpoint.
+Der er ikke hardcodet et live POST-kald til Intramanager, fordi det kan oprette rigtige salg.

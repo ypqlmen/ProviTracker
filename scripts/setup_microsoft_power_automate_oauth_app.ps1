@@ -1,7 +1,7 @@
 param(
-    [string]$DisplayName = "Provi Tracker Power Automate",
+    [string]$DisplayName = "Provi Tracker Mailflow",
     [string]$RedirectUri = "http://localhost",
-    [string]$FlowServiceAppId = "7df0a125-d3be-4c96-aa54-591f83ff541c"
+    [string]$GraphServiceAppId = "00000003-0000-0000-c000-000000000000"
 )
 
 $ErrorActionPreference = "Stop"
@@ -61,35 +61,21 @@ if (-not $app) {
 $clientId = $app.appId
 Write-Host "App client ID: $clientId"
 
-Write-Host "Finder Power Automate Service permissions..."
-$flowSp = az ad sp show --id $FlowServiceAppId 2>$null | ConvertFrom-Json
-if (-not $flowSp) {
-    throw "Kunne ikke finde Power Automate Service i tenant. Log ind paa https://make.powerautomate.com mindst en gang og proev igen."
+Write-Host "Finder Microsoft Graph Mail.Send permission..."
+$graphSp = az ad sp show --id $GraphServiceAppId 2>$null | ConvertFrom-Json
+if (-not $graphSp) {
+    throw "Kunne ikke finde Microsoft Graph service principal i tenant."
 }
 
-$preferredScopes = @(
-    "user_impersonation",
-    "Flows.Read.All",
-    "Flows.Manage.All",
-    "Approvals.Read.All",
-    "Activity.Read.All"
-)
-
-$scope = $null
-foreach ($name in $preferredScopes) {
-    $scope = $flowSp.oauth2PermissionScopes | Where-Object { $_.value -eq $name -and $_.isEnabled } | Select-Object -First 1
-    if ($scope) { break }
-}
-
+$scope = $graphSp.oauth2PermissionScopes | Where-Object { $_.value -eq "Mail.Send" -and $_.isEnabled } | Select-Object -First 1
 if (-not $scope) {
-    $available = ($flowSp.oauth2PermissionScopes | Where-Object { $_.isEnabled } | Select-Object -ExpandProperty value) -join ", "
-    throw "Kunne ikke finde en brugbar delegated permission paa Power Automate Service. Tilgaengelige scopes: $available"
+    throw "Kunne ikke finde Microsoft Graph delegated permission Mail.Send."
 }
 
-Write-Host "Tilfoejer delegated permission: $($scope.value)"
+Write-Host "Tilfoejer delegated permission: Mail.Send"
 az ad app permission add `
     --id $clientId `
-    --api $FlowServiceAppId `
+    --api $GraphServiceAppId `
     --api-permissions "$($scope.id)=Scope" `
     | Out-Null
 
@@ -106,7 +92,7 @@ $result = [ordered]@{
     clientId = $clientId
     appName = $DisplayName
     redirectUri = $RedirectUri
-    oauthScope = "https://service.flow.microsoft.com//.default"
+    oauthScope = "https://graph.microsoft.com/Mail.Send"
     delegatedPermission = $scope.value
     consentStatus = $consentStatus
 }

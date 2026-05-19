@@ -19,9 +19,9 @@ type SalesRegistrationPayload = {
 function normalize(value: string | number | boolean | undefined): string {
   return String(value ?? "")
     .toLowerCase()
-    .replaceAll("æ", "ae")
-    .replaceAll("ø", "oe")
-    .replaceAll("å", "aa")
+    .replaceAll("?", "ae")
+    .replaceAll("?", "oe")
+    .replaceAll("?", "aa")
     .replace(/[^a-z0-9]+/g, "");
 }
 
@@ -65,7 +65,7 @@ function main(workbook: ExcelScript.Workbook, payloadJson: string): string {
   const payload = JSON.parse(payloadJson) as SalesRegistrationPayload;
 
   if (payload.isTest) {
-    return JSON.stringify({ success: true, message: "Webflow test OK." });
+    return JSON.stringify({ success: true, message: "Mailflow test OK." });
   }
 
   const sheet = workbook.getWorksheets()[0];

@@ -14,13 +14,13 @@ Qt Widgets desktop-app i C++ med lokal JSON-lagring, per-user installation og Wi
 - Automatisk maanedsluk for tidligere maaneder med snapshots + PDF
 - Provisionsmotor med 5-trinslaasning for SIMO og 10-trinslaasning for VOICE
 - Intramanager-timer caches pr. rapportperiode
-- Webhook-baseret salgsregistrering til Excel Online/Outlook via fx Power Automate
+- Mailbaseret salgsregistrering til Excel Online/Outlook via Microsoft Graph og Power Automate
 
-## Salgsregistrering via webflow
+## Salgsregistrering via mailflow
 
-Programmet bruger ikke lokal Excel eller Outlook. Naar salgsregistrering er slaaet til i Indstillinger, sender appen en JSON-pakke til den webhook URL, der er gemt i indstillingerne.
+Programmet bruger ikke lokal Excel eller Outlook. Naar salgsregistrering er slaaet til i Indstillinger, sender appen en Microsoft Graph-mail til den flow-mailboks, der er gemt i indstillingerne.
 
-Hvis Power Automate-flowet er beskyttet med Microsoft OAuth, kan brugeren slaa "Brug Microsoft-login/MFA til Power Automate" til i Indstillinger. Programmet aabner Microsoft-login i browseren, saa MFA haandteres af Microsoft, og gemmer kun refresh-token i Windows Credential Manager. Programmet gemmer ikke Outlook-adgangskoder.
+Programmet aabner Microsoft-login i browseren, saa MFA haandteres af Microsoft, og gemmer kun refresh-token i Windows Credential Manager. Programmet gemmer ikke Outlook-adgangskoder.
 
 Payloaden indeholder bl.a.:
 
@@ -28,7 +28,7 @@ Payloaden indeholder bl.a.:
 - `recipient`, `mailSubject` og `mailHtml`
 - `items` med produktnavn, antal, point og aliases til matching mod masterarket
 
-Et Power Automate-flow kan derfor bruge de faste felter til at oprette raekken i Excel Online og bruge `mailHtml` direkte som broedtekst i Outlook-mailen.
+Mailen indeholder en HTML-tabel og en JSON-vedhaeftning. Et Power Automate-flow kan starte med **When a new email arrives**, laese JSON-vedhaeftningen og bruge de faste felter til at oprette raekken i Excel Online.
 
 Se `docs/power_automate_salgsregistrering.md`, `docs/microsoft_oauth_power_automate_setup.md` og `scripts/excel_online_sales_registration.ts` for den konkrete flow-opsaetning.
 
@@ -103,9 +103,9 @@ WinSparkle laeser appcast fra:
 
 `https://raw.githubusercontent.com/ypqlmen/ProviTracker/main/appcast.xml`
 
-GitHub Release-tagget til auto-update er `autoupdate`, og asset-navnet for version 1.3.20 er:
+GitHub Release-tagget til auto-update er `autoupdate`, og asset-navnet for version 1.3.21 er:
 
-`ProviBeregnerSetup-1.3.20.exe`
+`ProviBeregnerSetup-1.3.21.exe`
 
 Bem?rk: den oprindelige 1.1-build indeholdt WinSparkle DLL'en, men ikke en appcast-URL i selve programmet eller installeren. Brugere p? 1.1 skal derfor installere en nyere version manuelt ?n gang; derefter kan auto-update hente fremtidige versioner.
 
