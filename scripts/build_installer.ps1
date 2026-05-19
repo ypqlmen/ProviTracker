@@ -11,6 +11,9 @@ $windeployqt = Join-Path $qtBin "windeployqt.exe"
 $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
 $iss = Join-Path $root "installer\ProviTracker.iss"
 $winSparkleDll = Join-Path $root "third_party\winsparkle\bin\WinSparkle.dll"
+$workerSourceDir = Join-Path $root "intramanager_worker"
+$workerBuildDir = Join-Path $releaseDir "intramanager_worker"
+$workerPython = Join-Path $workerBuildDir ".venv\Scripts\python.exe"
 
 if (!(Test-Path $cmake)) { throw "CMake blev ikke fundet: $cmake" }
 if (!(Test-Path $windeployqt)) { throw "windeployqt blev ikke fundet: $windeployqt" }
@@ -21,6 +24,30 @@ $env:Path = "$mingwBin;$qtBin;$env:Path"
 
 & $cmake --build $releaseDir --config Release
 if ($LASTEXITCODE -ne 0) { throw "Release build fejlede." }
+
+if (!(Test-Path $workerPython)) { throw "Python venv blev ikke fundet: $workerPython" }
+Copy-Item (Join-Path $workerSourceDir "intramanager_sync.py") $workerBuildDir -Force
+Copy-Item (Join-Path $workerSourceDir "intramanager_sync.spec") $workerBuildDir -Force
+$workerNestedBrowsers = Join-Path $workerBuildDir ".venv\Lib\site-packages\playwright\driver\package\.local-browsers"
+if (Test-Path $workerNestedBrowsers) {
+    $resolvedNestedBrowsers = [System.IO.Path]::GetFullPath((Resolve-Path -LiteralPath $workerNestedBrowsers).Path)
+    $resolvedWorkerBuildDir = [System.IO.Path]::GetFullPath((Resolve-Path -LiteralPath $workerBuildDir).Path)
+    if (-not $resolvedNestedBrowsers.StartsWith($resolvedWorkerBuildDir, [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "Afviser at slette Playwright browser-cache uden for worker build-mappen: $resolvedNestedBrowsers"
+    }
+    $longNestedBrowsers = '\\?\' + $resolvedNestedBrowsers
+    [System.IO.Directory]::Delete($longNestedBrowsers, $true)
+}
+Push-Location $workerBuildDir
+try {
+    & $workerPython -m PyInstaller "intramanager_sync.spec" --noconfirm
+    if ($LASTEXITCODE -ne 0) { throw "PyInstaller build af intramanager_worker fejlede." }
+} finally {
+    Pop-Location
+}
+Copy-Item (Join-Path $workerBuildDir "dist\intramanager_sync\intramanager_sync.exe") (Join-Path $workerBuildDir "intramanager_sync.exe") -Force
+robocopy (Join-Path $workerBuildDir "dist\intramanager_sync\_internal") (Join-Path $workerBuildDir "_internal") /MIR /NFL /NDL /NJH /NJS /NP | Out-Null
+if ($LASTEXITCODE -gt 7) { throw "Opdatering af intramanager_worker _internal fejlede." }
 
 Copy-Item -LiteralPath $winSparkleDll -Destination $releaseDir -Force
 
@@ -64,7 +91,7 @@ if ($LASTEXITCODE -gt 7) { throw "Kopiering af Playwright browserpakke fejlede."
 & $iscc "/DBuildDir=$stageDir" $iss
 if ($LASTEXITCODE -ne 0) { throw "Inno Setup build fejlede." }
 
-$installer = Join-Path $root "dist\ProviBeregnerSetup-1.3.21.exe"
+$installer = Join-Path $root "dist\ProviBeregnerSetup-1.3.22.exe"
 if (!(Test-Path $installer)) { throw "Installer blev ikke oprettet: $installer" }
 
 Write-Host "Installer klar: $installer"

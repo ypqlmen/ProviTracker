@@ -9,7 +9,8 @@ BASE_URL = "https://5r.intramanager.com/"
 LOGIN_URL = BASE_URL + "reports/history/"
 HISTORY_URL = BASE_URL + "reports/history/"
 PUNCH_URL = BASE_URL + "reports/punch-in/"
-OFFICE_ONLY_MESSAGE = "Man kan kun stemple ind eller ud på kontorets internet."
+DEBUG_ENABLED = False
+OFFICE_ONLY_MESSAGE = "Man kan kun stemple ind eller ud p? kontorets internet."
 
 
 def configure_playwright_browser_path():
@@ -49,9 +50,9 @@ def looks_office_only(text):
         "ip adresse",
         "kontor",
         "kontorets",
-        "netværk",
+        "netv?rk",
         "netvaerk",
-        "adgang nægtet",
+        "adgang n?gtet",
         "adgang naegtet",
         "ikke tilladt",
         "not allowed",
@@ -91,6 +92,83 @@ def normalise_date(value):
     return (value or "").strip()
 
 
+def save_debug_screenshot(page, debug_dir, name, full_page=True, force=False):
+    if not (DEBUG_ENABLED or force):
+        return
+
+    try:
+        debug_dir.mkdir(parents=True, exist_ok=True)
+        page.screenshot(
+            path=str(debug_dir / name),
+            full_page=full_page
+        )
+    except Exception:
+        pass
+
+
+def write_debug_text(path, text, force=False):
+    if not (DEBUG_ENABLED or force):
+        return
+
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+    except Exception:
+        pass
+
+
+def is_probably_logged_in(page):
+    try:
+        if page.locator('input[type="password"]').count() > 0:
+            return False
+    except Exception:
+        pass
+
+    try:
+        if clean_text(page.locator("#main").inner_text(timeout=1500)):
+            return True
+    except Exception:
+        pass
+
+    try:
+        body_text = clean_text(page.locator("body").inner_text(timeout=1500)).lower()
+        if "log ud" in body_text or "velkommen" in body_text:
+            return True
+    except Exception:
+        pass
+
+    return False
+
+
+def session_state_path(args):
+    explicit = clean_text(getattr(args, "session_state", ""))
+    if explicit:
+        return Path(explicit)
+
+    base_dir = os.environ.get("LOCALAPPDATA") or os.environ.get("APPDATA") or str(Path.home())
+    return Path(base_dir) / "ProvisionTrackerV2" / "ProviTracker" / "intramanager_session.json"
+
+
+def create_browser_context(browser, args):
+    path = session_state_path(args)
+    if path.exists():
+        try:
+            return browser.new_context(storage_state=str(path))
+        except Exception:
+            pass
+
+    return browser.new_context()
+
+
+def save_session_state(context, args):
+    path = session_state_path(args)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        context.storage_state(path=str(path))
+    except Exception:
+        pass
+
+
 def login(page, args, debug_dir):
     page.goto(
         LOGIN_URL,
@@ -98,10 +176,12 @@ def login(page, args, debug_dir):
         timeout=60000
     )
 
-    page.screenshot(
-        path=str(debug_dir / "01_start.png"),
-        full_page=True
-    )
+    page.wait_for_timeout(500)
+
+    if is_probably_logged_in(page):
+        return {"success": True, "usedSession": True}
+
+    save_debug_screenshot(page, debug_dir, "01_start.png")
 
     username_selectors = [
         'input[name="user"]',
@@ -148,14 +228,12 @@ def login(page, args, debug_dir):
             pass
 
     if not user_filled or not pass_filled:
-        page.screenshot(
-            path=str(debug_dir / "02_login_fields_not_found.png"),
-            full_page=True
-        )
+        save_debug_screenshot(page, debug_dir, "02_login_fields_not_found.png", force=True)
 
-        (debug_dir / "login_page.html").write_text(
+        write_debug_text(
+            debug_dir / "login_page.html",
             page.content(),
-            encoding="utf-8"
+            force=True
         )
 
         return {
@@ -191,26 +269,20 @@ def login(page, args, debug_dir):
     if not clicked:
         page.keyboard.press("Enter")
 
-    page.wait_for_timeout(3000)
+    page.wait_for_timeout(1200)
 
     try:
         page.wait_for_load_state(
             "networkidle",
-            timeout=60000
+            timeout=15000
         )
 
     except PlaywrightTimeoutError:
         pass
 
-    page.screenshot(
-        path=str(debug_dir / "03_after_login.png"),
-        full_page=True
-    )
+    save_debug_screenshot(page, debug_dir, "03_after_login.png")
 
-    (debug_dir / "after_login.html").write_text(
-        page.content(),
-        encoding="utf-8"
-    )
+    write_debug_text(debug_dir / "after_login.html", page.content())
 
     current_url = page.url
 
@@ -238,29 +310,31 @@ def login(page, args, debug_dir):
 def search_history(page, from_date, to_date, debug_dir, prefix):
     page.goto(
         HISTORY_URL,
-        wait_until="networkidle",
-        timeout=60000
+        wait_until="domcontentloaded",
+        timeout=30000
     )
+
+    try:
+        page.wait_for_selector("#startdate", timeout=10000)
+    except PlaywrightTimeoutError:
+        pass
 
     page.locator("#startdate").fill(from_date)
     page.locator("#stopdate").fill(to_date)
 
-    page.screenshot(
-        path=str(debug_dir / f"{prefix}_dates_filled.png"),
-        full_page=True
-    )
+    save_debug_screenshot(page, debug_dir, f"{prefix}_dates_filled.png")
 
     page.locator('button[type="submit"]').click()
-    page.wait_for_timeout(5000)
+    try:
+        page.wait_for_selector("#main table, #main tbody tr, text=Intet blev fundet", timeout=5000)
+    except PlaywrightTimeoutError:
+        page.wait_for_timeout(1500)
 
-    page.screenshot(
-        path=str(debug_dir / f"{prefix}_results.png"),
-        full_page=True
-    )
+    save_debug_screenshot(page, debug_dir, f"{prefix}_results.png")
 
-    (debug_dir / f"{prefix}_results_page.html").write_text(
+    write_debug_text(
+        debug_dir / f"{prefix}_results_page.html",
         page.content(),
-        encoding="utf-8"
     )
 
     main_html = ""
@@ -271,9 +345,9 @@ def search_history(page, from_date, to_date, debug_dir, prefix):
     except Exception:
         main_html = ""
 
-    (debug_dir / f"{prefix}_main_results.html").write_text(
+    write_debug_text(
+        debug_dir / f"{prefix}_main_results.html",
         main_html,
-        encoding="utf-8"
     )
 
 
@@ -369,7 +443,7 @@ def fetch_hours(page, args, debug_dir):
         return {
             "success": False,
             "stage": "parse_hours",
-            "error": "Kunne ikke finde total løntimer i resultattabellen.",
+            "error": "Kunne ikke finde total l?ntimer i resultattabellen.",
             "periodFrom": args.from_date,
             "periodTo": args.to_date,
             "debugDir": str(debug_dir)
@@ -445,7 +519,7 @@ def read_punch_state_from_history(page, target_date, debug_dir, prefix):
             "statusKnown": True,
             "clockedIn": False,
             "statusText": "Stemplet ud",
-            "detail": "Der er ikke fundet en åben stempling for i dag.",
+            "detail": "Der er ikke fundet en ?ben stempling for i dag.",
             "lastStart": "",
             "lastStop": ""
         }
@@ -472,15 +546,12 @@ def read_punch_state_from_history(page, target_date, debug_dir, prefix):
 
 
 def read_punch_state_from_punch_page(page, debug_dir, prefix):
-    page.screenshot(
-        path=str(debug_dir / f"{prefix}_page.png"),
-        full_page=True
-    )
+    save_debug_screenshot(page, debug_dir, f"{prefix}_page.png")
 
     page_html = page.content()
-    (debug_dir / f"{prefix}_page.html").write_text(
+    write_debug_text(
+        debug_dir / f"{prefix}_page.html",
         page_html,
-        encoding="utf-8"
     )
 
     if looks_office_only(page_html):
@@ -557,13 +628,13 @@ def read_punch_state_from_punch_page(page, debug_dir, prefix):
             "statusKnown": False,
             "clockedIn": False,
             "statusText": "Status ukendt",
-            "detail": "Intramanager-stempelsiden blev hentet, men status kunne ikke aflæses.",
+            "detail": "Intramanager-stempelsiden blev hentet, men status kunne ikke afl?ses.",
             "lastStart": "",
             "lastStop": "",
         }
 
     status_text = "Stemplet ind" if clocked_in else "Stemplet ud"
-    detail = "Status aflæst fra Intramanager-stempelsiden."
+    detail = "Status afl?st fra Intramanager-stempelsiden."
 
     return {
         "success": True,
@@ -580,13 +651,13 @@ def load_punch_page_state(page, debug_dir, prefix):
     page.goto(
         PUNCH_URL,
         wait_until="domcontentloaded",
-        timeout=60000
+        timeout=30000
     )
 
-    page.wait_for_timeout(2500)
+    page.wait_for_timeout(700)
 
     try:
-        page.wait_for_load_state("networkidle", timeout=30000)
+        page.wait_for_load_state("networkidle", timeout=8000)
     except PlaywrightTimeoutError:
         pass
 
@@ -619,6 +690,33 @@ def fetch_punch_status(page, args, debug_dir):
         "stage": "punch_status",
         "debugDir": str(debug_dir),
         **state
+    }
+
+
+def fetch_overview(page, args, debug_dir):
+    hours = fetch_hours(page, args, debug_dir)
+    punch = fetch_punch_status(page, args, debug_dir)
+    hours_success = bool(hours.get("success"))
+    punch_success = bool(punch.get("success"))
+
+    return {
+        "success": hours_success and punch_success,
+        "stage": "overview",
+        "debugDir": str(debug_dir),
+        "hoursSuccess": hours_success,
+        "punchSuccess": punch_success,
+        "hoursError": hours.get("error", ""),
+        "punchError": punch.get("error", ""),
+        "periodFrom": hours.get("periodFrom", args.from_date),
+        "periodTo": hours.get("periodTo", args.to_date),
+        "hours": hours.get("hours", 0.0),
+        "phoneHours": hours.get("phoneHours", 0.0),
+        "statusKnown": punch.get("statusKnown", False),
+        "clockedIn": punch.get("clockedIn", False),
+        "statusText": punch.get("statusText", ""),
+        "detail": punch.get("detail", ""),
+        "lastStart": punch.get("lastStart", ""),
+        "lastStop": punch.get("lastStop", ""),
     }
 
 
@@ -773,7 +871,7 @@ def click_punch_dialog_confirmation(page, wants_out):
         if wants_out
         else ["stempel ind", "stempl ind", "check ind", "start"]
     )
-    confirmation_terms = action_terms + ["bekræft", "bekraeft", "gem", "ja", "ok", "fortsæt", "fortsaet"]
+    confirmation_terms = action_terms + ["bekr?ft", "bekraeft", "gem", "ja", "ok", "forts?t", "fortsaet"]
 
     dialog_scopes = [
         ".punch-in-dialog",
@@ -927,22 +1025,19 @@ def toggle_punch(page, args, debug_dir):
     if clicked:
         page.wait_for_timeout(1500)
         click_punch_dialog_confirmation(page, wants_out)
-        page.wait_for_timeout(3500)
-        wait_for_page_idle(page, timeout=30000)
+        page.wait_for_timeout(1800)
+        wait_for_page_idle(page, timeout=12000)
 
         if has_visible_dialog(page):
             click_punch_dialog_confirmation(page, wants_out)
-            page.wait_for_timeout(2500)
-            wait_for_page_idle(page, timeout=30000)
+            page.wait_for_timeout(1200)
+            wait_for_page_idle(page, timeout=12000)
 
-    page.screenshot(
-        path=str(debug_dir / "punch_after_click.png"),
-        full_page=True
-    )
+    save_debug_screenshot(page, debug_dir, "punch_after_click.png")
 
-    (debug_dir / "punch_after_click.html").write_text(
+    write_debug_text(
+        debug_dir / "punch_after_click.html",
         page.content(),
-        encoding="utf-8"
     )
 
     page_after = load_punch_page_state(page, debug_dir, "punch_after_page")
@@ -988,7 +1083,7 @@ def toggle_punch(page, args, debug_dir):
 def main():
     parser = argparse.ArgumentParser()
 
-    parser.add_argument("--action", choices=["hours", "punch-status", "punch-toggle"], default="hours")
+    parser.add_argument("--action", choices=["hours", "punch-status", "punch-toggle", "overview"], default="hours")
     parser.add_argument("--username", required=False)
     parser.add_argument("--password", required=False)
     parser.add_argument("--stdin-json", action="store_true")
@@ -998,6 +1093,8 @@ def main():
     parser.add_argument("--on-date", required=False)
 
     parser.add_argument("--debug-dir", default="debug_intramanager")
+    parser.add_argument("--session-state", required=False)
+    parser.add_argument("--debug", action="store_true")
     parser.add_argument("--headed", action="store_true")
     parser.add_argument("--target-action", choices=["in", "out"], required=False)
 
@@ -1014,12 +1111,17 @@ def main():
         args.to_date = payload.get("toDate", args.to_date)
         args.on_date = payload.get("onDate", args.on_date)
         args.target_action = payload.get("targetAction", args.target_action)
+        args.session_state = payload.get("sessionState", args.session_state)
+        args.debug = bool(payload.get("debug", args.debug))
+
+    global DEBUG_ENABLED
+    DEBUG_ENABLED = bool(args.debug)
 
     if not args.on_date:
         from datetime import datetime
         args.on_date = datetime.now().strftime("%d-%m-%Y")
 
-    if args.action == "hours" and (not args.from_date or not args.to_date):
+    if args.action in {"hours", "overview"} and (not args.from_date or not args.to_date):
         output({
             "success": False,
             "stage": "input",
@@ -1036,7 +1138,8 @@ def main():
         return
 
     debug_dir = Path(args.debug_dir)
-    debug_dir.mkdir(parents=True, exist_ok=True)
+    if DEBUG_ENABLED:
+        debug_dir.mkdir(parents=True, exist_ok=True)
 
     browser = None
 
@@ -1048,7 +1151,7 @@ def main():
                 slow_mo=100 if args.headed else 0
             )
 
-            context = browser.new_context()
+            context = create_browser_context(browser, args)
             page = context.new_page()
 
             login_result = login(page, args, debug_dir)
@@ -1058,10 +1161,14 @@ def main():
                 output(login_result)
                 return
 
+            save_session_state(context, args)
+
             if args.action == "hours":
                 result = fetch_hours(page, args, debug_dir)
             elif args.action == "punch-status":
                 result = fetch_punch_status(page, args, debug_dir)
+            elif args.action == "overview":
+                result = fetch_overview(page, args, debug_dir)
             else:
                 result = toggle_punch(page, args, debug_dir)
 

@@ -21,8 +21,8 @@
 #include "commission.h"
 #include "report_service.h"
 
-static constexpr const char* APP_VERSION = "1.3.21";
-static constexpr const wchar_t* APP_VERSION_W = L"1.3.21";
+static constexpr const char* APP_VERSION = "1.3.22";
+static constexpr const wchar_t* APP_VERSION_W = L"1.3.22";
 
 
 static void initAutoUpdate()
@@ -1011,6 +1011,18 @@ private:
         QString error;
     };
 
+    struct IntramanagerOverviewResult {
+        bool success = false;
+        bool hoursSuccess = false;
+        bool punchSuccess = false;
+        double hours = 0.0;
+        double phoneHours = 0.0;
+        IntramanagerPunchResult punch;
+        QString hoursError;
+        QString punchError;
+        QString error;
+    };
+
     // Intramanager dates are persisted in the same format the worker expects.
     QString intramanagerDate(const QDate& date) const {
         return date.toString("dd-MM-yyyy");
@@ -1055,6 +1067,10 @@ private:
             + "/intramanager_worker/intramanager_sync.exe";
     }
 
+    QString intramanagerSessionStatePath() const {
+        return appStorageDir() + "/intramanager_session.json";
+    }
+
     bool prepareIntramanagerFetch(QString* usernameOut, QString* passwordOut, QString* workerPathOut, QString* errorOut) const {
         if (!repo.settings.intramanagerEnabled) {
             if (errorOut) *errorOut = "Intramanager er ikke aktiveret.";
@@ -1091,11 +1107,16 @@ private:
         payload["password"] = password;
         payload["fromDate"] = fromDate;
         payload["toDate"] = toDate;
+        payload["sessionState"] = intramanagerSessionStatePath();
         return payload;
     }
 
     QStringList intramanagerWorkerArgs(const QString& fromDate, const QString& toDate) const {
         return {"--action", "hours", "--from-date", fromDate, "--to-date", toDate, "--stdin-json"};
+    }
+
+    QStringList intramanagerOverviewWorkerArgs(const QString& fromDate, const QString& toDate) const {
+        return {"--action", "overview", "--from-date", fromDate, "--to-date", toDate, "--stdin-json"};
     }
 
     QStringList intramanagerPunchWorkerArgs(const QString& action) const {
@@ -1156,6 +1177,48 @@ private:
         }
 
         result.success = true;
+        return result;
+    }
+
+    IntramanagerOverviewResult parseIntramanagerOverviewWorkerOutput(const QByteArray& stdoutData, const QByteArray& stderrData) const {
+        IntramanagerOverviewResult result;
+        QJsonParseError jsonError;
+        const auto doc = QJsonDocument::fromJson(stdoutData, &jsonError);
+
+        if (jsonError.error != QJsonParseError::NoError || !doc.isObject()) {
+            result.error =
+                "Worker returnerede ikke gyldig JSON.\n\nOutput:\n" +
+                QString::fromUtf8(stdoutData) +
+                "\n\nFejl:\n" +
+                QString::fromUtf8(stderrData);
+            return result;
+        }
+
+        const QJsonObject obj = doc.object();
+        result.success = obj.value("success").toBool(false);
+        result.hoursSuccess = obj.value("hoursSuccess").toBool(false);
+        result.punchSuccess = obj.value("punchSuccess").toBool(false);
+        result.hours = obj.value("hours").toDouble(0.0);
+        result.phoneHours = obj.value("phoneHours").toDouble(0.0);
+        result.hoursError = obj.value("hoursError").toString();
+        result.punchError = obj.value("punchError").toString();
+
+        result.punch.success = result.punchSuccess;
+        result.punch.statusKnown = obj.value("statusKnown").toBool(false);
+        result.punch.clockedIn = obj.value("clockedIn").toBool(false);
+        result.punch.statusText = obj.value("statusText").toString();
+        result.punch.detail = obj.value("detail").toString();
+        result.punch.lastStart = obj.value("lastStart").toString();
+        result.punch.lastStop = obj.value("lastStop").toString();
+        result.punch.error = result.punchError;
+
+        if (!result.success) {
+            QStringList errors;
+            if (!result.hoursSuccess) errors << (result.hoursError.isEmpty() ? "Timer kunne ikke hentes." : result.hoursError);
+            if (!result.punchSuccess) errors << (result.punchError.isEmpty() ? "Stempelstatus kunne ikke hentes." : result.punchError);
+            result.error = errors.join("\n");
+        }
+
         return result;
     }
 
@@ -1281,19 +1344,14 @@ private:
         }
 
         QTimer::singleShot(800, this, [this]() {
-            refreshIntramanagerPunchStatusAsync(true);
-        });
-
-        QTimer::singleShot(8000, this, [this]() {
-            refreshCurrentPayrollHoursIfStaleAsync();
+            refreshCurrentIntramanagerStateAsync();
         });
 
         intramanagerAutoSyncTimer = new QTimer(this);
         intramanagerAutoSyncTimer->setInterval(5 * 60 * 1000);
 
         connect(intramanagerAutoSyncTimer, &QTimer::timeout, this, [this]() {
-            refreshIntramanagerPunchStatusAsync(true);
-            refreshCurrentPayrollHoursIfStaleAsync();
+            refreshCurrentIntramanagerStateAsync();
         });
 
         intramanagerAutoSyncTimer->start();
@@ -1405,6 +1463,98 @@ private:
         process->start(workerPath, intramanagerWorkerArgs(fromDate, toDate));
     }
 
+    void refreshIntramanagerOverviewAsync(bool silent = true, std::function<void(bool)> afterFetch = {}) {
+        if (intramanagerSyncRunning || intramanagerPunchRunning) {
+            QTimer::singleShot(1500, this, [this, silent, afterFetch]() {
+                refreshIntramanagerOverviewAsync(silent, afterFetch);
+            });
+            return;
+        }
+
+        const auto period = payrollBonusRange(QDate::currentDate());
+        const QString fromDate = intramanagerDate(period.first.date());
+        const QString toDate = intramanagerDate(period.second.date());
+
+        QString username;
+        QString password;
+        QString workerPath;
+        QString error;
+
+        if (!prepareIntramanagerFetch(&username, &password, &workerPath, &error)) {
+            if (!silent) QMessageBox::warning(this, "Intramanager", error);
+            if (afterFetch) afterFetch(false);
+            refreshPunchCardUi();
+            return;
+        }
+
+        intramanagerSyncRunning = true;
+        intramanagerPunchRunning = true;
+        refreshPunchCardUi();
+
+        auto* process = new QProcess(this);
+        const QJsonObject payload = intramanagerPayload(username, password, fromDate, toDate);
+
+        connect(process, &QProcess::started, this, [process, payload]() {
+            process->write(QJsonDocument(payload).toJson(QJsonDocument::Compact));
+            process->closeWriteChannel();
+        });
+
+        connect(process, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
+                this, [this, process, silent, fromDate, toDate, afterFetch](int, QProcess::ExitStatus) {
+                    intramanagerSyncRunning = false;
+                    intramanagerPunchRunning = false;
+
+                    const QByteArray stdoutData = process->readAllStandardOutput();
+                    const QByteArray stderrData = process->readAllStandardError();
+                    process->deleteLater();
+
+                    const IntramanagerOverviewResult result = parseIntramanagerOverviewWorkerOutput(stdoutData, stderrData);
+
+                    if (result.hoursSuccess) {
+                        rememberIntramanagerHours(fromDate, toDate, result.hours, result.phoneHours);
+                    }
+
+                    if (result.punchSuccess) {
+                        rememberIntramanagerPunchState(result.punch);
+                    } else if (!result.punchError.isEmpty()) {
+                        repo.settings.intramanagerPunch.known = false;
+                        repo.settings.intramanagerPunch.detail = friendlyPunchError(result.punchError);
+                        repo.settings.intramanagerPunch.syncedAt = QDateTime::currentDateTime().toString(Qt::ISODate);
+                    }
+
+                    repo.saveSettings();
+                    refreshAll();
+
+                    if (!result.success && !silent) {
+                        QMessageBox::warning(this, "Intramanager", result.error);
+                    }
+
+                    if (afterFetch) afterFetch(result.hoursSuccess || result.punchSuccess);
+                });
+
+        connect(process, &QProcess::errorOccurred, this, [this, process, silent, afterFetch](QProcess::ProcessError error) {
+            if (error != QProcess::FailedToStart) return;
+
+            intramanagerSyncRunning = false;
+            intramanagerPunchRunning = false;
+            const QString err = process->errorString();
+            process->deleteLater();
+
+            repo.settings.intramanagerPunch.known = false;
+            repo.settings.intramanagerPunch.detail = "Kunne ikke starte Intramanager-worker:\n" + err;
+            repo.settings.intramanagerPunch.syncedAt = QDateTime::currentDateTime().toString(Qt::ISODate);
+            repo.saveSettings();
+            refreshPunchCardUi();
+
+            if (!silent) {
+                QMessageBox::warning(this, "Intramanager", repo.settings.intramanagerPunch.detail);
+            }
+            if (afterFetch) afterFetch(false);
+        });
+
+        process->start(workerPath, intramanagerOverviewWorkerArgs(fromDate, toDate));
+    }
+
     void runIntramanagerPunchWorker(
         const QString& action,
         bool silent,
@@ -1437,6 +1587,7 @@ private:
         payload["password"] = password;
         payload["action"] = action;
         payload["onDate"] = intramanagerDate(QDate::currentDate());
+        payload["sessionState"] = intramanagerSessionStatePath();
         if (!targetAction.isEmpty()) {
             payload["targetAction"] = targetAction;
         }
@@ -1556,12 +1707,24 @@ private:
         }
 
         intramanagerLastAutoHoursRefreshUtc = nowUtc;
-        fetchIntramanagerHoursAsync(fromDate, toDate, true);
+        refreshIntramanagerOverviewAsync(true);
     }
 
     void refreshCurrentIntramanagerStateAsync() {
+        if (!repo.settings.intramanagerEnabled) {
+            return;
+        }
+
+        const auto period = payrollBonusRange(QDate::currentDate());
+        const QString fromDate = intramanagerDate(period.first.date());
+        const QString toDate = intramanagerDate(period.second.date());
+
+        if (!intramanagerHoursCacheIsFresh(fromDate, toDate, 60)) {
+            refreshCurrentPayrollHoursIfStaleAsync();
+            return;
+        }
+
         refreshIntramanagerPunchStatusAsync(true);
-        refreshCurrentPayrollHoursIfStaleAsync();
     }
 
     void syncIntramanagerHours() {
