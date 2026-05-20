@@ -253,16 +253,26 @@ static double projectedMonthPoints(double currentPoints, int elapsedWorkingDays,
     return (currentPoints / elapsedWorkingDays) * totalWorkingDays;
 }
 
+static double estimatedSalaryTax(double grossSalary, double taxDeduction, double taxRatePercent) {
+    if (grossSalary <= 0.0 || taxRatePercent <= 0.0) return 0.0;
+    const double taxableSalary = qMax(0.0, grossSalary - qMax(0.0, taxDeduction));
+    return taxableSalary * (qBound(0.0, taxRatePercent, 100.0) / 100.0);
+}
+
+static double estimatedNetSalary(double grossSalary, double taxDeduction, double taxRatePercent) {
+    return qMax(0.0, grossSalary - estimatedSalaryTax(grossSalary, taxDeduction, taxRatePercent));
+}
+
 static QString nextMonthlyTierHint(double points, const BonusSettings& b) {
     for (const auto& tier : b.monthlyRateTiers) {
         if (points < tier.threshold) {
-            return QString("Næste point-tier: %1 point (%2 kr/point), mangler %3 point")
+            return QString("N?ste point-tier: %1 point (%2 kr/point), mangler %3 point")
                 .arg(tier.threshold)
                 .arg(money(tier.ratePerPoint))
                 .arg(money(tier.threshold - points));
         }
     }
-    return "Du er allerede på højeste point-tier";
+    return "Du er allerede p? h?jeste point-tier";
 }
 
 struct ReportSalaryBreakdown {
@@ -272,6 +282,11 @@ struct ReportSalaryBreakdown {
     double delayedProvision = 0.0;
     double totalProvision = 0.0;
     double totalSalary = 0.0;
+    bool taxConfigured = false;
+    double taxDeduction = 0.0;
+    double taxRatePercent = 0.0;
+    double taxAmount = 0.0;
+    double netSalary = 0.0;
     QString salaryPeriod;
     QString delayedPeriod;
 };

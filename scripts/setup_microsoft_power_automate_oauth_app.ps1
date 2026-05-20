@@ -17,15 +17,15 @@ foreach ($path in $azPaths) {
 }
 
 if (!(Get-Command az -ErrorAction SilentlyContinue)) {
-    throw "Azure CLI blev ikke fundet. Installer Microsoft.AzureCLI foerst."
+    throw "Azure CLI blev ikke fundet. Installer Microsoft.AzureCLI f?rst."
 }
 
 Write-Host "Tjekker Microsoft-login..."
 $accountJson = az account show 2>$null
 if ($LASTEXITCODE -ne 0 -or -not $accountJson) {
     Write-Host ""
-    Write-Host "Du skal logge ind med Microsoft nu. Brug kontoen der maa oprette app registrations."
-    Write-Host "Hvis du faar en kode, saa aabn linket, tast koden og godkend MFA."
+    Write-Host "Du skal logge ind med Microsoft nu. Brug kontoen der m? oprette app registrations."
+    Write-Host "Hvis du f?r en kode, s? ?bn linket, tast koden og godkend MFA."
     Write-Host ""
     az login --use-device-code | Out-Null
     if ($LASTEXITCODE -ne 0) {
@@ -72,14 +72,14 @@ if (-not $scope) {
     throw "Kunne ikke finde Microsoft Graph delegated permission Mail.Send."
 }
 
-Write-Host "Tilfoejer delegated permission: Mail.Send"
+Write-Host "Tilf?jer delegated permission: Mail.Send"
 az ad app permission add `
     --id $clientId `
     --api $GraphServiceAppId `
     --api-permissions "$($scope.id)=Scope" `
     | Out-Null
 
-Write-Host "Proever at give admin consent..."
+Write-Host "Pr?ver at give admin consent..."
 try {
     az ad app permission admin-consent --id $clientId | Out-Null
     $consentStatus = "Admin consent er givet."
@@ -98,5 +98,5 @@ $result = [ordered]@{
 }
 
 Write-Host ""
-Write-Host "Faerdig. Indsaet disse vaerdier i Provi Tracker:"
+Write-Host "F?rdig. Inds?t disse v?rdier i Provi Tracker:"
 $result | Format-List

@@ -76,7 +76,7 @@ while ((Get-Date) -lt $deadline) {
 }
 
 if (-not $token -or -not $token.access_token) {
-    throw "Microsoft-login blev ikke gennemfoert inden tidsfristen."
+    throw "Microsoft-login blev ikke gennemf?rt inden tidsfristen."
 }
 
 $payloadObject = @{
@@ -97,8 +97,8 @@ $payloadObject = @{
     items = @(
         @{
             key = "til_1000gb_data"
-            productName = "Tillaeg 1000GB data"
-            category = "Tillaeg"
+            productName = "Till?g 1000GB data"
+            category = "Till?g"
             quantity = 1
             points = 0.5
             aliases = @("1000GB data", "1000 GB data")
@@ -114,7 +114,7 @@ $mail = @{
         subject = $payloadObject.mailSubject
         body = @{
             contentType = "HTML"
-            content = "<p>Salgsregistrering fra Provi Tracker.</p>$($payloadObject.mailHtml)<p>JSON-data er vedhaeftet til Power Automate-mailflowet.</p>"
+            content = "<p>Salgsregistrering fra Provi Tracker.</p>$($payloadObject.mailHtml)<p>JSON-data er vedh?ftet til Power Automate-mailflowet.</p>"
         }
         toRecipients = @(
             @{

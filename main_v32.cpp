@@ -21,8 +21,9 @@
 #include "commission.h"
 #include "report_service.h"
 
-static constexpr const char* APP_VERSION = "1.3.22";
-static constexpr const wchar_t* APP_VERSION_W = L"1.3.22";
+static constexpr const char* APP_VERSION = "1.3.23";
+static constexpr const wchar_t* APP_VERSION_W = L"1.3.23";
+static constexpr const wchar_t* APP_BUILD_VERSION_W = L"10323";
 
 
 static void initAutoUpdate()
@@ -32,9 +33,11 @@ static void initAutoUpdate()
     typedef void (*init_t)();
     typedef void (*set_url_t)(const char*);
     typedef void (*set_details_t)(const wchar_t*, const wchar_t*, const wchar_t*);
+    typedef void (*set_build_version_t)(const wchar_t*);
     typedef void (*set_auto_t)(int);
     typedef void (*set_interval_t)(int);
     typedef void (*check_without_ui_t)();
+    typedef void (*check_with_ui_t)();
     typedef void (*check_with_ui_and_install_t)();
     typedef void (*cleanup_t)();
 
@@ -45,27 +48,32 @@ static void initAutoUpdate()
     auto init = (init_t)sparkle.resolve("win_sparkle_init");
     auto set_url = (set_url_t)sparkle.resolve("win_sparkle_set_appcast_url");
     auto set_details = (set_details_t)sparkle.resolve("win_sparkle_set_app_details");
+    auto set_build_version = (set_build_version_t)sparkle.resolve("win_sparkle_set_app_build_version");
     auto set_auto = (set_auto_t)sparkle.resolve("win_sparkle_set_automatic_check_for_updates");
     auto set_interval = (set_interval_t)sparkle.resolve("win_sparkle_set_update_check_interval");
     auto check_without_ui = (check_without_ui_t)sparkle.resolve("win_sparkle_check_update_without_ui");
+    auto check_with_ui = (check_with_ui_t)sparkle.resolve("win_sparkle_check_update_with_ui");
     auto check_with_ui_and_install = (check_with_ui_and_install_t)sparkle.resolve("win_sparkle_check_update_with_ui_and_install");
     auto cleanup = (cleanup_t)sparkle.resolve("win_sparkle_cleanup");
 
     if (init && set_url && set_details) {
         set_url("https://raw.githubusercontent.com/ypqlmen/ProviTracker/main/appcast.xml");
         set_details(L"Victor Tang", L"Provi Tracker", APP_VERSION_W);
+        if (set_build_version) set_build_version(APP_BUILD_VERSION_W);
         if (set_auto) set_auto(1);
-        if (set_interval) set_interval(60 * 60);
+        if (set_interval) set_interval(30 * 60);
         init();
         if (cleanup) {
             QObject::connect(qApp, &QCoreApplication::aboutToQuit, qApp, [cleanup]() {
                 cleanup();
             });
         }
-        if (check_with_ui_and_install || check_without_ui) {
-            QTimer::singleShot(4000, qApp, [check_with_ui_and_install, check_without_ui]() {
+        if (check_with_ui_and_install || check_with_ui || check_without_ui) {
+            QTimer::singleShot(4000, qApp, [check_with_ui_and_install, check_with_ui, check_without_ui]() {
                 if (check_with_ui_and_install) {
                     check_with_ui_and_install();
+                } else if (check_with_ui) {
+                    check_with_ui();
                 } else {
                     check_without_ui();
                 }
@@ -298,12 +306,14 @@ static bool confirmQuestion(QWidget* parent, const QString& title, const QString
 static QPair<QFrame*, QLabel*> createKpiCard(const QString& title) {
     auto card = createCard(title);
 
-    card.first->setMinimumHeight(116);
-    card.first->setMaximumHeight(148);
+    card.first->setMinimumHeight(148);
+    card.first->setMaximumHeight(184);
     card.first->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
 
     auto* valueLabel = new QLabel("-");
     valueLabel->setWordWrap(true);
+    valueLabel->setAlignment(Qt::AlignLeft | Qt::AlignTop);
+    valueLabel->setMinimumHeight(94);
     valueLabel->setTextInteractionFlags(Qt::NoTextInteraction);
     valueLabel->setStyleSheet(
         "QLabel { "
@@ -976,6 +986,8 @@ private:
     QMap<QString, QDateTime> intramanagerReportRefreshRequestedAt;
 
     QDoubleSpinBox* hourlyRateSpin = nullptr;
+    QDoubleSpinBox* taxDeductionSpin = nullptr;
+    QDoubleSpinBox* taxRateSpin = nullptr;
     QLineEdit* intramanagerUsernameEdit = nullptr;
     QLineEdit* intramanagerPasswordEdit = nullptr;
     QCheckBox* intramanagerEnabledCheck = nullptr;
@@ -1936,6 +1948,12 @@ QGroupBox::title {
             }
             QPushButton:hover { background: #2DD4BF; }
             QPushButton:pressed { background: #0EA5A4; }
+            QPushButton#compactActionButton {
+                border-radius: 10px;
+                padding: 7px 14px;
+                min-width: 126px;
+                max-width: 180px;
+            }
             QCheckBox {
                 background: transparent;
                 color: #E6EEF8;
@@ -2460,7 +2478,19 @@ QTableWidget::item {
         hourlyRateSpin->setSuffix(" kr/t");
         hourlyRateSpin->setButtonSymbols(QAbstractSpinBox::NoButtons);
 
-        auto* saveIntramanagerBtn = new QPushButton("Gem Intramanager og timel?n");
+        taxDeductionSpin = new QDoubleSpinBox;
+        taxDeductionSpin->setRange(0, 100000);
+        taxDeductionSpin->setDecimals(2);
+        taxDeductionSpin->setSuffix(" kr/md");
+        taxDeductionSpin->setButtonSymbols(QAbstractSpinBox::NoButtons);
+
+        taxRateSpin = new QDoubleSpinBox;
+        taxRateSpin->setRange(0, 100);
+        taxRateSpin->setDecimals(2);
+        taxRateSpin->setSuffix(" %");
+        taxRateSpin->setButtonSymbols(QAbstractSpinBox::NoButtons);
+
+        auto* saveIntramanagerBtn = new QPushButton("Gem Intramanager og l?n");
 
         intramanagerStatusLabel = new QLabel("Timer hentes automatisk, n?r rapporter har brug for dem.");
         intramanagerStatusLabel->setWordWrap(true);
@@ -2470,6 +2500,8 @@ QTableWidget::item {
         imForm->addRow("Brugernavn", intramanagerUsernameEdit);
         imForm->addRow("Adgangskode", intramanagerPasswordEdit);
         imForm->addRow("Timel?n", hourlyRateSpin);
+        imForm->addRow("Skattefradrag", taxDeductionSpin);
+        imForm->addRow("Tr?kprocent", taxRateSpin);
         imForm->addRow(saveIntramanagerBtn);
         imForm->addRow("Status", intramanagerStatusLabel);
 
@@ -2515,15 +2547,20 @@ QTableWidget::item {
         microsoftButtonRow->setSpacing(12);
         microsoftButtonRow->addWidget(microsoftLoginBtn);
         microsoftButtonRow->addWidget(microsoftLogoutBtn);
+        microsoftButtonRow->addStretch();
 
         auto* salesActionRow = new QHBoxLayout;
         salesActionRow->setSpacing(12);
         salesActionRow->addWidget(saveSalesRegistrationBtn);
         salesActionRow->addWidget(testSalesRegistrationBtn);
+        salesActionRow->addStretch();
 
         for (auto* button : {saveSalesRegistrationBtn, testSalesRegistrationBtn, microsoftLoginBtn, microsoftLogoutBtn}) {
-            button->setMinimumHeight(38);
-            button->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+            button->setObjectName("compactActionButton");
+            button->setMinimumHeight(34);
+            button->setMaximumHeight(34);
+            button->setMinimumWidth(126);
+            button->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
         }
 
         salesRegistrationStatusLabel = new QLabel("Sender salgs-reg som Microsoft-mail med JSON til mailflow.");
@@ -2594,6 +2631,8 @@ QTableWidget::item {
             repo.settings.intramanagerEnabled = intramanagerEnabledCheck->isChecked();
             repo.settings.intramanagerUsername = username;
             repo.settings.hourlyRate = hourlyRateSpin->value();
+            repo.settings.taxDeduction = taxDeductionSpin->value();
+            repo.settings.taxRatePercent = taxRateSpin->value();
 
             repo.saveSettings();
 
@@ -2606,7 +2645,7 @@ QTableWidget::item {
             if (!passwordSaved) {
                 intramanagerStatusLabel->setText("Indstillinger gemt, men adgangskoden kunne ikke gemmes krypteret.");
             } else {
-                intramanagerStatusLabel->setText("Intramanager og timel?n er gemt.");
+                intramanagerStatusLabel->setText("Intramanager og l?n er gemt.");
                 intramanagerPasswordEdit->clear();
                 intramanagerPasswordEdit->setPlaceholderText("Adgangskode er gemt krypteret lokalt");
             }
@@ -2956,13 +2995,23 @@ QTableWidget::item {
     }
 
     QString salaryKpiText(double totalSalary, double baseSalary, double provision, const QDate& payoutMonth) const {
+        const bool taxConfigured = repo.settings.taxRatePercent > 0.0;
+        const double netSalary = estimatedNetSalary(
+            totalSalary,
+            repo.settings.taxDeduction,
+            repo.settings.taxRatePercent
+            );
+        const QString netText = taxConfigured ? money(netSalary) + " kr" : QString("indstil skat");
+
         return QString(
-            "<span style=\"font-size:19px;font-weight:900;color:#FFFFFF;\">%1 kr</span><br>"
-            "<span style=\"font-size:13px;font-weight:900;color:#D8F5FF;\">Udbetales: %2</span><br>"
-            "<span style=\"font-size:12px;font-weight:800;color:#BFD7EE;\">Timer: %3 kr</span><br>"
-            "<span style=\"font-size:12px;font-weight:800;color:#BFD7EE;\">Provision: %4 kr</span>"
+            "<span style=\"font-size:18px;font-weight:900;color:#FFFFFF;\">%1 kr</span><br>"
+            "<span style=\"font-size:13px;font-weight:900;color:#34D399;\">Udbetalt: %2</span><br>"
+            "<span style=\"font-size:12px;font-weight:900;color:#D8F5FF;\">Udbetales: %3</span><br>"
+            "<span style=\"font-size:12px;font-weight:800;color:#BFD7EE;\">Timer: %4 kr</span><br>"
+            "<span style=\"font-size:12px;font-weight:800;color:#BFD7EE;\">Provision: %5 kr</span>"
             )
             .arg(money(totalSalary))
+            .arg(netText.toHtmlEscaped())
             .arg(payoutDateLabel(payoutMonth).toHtmlEscaped())
             .arg(money(baseSalary))
             .arg(money(provision));
@@ -3654,6 +3703,14 @@ QTableWidget::item {
             hourlyRateSpin->setValue(repo.settings.hourlyRate);
         }
 
+        if (taxDeductionSpin) {
+            taxDeductionSpin->setValue(repo.settings.taxDeduction);
+        }
+
+        if (taxRateSpin) {
+            taxRateSpin->setValue(repo.settings.taxRatePercent);
+        }
+
         if (intramanagerUsernameEdit) {
             intramanagerUsernameEdit->setText(repo.settings.intramanagerUsername);
         }
@@ -4159,6 +4216,19 @@ QTableWidget::item {
             previousMonthMetrics.monthlyBonus + previousMonthMetrics.simoBonus + previousMonthMetrics.voiceBonus;
         salary.totalProvision = salary.periodProvision + salary.delayedProvision;
         salary.totalSalary = salary.baseSalary + salary.totalProvision;
+        salary.taxConfigured = repo.settings.taxRatePercent > 0.0;
+        salary.taxDeduction = repo.settings.taxDeduction;
+        salary.taxRatePercent = repo.settings.taxRatePercent;
+        salary.taxAmount = estimatedSalaryTax(
+            salary.totalSalary,
+            salary.taxDeduction,
+            salary.taxRatePercent
+            );
+        salary.netSalary = estimatedNetSalary(
+            salary.totalSalary,
+            salary.taxDeduction,
+            salary.taxRatePercent
+            );
         salary.salaryPeriod = intramanagerPeriodLabel(
             intramanagerDate(payrollRange.first.date()),
             intramanagerDate(payrollRange.second.date())

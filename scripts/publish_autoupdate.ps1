@@ -1,6 +1,6 @@
 param(
-    [string]$Version = "1.3.22",
-    [string]$Installer = "$PSScriptRoot\..\dist\ProviBeregnerSetup-1.3.22.exe",
+    [string]$Version = "1.3.23",
+    [string]$Installer = "$PSScriptRoot\..\dist\ProviBeregnerSetup-1.3.23.exe",
     [string]$Repo = "ypqlmen/ProviTracker",
     [string]$Tag = "autoupdate",
     [string]$Branch = "main",
@@ -20,10 +20,10 @@ $appcastText = Get-Content $appcastPath -Raw
 
 [xml]$null = $appcastText
 if ($appcastText -notmatch [regex]::Escape($assetName)) {
-    throw "appcast.xml peger ikke paa $assetName."
+    throw "appcast.xml peger ikke p? $assetName."
 }
-if ($appcastText -notmatch "sparkle:version=`"$([regex]::Escape($Version))`"") {
-    throw "appcast.xml har ikke sparkle:version=$Version."
+if ($appcastText -notmatch "sparkle:shortVersionString=`"$([regex]::Escape($Version))`"") {
+    throw "appcast.xml har ikke sparkle:shortVersionString=$Version."
 }
 
 gh release view $Tag --repo $Repo *> $null
@@ -56,7 +56,7 @@ if ($currentAppcast -and $currentAppcast.sha) {
 }
 
 & gh @apiArgs | Out-Null
-if ($LASTEXITCODE -ne 0) { throw "Opdatering af appcast.xml paa GitHub fejlede." }
+if ($LASTEXITCODE -ne 0) { throw "Opdatering af appcast.xml p? GitHub fejlede." }
 
 Write-Host "Uploadet $assetName til https://github.com/$Repo/releases/tag/$Tag"
-Write-Host "Opdateret appcast.xml paa branch '$Branch'."
+Write-Host "Opdateret appcast.xml p? branch '$Branch'."

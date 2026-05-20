@@ -31,6 +31,19 @@ public:
             salary.totalProvision = m.totalCommission;
             salary.totalSalary = salary.baseSalary + salary.totalProvision;
         }
+        salary.taxConfigured = repo.settings.taxRatePercent > 0.0;
+        salary.taxDeduction = repo.settings.taxDeduction;
+        salary.taxRatePercent = repo.settings.taxRatePercent;
+        salary.taxAmount = estimatedSalaryTax(
+            salary.totalSalary,
+            salary.taxDeduction,
+            salary.taxRatePercent
+            );
+        salary.netSalary = estimatedNetSalary(
+            salary.totalSalary,
+            salary.taxDeduction,
+            salary.taxRatePercent
+            );
 
         QString html;
         QTextStream ts(&html);
@@ -56,9 +69,9 @@ public:
 
         ts << R"(
 <h1>Salgsrapport</h1>
-<div class="hint">Her får du det korte overblik: hvor du står nu, og hvad der skal til for næste løft.</div>
+<div class="hint">Her f?r du det korte overblik: hvor du st?r nu, og hvad der skal til for n?ste l?ft.</div>
 )";
-        ts << "<div class=\"meta\"><strong>Sælger:</strong> " << s.name.toHtmlEscaped()
+        ts << "<div class=\"meta\"><strong>S?lger:</strong> " << s.name.toHtmlEscaped()
            << "<br><strong>Periode:</strong> " << label.toHtmlEscaped()
            << "<br><strong>Eksporteret:</strong> " << QDateTime::currentDateTime().toString("dd-MM-yyyy HH:mm").toHtmlEscaped()
            << "</div>";
@@ -69,14 +82,15 @@ public:
         };
         addCard("Ordrer", QString::number(m.totalOrders));
         addCard("Salg", QString::number(m.salesCount));
-        addCard("Tillæg", QString::number(m.addOnCount));
+        addCard("Till?g", QString::number(m.addOnCount));
         addCard("SIMO / VOICE", QString("%1 / %2").arg(m.simoCount).arg(m.voiceCount));
         addCard("Point nu", money(m.totalPoints));
-        addCard("Løntimer", money(workedHours) + " timer");
-        addCard("Timeløn", money(hourlyRate) + " kr/t");
+        addCard("L?ntimer", money(workedHours) + " timer");
+        addCard("Timel?n", money(hourlyRate) + " kr/t");
         addCard("Timer", money(salary.baseSalary) + " kr");
         addCard("Provision", money(salary.totalProvision) + " kr");
-        addCard("Løn", money(salary.totalSalary) + " kr");
+        addCard("L?n", money(salary.totalSalary) + " kr");
+        addCard("Udbetalt", salary.taxConfigured ? money(salary.netSalary) + " kr" : QString("Indstil skat"));
         addCard("Aktive salgsdage", QString::number(activeDays));
         addCard("Snit point pr aktiv dag", money(avgPointsPerActiveDay));
         addCard("Snit provision pr aktiv dag", money(avgCommissionPerActiveDay) + " kr");
@@ -97,46 +111,54 @@ public:
         ts << "</table>";
 
         ts << "<div class=\"hint\">" << nextMonthlyTierHint(m.totalPoints, repo.settings.bonus).toHtmlEscaped() << "</div>";
-        ts << "<h2>Løn</h2><div class=\"hint\">Her kombineres timer fra Intramanager med provision efter samme regler som dashboardet.</div><table>";
-        ts << "<tr><th>Felt</th><th>Værdi</th></tr>";
-        ts << "<tr><td>Lønperiode</td><td>" << hoursPeriod.toHtmlEscaped() << "</td></tr>";
-        ts << "<tr><td>Løntimer</td><td>" << money(workedHours) << " timer</td></tr>";
-        ts << "<tr><td>Timeløn</td><td>" << money(hourlyRate) << " kr/t</td></tr>";
+        ts << "<h2>L?n</h2><div class=\"hint\">Her kombineres timer fra Intramanager med provision efter samme regler som dashboardet.</div><table>";
+        ts << "<tr><th>Felt</th><th>V?rdi</th></tr>";
+        ts << "<tr><td>L?nperiode</td><td>" << hoursPeriod.toHtmlEscaped() << "</td></tr>";
+        ts << "<tr><td>L?ntimer</td><td>" << money(workedHours) << " timer</td></tr>";
+        ts << "<tr><td>Timel?n</td><td>" << money(hourlyRate) << " kr/t</td></tr>";
         ts << "<tr><td>Timer</td><td>" << money(salary.baseSalary) << " kr</td></tr>";
         ts << "<tr><td>Provision</td><td>" << money(salary.totalProvision) << " kr</td></tr>";
         if (salary.usesPaymentMonthRules) {
-            ts << "<tr><td>Provision i lønperioden</td><td>" << money(salary.periodProvision) << " kr";
+            ts << "<tr><td>Provision i l?nperioden</td><td>" << money(salary.periodProvision) << " kr";
             if (!salary.salaryPeriod.isEmpty()) ts << " (" << salary.salaryPeriod.toHtmlEscaped() << ")";
             ts << "</td></tr>";
             ts << "<tr><td>Bagbetalt provision</td><td>" << money(salary.delayedProvision) << " kr";
             if (!salary.delayedPeriod.isEmpty()) ts << " (" << salary.delayedPeriod.toHtmlEscaped() << ")";
             ts << "</td></tr>";
         }
-        ts << "<tr><td><strong>Løn</strong></td><td><strong>" << money(salary.totalSalary) << " kr</strong></td></tr>";
+        ts << "<tr><td><strong>L?n</strong></td><td><strong>" << money(salary.totalSalary) << " kr</strong></td></tr>";
+        if (salary.taxConfigured) {
+            ts << "<tr><td>Skattefradrag</td><td>" << money(salary.taxDeduction) << " kr</td></tr>";
+            ts << "<tr><td>Tr?kprocent</td><td>" << money(salary.taxRatePercent) << " %</td></tr>";
+            ts << "<tr><td>Estimeret skat</td><td>" << money(salary.taxAmount) << " kr</td></tr>";
+            ts << "<tr><td><strong>Udbetalt</strong></td><td><strong>" << money(salary.netSalary) << " kr</strong></td></tr>";
+        } else {
+            ts << "<tr><td>Udbetalt</td><td>Indstil skattefradrag og tr?kprocent i Indstillinger</td></tr>";
+        }
         ts << "</table>";
 
-        ts << "<h2>Sådan ligger du lige nu</h2><div class=\"hint\">Her kan du se om du er foran, bagud eller lige på kanten af næste løft.</div><table>";
-        ts << "<tr><th>Felt</th><th>Værdi</th></tr>";
+        ts << "<h2>S?dan ligger du lige nu</h2><div class=\"hint\">Her kan du se om du er foran, bagud eller lige p? kanten af n?ste l?ft.</div><table>";
+        ts << "<tr><th>Felt</th><th>V?rdi</th></tr>";
         if (!bestDay.first.isEmpty()) {
             ts << "<tr><td>Bedste dag</td><td>" << bestDay.first.toHtmlEscaped() << " (" << money(bestDay.second) << " point)</td></tr>";
         }
-        ts << "<tr><td>Aktuel månedsrate</td><td>" << money(rate) << " kr/point</td></tr>";
-        ts << "<tr><td>Mål for måneden</td><td>" << money(repo.settings.bonus.monthlyTargetPoints) << " point</td></tr>";
+        ts << "<tr><td>Aktuel m?nedsrate</td><td>" << money(rate) << " kr/point</td></tr>";
+        ts << "<tr><td>M?l for m?neden</td><td>" << money(repo.settings.bonus.monthlyTargetPoints) << " point</td></tr>";
         if (repo.settings.monthlySalesTarget > 0) {
-            ts << "<tr><td>Mål for måneden (salg)</td><td>" << repo.settings.monthlySalesTarget << " salg</td></tr>";
+            ts << "<tr><td>M?l for m?neden (salg)</td><td>" << repo.settings.monthlySalesTarget << " salg</td></tr>";
         }
-        ts << "<tr><td>Mangler til / over mål</td><td>";
+        ts << "<tr><td>Mangler til / over m?l</td><td>";
         if (m.totalPoints < repo.settings.bonus.monthlyTargetPoints) {
             ts << money(repo.settings.bonus.monthlyTargetPoints - m.totalPoints) << " point mangler";
         } else {
-            ts << money(m.totalPoints - repo.settings.bonus.monthlyTargetPoints) << " point over mål";
+            ts << money(m.totalPoints - repo.settings.bonus.monthlyTargetPoints) << " point over m?l";
         }
         ts << "</td></tr></table>";
 
-        ts << "<h2>Provision og næste løft</h2><div class=\"hint\">Når du er tæt på provision, bliver de næste pengehop fremhævet tydeligt.</div><table>";
-        ts << "<tr><th>Felt</th><th>Værdi</th></tr>";
-        ts << "<tr><td>Dagsprovision / pointprovision (21.–20.)</td><td>" << money(m.dayBonus) << " kr</td></tr>";
-        ts << "<tr><td>Månedsprovision</td><td>" << money(m.monthlyBonus) << " kr</td></tr>";
+        ts << "<h2>Provision og n?ste l?ft</h2><div class=\"hint\">N?r du er t?t p? provision, bliver de n?ste pengehop fremh?vet tydeligt.</div><table>";
+        ts << "<tr><th>Felt</th><th>V?rdi</th></tr>";
+        ts << "<tr><td>Dagsprovision / pointprovision (21.?20.)</td><td>" << money(m.dayBonus) << " kr</td></tr>";
+        ts << "<tr><td>M?nedsprovision</td><td>" << money(m.monthlyBonus) << " kr</td></tr>";
         ts << "<tr><td>SIMO provision</td><td>" << money(m.simoBonus) << " kr</td></tr>";
         ts << "<tr><td>VOICE provision</td><td>" << money(m.voiceBonus) << " kr</td></tr>";
         ts << "</table>";

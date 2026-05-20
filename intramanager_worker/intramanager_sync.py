@@ -169,6 +169,71 @@ def save_session_state(context, args):
         pass
 
 
+def clear_session_state(page, args):
+    try:
+        page.context.clear_cookies()
+    except Exception:
+        pass
+
+    try:
+        session_state_path(args).unlink(missing_ok=True)
+    except Exception:
+        pass
+
+
+def login_surfaces(page):
+    surfaces = [page]
+    try:
+        surfaces.extend(page.frames)
+    except Exception:
+        pass
+    return surfaces
+
+
+def fill_first_login_field(page, selectors, value):
+    fallback = None
+
+    for surface in login_surfaces(page):
+        for sel in selectors:
+            try:
+                loc = surface.locator(sel).first
+                if loc.count() <= 0:
+                    continue
+                if fallback is None:
+                    fallback = loc
+                try:
+                    if not loc.is_visible(timeout=500):
+                        continue
+                except Exception:
+                    continue
+                loc.fill(value, timeout=5000)
+                return True
+            except Exception:
+                pass
+
+    if fallback is not None:
+        try:
+            fallback.fill(value, timeout=5000)
+            return True
+        except Exception:
+            pass
+
+    return False
+
+
+def click_login_button(page, selectors):
+    for surface in login_surfaces(page):
+        for sel in selectors:
+            try:
+                loc = surface.locator(sel).first
+                if loc.count() > 0 and click_locator(loc):
+                    return True
+            except Exception:
+                pass
+
+    return False
+
+
 def login(page, args, debug_dir):
     page.goto(
         LOGIN_URL,
@@ -176,7 +241,10 @@ def login(page, args, debug_dir):
         timeout=60000
     )
 
-    page.wait_for_timeout(500)
+    try:
+        page.wait_for_selector("#main, form, input[type='password'], input[name*='pass' i]", timeout=10000)
+    except PlaywrightTimeoutError:
+        page.wait_for_timeout(500)
 
     if is_probably_logged_in(page):
         return {"success": True, "usedSession": True}
@@ -186,7 +254,12 @@ def login(page, args, debug_dir):
     username_selectors = [
         'input[name="user"]',
         'input[name="username"]',
+        'input[name="login"]',
+        'input[name="userid"]',
+        'input[name="user_name"]',
         'input[name="email"]',
+        'input[name*="user" i]',
+        'input[autocomplete="username"]',
         'input[type="email"]',
         'input[type="text"]',
         '#username',
@@ -195,37 +268,28 @@ def login(page, args, debug_dir):
 
     password_selectors = [
         'input[name="password"]',
+        'input[name*="pass" i]',
+        'input[autocomplete="current-password"]',
         'input[type="password"]',
         '#password',
     ]
 
-    user_filled = False
+    user_filled = fill_first_login_field(page, username_selectors, args.username)
+    pass_filled = fill_first_login_field(page, password_selectors, args.password)
 
-    for sel in username_selectors:
+    if not user_filled or not pass_filled:
+        clear_session_state(page, args)
         try:
-            loc = page.locator(sel).first
-
-            if loc.count() > 0:
-                loc.fill(args.username)
-                user_filled = True
-                break
-
-        except Exception:
+            page.goto(BASE_URL, wait_until="domcontentloaded", timeout=60000)
+            page.wait_for_selector("form, input[type='password'], input[name*='pass' i]", timeout=10000)
+        except PlaywrightTimeoutError:
             pass
 
-    pass_filled = False
+        if is_probably_logged_in(page):
+            return {"success": True, "usedSession": False}
 
-    for sel in password_selectors:
-        try:
-            loc = page.locator(sel).first
-
-            if loc.count() > 0:
-                loc.fill(args.password)
-                pass_filled = True
-                break
-
-        except Exception:
-            pass
+        user_filled = fill_first_login_field(page, username_selectors, args.username)
+        pass_filled = fill_first_login_field(page, password_selectors, args.password)
 
     if not user_filled or not pass_filled:
         save_debug_screenshot(page, debug_dir, "02_login_fields_not_found.png", force=True)
@@ -248,23 +312,14 @@ def login(page, args, debug_dir):
     login_button_selectors = [
         'button[type="submit"]',
         'input[type="submit"]',
+        'button.btn',
         'button:has-text("Login")',
         'button:has-text("Log ind")',
         'text=Login',
         'text=Log ind',
     ]
 
-    for sel in login_button_selectors:
-        try:
-            loc = page.locator(sel).first
-
-            if loc.count() > 0:
-                loc.click()
-                clicked = True
-                break
-
-        except Exception:
-            pass
+    clicked = click_login_button(page, login_button_selectors)
 
     if not clicked:
         page.keyboard.press("Enter")

@@ -39,7 +39,7 @@ static QString countModeBadge(CountMode mode) {
 }
 
 static bool isAddOnCategory(const QString& category) {
-    return category.trimmed().compare("Tillæg", Qt::CaseInsensitive) == 0;
+    return category.trimmed().compare("Till?g", Qt::CaseInsensitive) == 0;
 }
 
 struct Product {
@@ -124,6 +124,8 @@ struct AppSettings {
     int monthlySalesTarget = 0;
 
     double hourlyRate = 0.0;
+    double taxDeduction = 0.0;
+    double taxRatePercent = 0.0;
     QString intramanagerUsername;
     bool intramanagerEnabled = false;
 
@@ -349,6 +351,8 @@ static QJsonObject toJson(const AppSettings& s) {
         {"lastClosedMonthKey", s.lastClosedMonthKey},
         {"monthlySalesTarget", s.monthlySalesTarget},
         {"hourlyRate", s.hourlyRate},
+        {"taxDeduction", s.taxDeduction},
+        {"taxRatePercent", s.taxRatePercent},
         {"intramanagerUsername", s.intramanagerUsername},
         {"intramanagerEnabled", s.intramanagerEnabled},
         {"defaultSellerInitials", s.defaultSellerInitials},
@@ -376,6 +380,8 @@ static AppSettings fromSettingsJson(const QJsonObject& o) {
     s.lastClosedMonthKey = o["lastClosedMonthKey"].toString();
     s.monthlySalesTarget = o.value("monthlySalesTarget").toInt(0);
     s.hourlyRate = o.value("hourlyRate").toDouble(0.0);
+    s.taxDeduction = o.value("taxDeduction").toDouble(0.0);
+    s.taxRatePercent = o.value("taxRatePercent").toDouble(0.0);
     s.intramanagerUsername = o.value("intramanagerUsername").toString();
     s.intramanagerEnabled = o.value("intramanagerEnabled").toBool(false);
     s.defaultSellerInitials = o.value("defaultSellerInitials").toString();

@@ -137,6 +137,6 @@ function main(workbook: ExcelScript.Workbook, payloadJson: string): string {
     success: true,
     row: nextRow + 1,
     unmatchedProducts,
-    message: `Salgs-reg sendt og tilfoejet paa raekke ${nextRow + 1}.`,
+    message: `Salgs-reg sendt og tilf?jet p? r?kke ${nextRow + 1}.`,
   });
 }

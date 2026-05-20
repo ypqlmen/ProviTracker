@@ -91,7 +91,7 @@ if ($LASTEXITCODE -gt 7) { throw "Kopiering af Playwright browserpakke fejlede."
 & $iscc "/DBuildDir=$stageDir" $iss
 if ($LASTEXITCODE -ne 0) { throw "Inno Setup build fejlede." }
 
-$installer = Join-Path $root "dist\ProviBeregnerSetup-1.3.22.exe"
+$installer = Join-Path $root "dist\ProviBeregnerSetup-1.3.23.exe"
 if (!(Test-Path $installer)) { throw "Installer blev ikke oprettet: $installer" }
 
 Write-Host "Installer klar: $installer"
