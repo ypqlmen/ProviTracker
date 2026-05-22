@@ -1,6 +1,7 @@
 param(
-    [string]$Version = "1.3.23",
-    [string]$Installer = "$PSScriptRoot\..\dist\ProviBeregnerSetup-1.3.23.exe",
+    [string]$Version = "1.3.24",
+    [string]$Installer = "$PSScriptRoot\..\dist\ProviBeregnerSetup-1.3.24.exe",
+    [string]$UpdateZip = "$PSScriptRoot\..\dist\ProviTrackerUpdate-1.3.24.zip",
     [string]$Repo = "ypqlmen/ProviTracker",
     [string]$Tag = "autoupdate",
     [string]$Branch = "main",
@@ -15,12 +16,17 @@ if (!(Get-Command gh -ErrorAction SilentlyContinue)) {
 
 $installerPath = Resolve-Path $Installer
 $assetName = Split-Path -Leaf $installerPath
+$zipPath = Resolve-Path $UpdateZip
+$zipAssetName = Split-Path -Leaf $zipPath
 $appcastPath = Resolve-Path $Appcast
 $appcastText = Get-Content $appcastPath -Raw
 
 [xml]$null = $appcastText
 if ($appcastText -notmatch [regex]::Escape($assetName)) {
-    throw "appcast.xml peger ikke p? $assetName."
+    throw "appcast.xml peger ikke på $assetName."
+}
+if ($appcastText -notmatch [regex]::Escape($zipAssetName)) {
+    throw "appcast.xml peger ikke på $zipAssetName."
 }
 if ($appcastText -notmatch "sparkle:shortVersionString=`"$([regex]::Escape($Version))`"") {
     throw "appcast.xml har ikke sparkle:shortVersionString=$Version."
@@ -35,6 +41,8 @@ if ($LASTEXITCODE -ne 0) {
 
 gh release upload $Tag $installerPath --repo $Repo --clobber
 if ($LASTEXITCODE -ne 0) { throw "Upload til GitHub Release fejlede." }
+gh release upload $Tag $zipPath --repo $Repo --clobber
+if ($LASTEXITCODE -ne 0) { throw "Upload af update-zip til GitHub Release fejlede." }
 
 $currentAppcast = $null
 $currentAppcastJson = & gh api "repos/$Repo/contents/appcast.xml?ref=$Branch" 2>$null
@@ -56,7 +64,7 @@ if ($currentAppcast -and $currentAppcast.sha) {
 }
 
 & gh @apiArgs | Out-Null
-if ($LASTEXITCODE -ne 0) { throw "Opdatering af appcast.xml p? GitHub fejlede." }
+if ($LASTEXITCODE -ne 0) { throw "Opdatering af appcast.xml på GitHub fejlede." }
 
-Write-Host "Uploadet $assetName til https://github.com/$Repo/releases/tag/$Tag"
-Write-Host "Opdateret appcast.xml p? branch '$Branch'."
+Write-Host "Uploadet $assetName og $zipAssetName til https://github.com/$Repo/releases/tag/$Tag"
+Write-Host "Opdateret appcast.xml på branch '$Branch'."
