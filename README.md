@@ -105,10 +105,10 @@ Appen læser appcast fra:
 
 GitHub Release-tagget til auto-update er `autoupdate`. Auto-update i appen henter zip-assetet, pakker det ud i brugerens tempmappe, starter installeren og rydder op bagefter.
 
-Aktuelle assets for version 1.3.24:
+Aktuelle assets for version 1.3.25:
 
-- `ProviTrackerUpdate-1.3.24.zip`
-- `ProviBeregnerSetup-1.3.24.exe`
+- `ProviTrackerUpdate-1.3.25.zip`
+- `ProviBeregnerSetup-1.3.25.exe`
 
 Bemærk: den oprindelige 1.1-build indeholdt WinSparkle DLL'en, men ikke en appcast-URL i selve programmet eller installeren. Brugere på 1.1 skal derfor installere en nyere version manuelt én gang; derefter kan auto-update hente fremtidige versioner.
 

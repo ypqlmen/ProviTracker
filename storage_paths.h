@@ -4,6 +4,11 @@
 
 static QString appStorageDir()
 {
+    const QString overrideDir = qEnvironmentVariable("PROVI_DATA_DIR").trimmed();
+    if (!overrideDir.isEmpty()) {
+        return overrideDir;
+    }
+
     return QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation)
         + "/ProviTracker";
 }

@@ -20,8 +20,8 @@
 #include "commission.h"
 #include "report_service.h"
 
-static constexpr const char* APP_VERSION = "1.3.24";
-static constexpr int APP_BUILD_VERSION = 10324;
+static constexpr const char* APP_VERSION = "1.3.25";
+static constexpr int APP_BUILD_VERSION = 10325;
 static constexpr const char* UPDATE_APPCAST_URL = "https://raw.githubusercontent.com/ypqlmen/ProviTracker/main/appcast.xml";
 
 static QString psSingleQuoted(QString value) {
@@ -632,8 +632,10 @@ public:
     SalespersonPickerDialog(Repository& repo, QWidget* parent = nullptr)
         : QDialog(parent), repo(repo) {
         setWindowTitle("Vælg sælger");
-        resize(420, 300);
+        resize(440, 340);
         auto* layout = new QVBoxLayout(this);
+        layout->setContentsMargins(14, 14, 14, 14);
+        layout->setSpacing(10);
         list = new QListWidget;
         for (const auto& s : repo.salespeople) list->addItem(s.name);
         nameEdit = new QLineEdit;
@@ -644,6 +646,7 @@ public:
         layout->addWidget(list);
         layout->addWidget(nameEdit);
         auto* row = new QHBoxLayout;
+        row->setSpacing(8);
         row->addWidget(createBtn);
         row->addWidget(selectBtn);
         layout->addLayout(row);
@@ -1192,6 +1195,50 @@ public:
         setupUi();
         refreshAll();
         setupIntramanagerAutoSync();
+    }
+
+    void captureVisualReviewAndQuit(const QString& outputDir) {
+        QDir().mkpath(outputDir);
+        resize(1200, 820);
+        show();
+        qApp->processEvents();
+
+        auto saveWidget = [](QWidget* widget, const QString& path) {
+            widget->grab().save(path);
+        };
+
+        if (auto* tabs = findChild<QTabWidget*>()) {
+            const QStringList tabNames = {
+                "01-dashboard.png",
+                "02-orders.png",
+                "03-reports.png",
+                "04-settings.png"
+            };
+            const int count = qMin(tabs->count(), tabNames.size());
+            for (int i = 0; i < count; ++i) {
+                tabs->setCurrentIndex(i);
+                qApp->processEvents();
+                saveWidget(this, QDir(outputDir).filePath(tabNames[i]));
+            }
+        } else {
+            saveWidget(this, QDir(outputDir).filePath("01-window.png"));
+        }
+
+        if (const auto* s = activeSalesperson()) {
+            OrderEditorDialog orderDialog(repo, s->id, std::nullopt, this);
+            orderDialog.show();
+            qApp->processEvents();
+            saveWidget(&orderDialog, QDir(outputDir).filePath("05-new-order-dialog.png"));
+            orderDialog.close();
+        }
+
+        SalespersonPickerDialog sellerDialog(repo, this);
+        sellerDialog.show();
+        qApp->processEvents();
+        saveWidget(&sellerDialog, QDir(outputDir).filePath("06-seller-dialog.png"));
+        sellerDialog.close();
+
+        QTimer::singleShot(0, qApp, &QCoreApplication::quit);
     }
 
 private:
@@ -2597,13 +2644,11 @@ QTableWidget::item {
         ordersTable->setWordWrap(true);
         ordersTable->setTextElideMode(Qt::ElideNone);
         ordersTable->setShowGrid(false);
-        ordersTable->setMinimumHeight(220);
-        ordersTable->setMaximumHeight(320);
-        ordersTable->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+        ordersTable->setMinimumHeight(360);
+        ordersTable->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
         styleDataTable(ordersTable, true);
 
-        tableCard.second->addWidget(ordersTable);
-        tableCard.second->addStretch();
+        tableCard.second->addWidget(ordersTable, 1);
         layout->addWidget(tableCard.first, 1);
 
         // 🔌 CONNECTS (HER SKAL DE STÅ)
@@ -4032,7 +4077,7 @@ QTableWidget::item {
                     ? "Microsoft-login er gemt og bruges til mailflow."
                     : "Log ind med Microsoft for at sende salgs-reg mails.");
             } else {
-                salesRegistrationStatusLabel->setText("Microsoft-login skal vÃ¦re aktivt for mailflow.");
+                salesRegistrationStatusLabel->setText("Microsoft-login skal være aktivt for mailflow.");
             }
         }
 
@@ -4734,9 +4779,16 @@ int main(int argc, char *argv[]) {
     MainWindow w;
     w.show();
 
-    QTimer::singleShot(1500, &app, []() {
-        initAutoUpdate();
-    });
+    const QString visualReviewDir = qEnvironmentVariable("PROVI_VISUAL_REVIEW_DIR");
+    if (!visualReviewDir.isEmpty()) {
+        QTimer::singleShot(500, &w, [&w, visualReviewDir]() {
+            w.captureVisualReviewAndQuit(visualReviewDir);
+        });
+    } else {
+        QTimer::singleShot(1500, &app, []() {
+            initAutoUpdate();
+        });
+    }
 
     return app.exec();
 }
