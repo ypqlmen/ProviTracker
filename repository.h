@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QtCore>
+#include <functional>
 #include "domain.h"
 #include "storage_paths.h"
 
@@ -14,6 +15,9 @@ public:
     QVector<Product> products;
     QVector<Order> orders;
     AppSettings settings;
+    bool localPersistenceEnabled = true;
+    bool cloudPersistenceEnabled = false;
+    std::function<void()> cloudSaveRequested;
 
     QString baseDir() const {
         return appStorageDir();
@@ -62,12 +66,113 @@ public:
         saveSettings();
     }
 
-    void saveSalespeople() const { saveVector(baseDir() + "/salespeople.json", salespeople, [](const Salesperson& s){ return toJson(s); }); }
-    void saveProducts() const { saveVector(baseDir() + "/products.json", products, [](const Product& p){ return toJson(p); }); }
-    void saveOrders() const { saveVector(baseDir() + "/orders.json", orders, [](const Order& o){ return toJson(o); }); }
+    void saveSalespeople() const {
+        if (localPersistenceEnabled) {
+            saveVector(baseDir() + "/salespeople.json", salespeople, [](const Salesperson& s){ return toJson(s); });
+        }
+        requestCloudSave();
+    }
+    void saveProducts() const {
+        if (localPersistenceEnabled) {
+            saveVector(baseDir() + "/products.json", products, [](const Product& p){ return toJson(p); });
+        }
+        requestCloudSave();
+    }
+    void saveOrders() const {
+        if (localPersistenceEnabled) {
+            saveVector(baseDir() + "/orders.json", orders, [](const Order& o){ return toJson(o); });
+        }
+        requestCloudSave();
+    }
     void saveSettings() const {
-        QFile f(baseDir() + "/settings.json");
-        if (f.open(QIODevice::WriteOnly)) f.write(QJsonDocument(toJson(settings)).toJson(QJsonDocument::Indented));
+        if (localPersistenceEnabled) {
+            QFile f(baseDir() + "/settings.json");
+            if (f.open(QIODevice::WriteOnly)) f.write(QJsonDocument(toJson(settings)).toJson(QJsonDocument::Indented));
+        }
+        requestCloudSave();
+    }
+
+    QJsonObject cloudPayload() const {
+        QJsonArray salespeopleJson;
+        for (const auto& s : salespeople) {
+            salespeopleJson.append(toJson(s));
+        }
+
+        QJsonArray productsJson;
+        for (const auto& p : products) {
+            productsJson.append(toJson(p));
+        }
+
+        QJsonArray ordersJson;
+        for (const auto& o : orders) {
+            ordersJson.append(toJson(o));
+        }
+
+        QJsonObject payload;
+        payload["settings"] = toJson(settings);
+        payload["orders"] = ordersJson;
+        payload["products"] = productsJson;
+        payload["salesperson"] = salespeopleJson.isEmpty() ? QJsonObject() : salespeopleJson.at(0).toObject();
+        return payload;
+    }
+
+    void applyCloudPayload(const QJsonObject& payload, const QString& username) {
+        settings = fromSettingsJson(payload.value("settings").toObject());
+
+        orders.clear();
+        for (const auto& v : payload.value("orders").toArray()) {
+            orders.push_back(fromOrderJson(v.toObject()));
+        }
+
+        products.clear();
+        for (const auto& v : payload.value("products").toArray()) {
+            products.push_back(fromProductJson(v.toObject()));
+        }
+        if (products.isEmpty()) {
+            seedProducts();
+        }
+
+        salespeople.clear();
+        const QJsonObject salespersonJson = payload.value("salesperson").toObject();
+        Salesperson seller = fromSalespersonJson(salespersonJson);
+        if (seller.id.trimmed().isEmpty()) {
+            seller.id = cloudSalespersonId(username);
+        }
+        if (seller.name.trimmed().isEmpty()) {
+            seller.name = username.trimmed();
+        }
+        salespeople.push_back(seller);
+
+        normalizeForCloudUser(username);
+
+        if (migrateProductCatalog()) {
+            requestCloudSave();
+        }
+    }
+
+    void normalizeForCloudUser(const QString& username) {
+        const QString sellerId = cloudSalespersonId(username);
+        const QString sellerName = username.trimmed().isEmpty() ? "Bruger" : username.trimmed();
+
+        if (salespeople.isEmpty()) {
+            salespeople.push_back({sellerId, sellerName});
+        } else {
+            salespeople = {{sellerId, sellerName}};
+        }
+
+        settings.activeSalespersonId = sellerId;
+
+        for (auto& order : orders) {
+            order.salespersonId = sellerId;
+        }
+    }
+
+    static QString cloudSalespersonId(const QString& username) {
+        const QByteArray hash = QCryptographicHash::hash(
+            username.trimmed().toUtf8().toLower(),
+            QCryptographicHash::Sha1
+            ).toHex();
+        return "cloud-" + QString::fromLatin1(hash.left(16));
     }
 
     const Product* findProduct(const QString& key) const {
@@ -179,6 +284,12 @@ public:
     }
 
 private:
+    void requestCloudSave() const {
+        if (cloudPersistenceEnabled && cloudSaveRequested) {
+            cloudSaveRequested();
+        }
+    }
+
     template <typename T, typename Fn>
     QVector<T> loadVector(const QString& path, Fn fn) {
         QVector<T> out;

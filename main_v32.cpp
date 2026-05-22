@@ -20,8 +20,8 @@
 #include "commission.h"
 #include "report_service.h"
 
-static constexpr const char* APP_VERSION = "1.3.26";
-static constexpr int APP_BUILD_VERSION = 10326;
+static constexpr const char* APP_VERSION = "1.4.0";
+static constexpr int APP_BUILD_VERSION = 10400;
 static constexpr const char* UPDATE_APPCAST_URL = "https://raw.githubusercontent.com/ypqlmen/ProviTracker/main/appcast.xml";
 
 static QString psSingleQuoted(QString value) {
@@ -342,6 +342,270 @@ static void initAutoUpdate()
 {
     ZipAutoUpdater::checkOnStartup(qApp);
 }
+
+static constexpr const char* SUPABASE_PROJECT_URL = "https://ebaruoylcnxapffpdmxb.supabase.co";
+static constexpr const char* SUPABASE_PUBLISHABLE_KEY = "sb_publishable_I3jT09hqNVPnvKUvn_ZW7Q_HtpPRASZ";
+
+class ProviCloudClient : public QObject {
+public:
+    struct Result {
+        bool ok = false;
+        bool hasData = false;
+        QString error;
+        QString username;
+        QString token;
+        QString expiresAt;
+        QJsonObject data;
+    };
+
+    explicit ProviCloudClient(QObject* parent = nullptr)
+        : QObject(parent) {}
+
+    Result login(const QString& username, const QString& password) {
+        return callRpcSync(
+            "provi_login",
+            {
+                {"p_username", username.trimmed()},
+                {"p_password", password}
+            }
+            );
+    }
+
+    Result registerUser(const QString& username, const QString& password, const QJsonObject& payload) {
+        return callRpcSync(
+            "provi_register",
+            {
+                {"p_username", username.trimmed()},
+                {"p_password", password},
+                {"p_payload", payload}
+            }
+            );
+    }
+
+    Result load(const QString& username, const QString& token) {
+        return callRpcSync(
+            "provi_load",
+            {
+                {"p_username", username.trimmed()},
+                {"p_token", token}
+            }
+            );
+    }
+
+    Result save(const QString& username, const QString& token, const QJsonObject& payload) {
+        return callRpcSync(
+            "provi_save",
+            {
+                {"p_username", username.trimmed()},
+                {"p_token", token},
+                {"p_payload", payload}
+            }
+            );
+    }
+
+    void saveAsync(
+        const QString& username,
+        const QString& token,
+        const QJsonObject& payload,
+        std::function<void(Result)> callback
+        ) {
+        callRpcAsync(
+            "provi_save",
+            {
+                {"p_username", username.trimmed()},
+                {"p_token", token},
+                {"p_payload", payload}
+            },
+            std::move(callback)
+            );
+    }
+
+    void logoutAsync(const QString& username, const QString& token) {
+        callRpcAsync(
+            "provi_logout",
+            {
+                {"p_username", username.trimmed()},
+                {"p_token", token}
+            },
+            [](const Result&) {}
+            );
+    }
+
+private:
+    QNetworkAccessManager network;
+
+    QNetworkRequest requestForRpc(const QString& functionName) const {
+        QNetworkRequest request(QUrl(QString("%1/rest/v1/rpc/%2")
+            .arg(QString::fromLatin1(SUPABASE_PROJECT_URL), functionName)));
+        request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
+        request.setRawHeader("Accept", "application/json");
+        request.setRawHeader("apikey", SUPABASE_PUBLISHABLE_KEY);
+        request.setRawHeader("Authorization", QByteArray("Bearer ") + SUPABASE_PUBLISHABLE_KEY);
+        request.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::NoLessSafeRedirectPolicy);
+        request.setTransferTimeout(30000);
+        return request;
+    }
+
+    Result parseReply(QNetworkReply* reply, const QByteArray& body) const {
+        Result result;
+        const int statusCode = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+
+        QJsonParseError parseError;
+        const QJsonDocument doc = QJsonDocument::fromJson(body, &parseError);
+        const QJsonObject obj = doc.object();
+
+        if (reply->error() != QNetworkReply::NoError || statusCode < 200 || statusCode >= 300) {
+            result.error = obj.value("message").toString();
+            if (result.error.isEmpty()) {
+                result.error = obj.value("error").toString();
+            }
+            if (result.error.isEmpty()) {
+                result.error = reply->errorString();
+            }
+            return result;
+        }
+
+        if (parseError.error != QJsonParseError::NoError || !doc.isObject()) {
+            result.error = "Supabase svarede med ugyldige data.";
+            return result;
+        }
+
+        result.ok = obj.value("ok").toBool(false);
+        result.error = obj.value("error").toString();
+        result.username = obj.value("username").toString();
+        result.token = obj.value("token").toString();
+        result.expiresAt = obj.value("expires_at").toString();
+        result.hasData = obj.value("has_data").toBool(false);
+        result.data = obj.value("data").toObject();
+
+        if (!result.ok && result.error.isEmpty()) {
+            result.error = "Handlingen kunne ikke gennemfores.";
+        }
+
+        return result;
+    }
+
+    Result callRpcSync(const QString& functionName, const QJsonObject& args) {
+        Result result;
+        QNetworkReply* reply = network.post(requestForRpc(functionName), QJsonDocument(args).toJson(QJsonDocument::Compact));
+
+        QEventLoop loop;
+        QTimer timeout;
+        timeout.setSingleShot(true);
+        connect(reply, &QNetworkReply::finished, &loop, &QEventLoop::quit);
+        connect(&timeout, &QTimer::timeout, &loop, [&]() {
+            reply->abort();
+            loop.quit();
+        });
+        timeout.start(15000);
+        loop.exec();
+
+        const QByteArray body = reply->readAll();
+        if (!timeout.isActive()) {
+            result.error = "Forbindelsen til Supabase tog for lang tid.";
+        } else {
+            result = parseReply(reply, body);
+        }
+        reply->deleteLater();
+        return result;
+    }
+
+    void callRpcAsync(const QString& functionName, const QJsonObject& args, std::function<void(Result)> callback) {
+        QNetworkReply* reply = network.post(requestForRpc(functionName), QJsonDocument(args).toJson(QJsonDocument::Compact));
+        connect(reply, &QNetworkReply::finished, this, [this, reply, callback = std::move(callback)]() mutable {
+            const QByteArray body = reply->readAll();
+            Result result = parseReply(reply, body);
+            reply->deleteLater();
+            callback(result);
+        });
+    }
+};
+
+class CloudLoginDialog : public QDialog {
+public:
+    enum class Action {
+        Login,
+        Register
+    };
+
+    explicit CloudLoginDialog(const QString& suggestedUsername, QWidget* parent = nullptr)
+        : QDialog(parent) {
+        setWindowTitle("Provi Tracker login");
+        setModal(true);
+        resize(430, 260);
+
+        auto* layout = new QVBoxLayout(this);
+        layout->setContentsMargins(18, 18, 18, 18);
+        layout->setSpacing(12);
+
+        auto* title = new QLabel("Log ind");
+        title->setStyleSheet("font-size:22px;font-weight:900;color:#F8FBFF;");
+        layout->addWidget(title);
+
+        auto* hint = new QLabel("Din opsaetning, ordrer og produkter hentes fra Provi Tracker cloud.");
+        hint->setWordWrap(true);
+        hint->setStyleSheet("color:#BFD7EE;");
+        layout->addWidget(hint);
+
+        usernameEdit = new QLineEdit(suggestedUsername);
+        usernameEdit->setPlaceholderText("Brugernavn");
+        passwordEdit = new QLineEdit;
+        passwordEdit->setEchoMode(QLineEdit::Password);
+        passwordEdit->setPlaceholderText("Adgangskode");
+
+        layout->addWidget(usernameEdit);
+        layout->addWidget(passwordEdit);
+
+        statusLabel = new QLabel;
+        statusLabel->setWordWrap(true);
+        statusLabel->setStyleSheet("color:#FCA5A5;");
+        layout->addWidget(statusLabel);
+
+        auto* buttons = new QHBoxLayout;
+        buttons->setSpacing(10);
+        auto* loginBtn = new QPushButton("Log ind");
+        auto* registerBtn = new QPushButton("Opret bruger");
+        buttons->addWidget(loginBtn);
+        buttons->addWidget(registerBtn);
+        layout->addLayout(buttons);
+
+        connect(loginBtn, &QPushButton::clicked, this, [this]() {
+            selectedAction = Action::Login;
+            validateAndAccept();
+        });
+
+        connect(registerBtn, &QPushButton::clicked, this, [this]() {
+            selectedAction = Action::Register;
+            validateAndAccept();
+        });
+    }
+
+    QString username() const { return usernameEdit->text().trimmed(); }
+    QString password() const { return passwordEdit->text(); }
+    Action action() const { return selectedAction; }
+
+    void setStatus(const QString& message) {
+        statusLabel->setText(message);
+    }
+
+private:
+    QLineEdit* usernameEdit = nullptr;
+    QLineEdit* passwordEdit = nullptr;
+    QLabel* statusLabel = nullptr;
+    Action selectedAction = Action::Login;
+
+    void validateAndAccept() {
+        if (username().isEmpty()) {
+            setStatus("Indtast et brugernavn.");
+            return;
+        }
+        if (password().isEmpty()) {
+            setStatus("Indtast en adgangskode.");
+            return;
+        }
+        accept();
+    }
+};
 
 
 static QPair<QFrame*, QVBoxLayout*> createCard(const QString& title) {
@@ -1178,16 +1442,22 @@ public:
         migrateLegacyDataIfNeeded();
         repo.load();
 
-        if (repo.salespeople.isEmpty() || repo.settings.activeSalespersonId.isEmpty() || !repo.findSalesperson(repo.settings.activeSalespersonId)) {
-            SalespersonPickerDialog dlg(repo, this);
-            dlg.exec();
-        }
+        if (qEnvironmentVariableIsSet("PROVI_VISUAL_REVIEW_DIR")) {
+            ensureLocalFallbackUser();
+        } else {
+            if (!authenticateCloudUser()) {
+                startupAborted = true;
+                QTimer::singleShot(0, qApp, &QCoreApplication::quit);
+                return;
+            }
 
-        if (repo.salespeople.isEmpty()) {
-            Salesperson first{QUuid::createUuid().toString(QUuid::WithoutBraces), "Standard"};
-            repo.salespeople.push_back(first);
-            repo.settings.activeSalespersonId = first.id;
-            repo.saveAll();
+            repo.localPersistenceEnabled = false;
+            repo.cloudPersistenceEnabled = true;
+            repo.cloudSaveRequested = [this]() { scheduleCloudSave(); };
+
+            cloudSaveTimer = new QTimer(this);
+            cloudSaveTimer->setSingleShot(true);
+            connect(cloudSaveTimer, &QTimer::timeout, this, [this]() { flushCloudSave(); });
         }
 
         ReportService::autoClosePreviousMonths(repo);
@@ -1195,6 +1465,10 @@ public:
         setupUi();
         refreshAll();
         setupIntramanagerAutoSync();
+    }
+
+    bool startupWasAborted() const {
+        return startupAborted;
     }
 
     void captureVisualReviewAndQuit(const QString& outputDir) {
@@ -1243,6 +1517,15 @@ public:
 
 private:
     Repository repo;
+    ProviCloudClient cloudClient;
+    bool startupAborted = false;
+    QString cloudUsername;
+    QString cloudToken;
+    QString cloudStatusText;
+    QTimer* cloudSaveTimer = nullptr;
+    bool cloudSaveInFlight = false;
+    bool cloudSaveAgain = false;
+    QLabel* cloudAccountStatusLabel = nullptr;
 
     QLabel* activeSalespersonLabel = nullptr;
     QLabel* daySummaryLabel = nullptr;
@@ -2182,6 +2465,206 @@ private:
             );
     }
 
+    QJsonObject localPayloadForCloudUser(const QString& username) const {
+        Repository snapshot = repo;
+        snapshot.localPersistenceEnabled = false;
+        snapshot.cloudPersistenceEnabled = false;
+        snapshot.cloudSaveRequested = nullptr;
+        if (snapshot.products.isEmpty()) {
+            snapshot.seedProducts();
+        }
+        snapshot.normalizeForCloudUser(username);
+        return snapshot.cloudPayload();
+    }
+
+    bool applyCloudResult(const ProviCloudClient::Result& result, bool migrateLocalIfCloudIsEmpty) {
+        if (cloudUsername.trimmed().isEmpty() || cloudToken.isEmpty()) {
+            QMessageBox::warning(this, "Login", "Cloud-login mangler brugernavn eller session.");
+            return false;
+        }
+
+        if (migrateLocalIfCloudIsEmpty && !result.hasData) {
+            repo.normalizeForCloudUser(cloudUsername);
+            if (repo.products.isEmpty()) {
+                repo.seedProducts();
+            }
+
+            const auto saveResult = cloudClient.save(cloudUsername, cloudToken, repo.cloudPayload());
+            if (!saveResult.ok) {
+                QMessageBox::warning(
+                    this,
+                    "Migration fejlede",
+                    saveResult.error.isEmpty() ? "Den lokale opsaetning kunne ikke uploades til cloud." : saveResult.error
+                    );
+                return false;
+            }
+
+            cloudStatusText = "Lokal opsaetning blev migreret til cloud.";
+            return true;
+        }
+
+        if (result.data.isEmpty()) {
+            repo.normalizeForCloudUser(cloudUsername);
+            if (repo.products.isEmpty()) {
+                repo.seedProducts();
+            }
+        } else {
+            repo.applyCloudPayload(result.data, cloudUsername);
+        }
+
+        cloudStatusText = "Cloud-data er indlaest.";
+        return true;
+    }
+
+    bool authenticateCloudUser() {
+        QString storedUsername;
+        QString storedToken;
+        if (loadCloudSession(&storedUsername, &storedToken)) {
+            const auto loadResult = cloudClient.load(storedUsername, storedToken);
+            if (loadResult.ok) {
+                cloudUsername = storedUsername;
+                cloudToken = storedToken;
+                if (applyCloudResult(loadResult, true)) {
+                    cloudStatusText = "Logget ind som " + cloudUsername + ".";
+                    return true;
+                }
+            }
+            deleteCloudSession();
+        }
+
+        QString suggestedUsername = repo.settings.intramanagerUsername.trimmed();
+        if (suggestedUsername.isEmpty() && !repo.salespeople.isEmpty()) {
+            suggestedUsername = repo.salespeople.first().name;
+        }
+
+        while (true) {
+            CloudLoginDialog dialog(suggestedUsername, this);
+            if (dialog.exec() != QDialog::Accepted) {
+                return false;
+            }
+
+            const QString username = dialog.username();
+            const QString password = dialog.password();
+            suggestedUsername = username;
+
+            ProviCloudClient::Result result;
+            const bool isRegister = dialog.action() == CloudLoginDialog::Action::Register;
+            if (isRegister) {
+                result = cloudClient.registerUser(username, password, localPayloadForCloudUser(username));
+            } else {
+                result = cloudClient.login(username, password);
+            }
+
+            if (!result.ok) {
+                QMessageBox::warning(
+                    this,
+                    isRegister ? "Opret bruger" : "Login",
+                    result.error.isEmpty() ? "Kunne ikke logge ind." : result.error
+                    );
+                continue;
+            }
+
+            cloudUsername = result.username.isEmpty() ? username : result.username;
+            cloudToken = result.token;
+            if (!saveCloudSession(cloudUsername, cloudToken, result.expiresAt)) {
+                QMessageBox::warning(
+                    this,
+                    "Login",
+                    "Du er logget ind, men sessionen kunne ikke gemmes krypteret paa computeren."
+                    );
+            }
+
+            if (!applyCloudResult(result, !isRegister)) {
+                continue;
+            }
+
+            cloudStatusText = isRegister
+                ? "Bruger oprettet og lokal opsaetning migreret til cloud."
+                : "Logget ind som " + cloudUsername + ".";
+            return true;
+        }
+    }
+
+    void ensureLocalFallbackUser() {
+        if (repo.salespeople.isEmpty() || repo.settings.activeSalespersonId.isEmpty() || !repo.findSalesperson(repo.settings.activeSalespersonId)) {
+            if (repo.salespeople.isEmpty()) {
+                Salesperson first{QUuid::createUuid().toString(QUuid::WithoutBraces), "Standard"};
+                repo.salespeople.push_back(first);
+            }
+            repo.settings.activeSalespersonId = repo.salespeople.first().id;
+            repo.saveAll();
+        }
+    }
+
+    void scheduleCloudSave() {
+        if (cloudUsername.trimmed().isEmpty() || cloudToken.isEmpty()) {
+            return;
+        }
+
+        if (cloudSaveInFlight) {
+            cloudSaveAgain = true;
+            return;
+        }
+
+        if (cloudSaveTimer) {
+            cloudSaveTimer->start(250);
+        }
+    }
+
+    void flushCloudSave() {
+        if (cloudUsername.trimmed().isEmpty() || cloudToken.isEmpty()) {
+            return;
+        }
+
+        if (cloudSaveInFlight) {
+            cloudSaveAgain = true;
+            return;
+        }
+
+        cloudSaveInFlight = true;
+        cloudSaveAgain = false;
+        const QJsonObject payload = repo.cloudPayload();
+
+        cloudClient.saveAsync(cloudUsername, cloudToken, payload, [this](ProviCloudClient::Result result) {
+            cloudSaveInFlight = false;
+            if (result.ok) {
+                cloudStatusText = "Cloud-data er gemt.";
+            } else {
+                cloudStatusText = result.error.isEmpty() ? "Cloud-gemning fejlede." : result.error;
+            }
+            updateCloudAccountStatus();
+
+            if (cloudSaveAgain) {
+                scheduleCloudSave();
+            }
+        });
+    }
+
+    void updateCloudAccountStatus() {
+        if (cloudAccountStatusLabel) {
+            if (cloudUsername.trimmed().isEmpty()) {
+                cloudAccountStatusLabel->setText("Cloud-login er ikke aktivt i denne QA-visning.");
+            } else {
+                cloudAccountStatusLabel->setText(
+                    QString("Logget ind som %1. %2").arg(cloudUsername.toHtmlEscaped(), cloudStatusText.toHtmlEscaped())
+                    );
+            }
+        }
+    }
+
+    void logoutCloudUser() {
+        if (!confirmQuestion(this, "Log ud", "Vil du logge ud af Provi Tracker cloud paa denne computer?")) {
+            return;
+        }
+
+        if (!cloudUsername.trimmed().isEmpty() && !cloudToken.isEmpty()) {
+            cloudClient.logoutAsync(cloudUsername, cloudToken);
+        }
+        deleteCloudSession();
+        QMessageBox::information(this, "Logget ud", "Du er logget ud. Aabn programmet igen for at logge ind.");
+        qApp->quit();
+    }
+
     const Salesperson* activeSalesperson() const {
         return repo.findSalesperson(repo.settings.activeSalespersonId);
     }
@@ -2891,7 +3374,7 @@ QTableWidget::item {
         auto* right = new QVBoxLayout;
         right->setSpacing(18);
 
-        auto sellerCard = createCard("Sælgere");
+        auto sellerCard = createCard("Konto");
         salespeopleList = new QListWidget;
 
         auto* sellerNameEdit = new QLineEdit;
@@ -2900,12 +3383,25 @@ QTableWidget::item {
         auto* addSellerBtn = new QPushButton("Tilføj sælger");
         auto* activateBtn = new QPushButton("Sæt som aktiv");
         auto* deleteSellerBtn = new QPushButton("Slet valgt sælger");
+        auto* logoutCloudBtn = new QPushButton("Log ud");
 
+        sellerNameEdit->hide();
+        addSellerBtn->hide();
+        activateBtn->hide();
+        deleteSellerBtn->hide();
+
+        cloudAccountStatusLabel = new QLabel;
+        cloudAccountStatusLabel->setWordWrap(true);
+        cloudAccountStatusLabel->setTextInteractionFlags(Qt::NoTextInteraction);
+        cloudAccountStatusLabel->setStyleSheet("QLabel { color:#D8F5FF; font-size:13px; background:transparent; }");
+
+        sellerCard.second->addWidget(cloudAccountStatusLabel);
         sellerCard.second->addWidget(salespeopleList);
         sellerCard.second->addWidget(sellerNameEdit);
         sellerCard.second->addWidget(addSellerBtn);
         sellerCard.second->addWidget(activateBtn);
         sellerCard.second->addWidget(deleteSellerBtn);
+        sellerCard.second->addWidget(logoutCloudBtn);
         sellerCard.second->addStretch();
 
         right->addWidget(sellerCard.first, 1);
@@ -2989,6 +3485,10 @@ QTableWidget::item {
             if (salesRegistrationStatusLabel) {
                 salesRegistrationStatusLabel->setText("Microsoft-login er fjernet fra denne computer.");
             }
+        });
+
+        connect(logoutCloudBtn, &QPushButton::clicked, this, [this]() {
+            logoutCloudUser();
         });
 
         connect(addSellerBtn, &QPushButton::clicked, this, [this, sellerNameEdit]() {
@@ -3113,6 +3613,9 @@ QTableWidget::item {
             repo.products = importedProducts;
             repo.orders = importedOrders;
             repo.settings = importedSettings;
+            if (repo.cloudPersistenceEnabled) {
+                repo.normalizeForCloudUser(cloudUsername);
+            }
             repo.saveAll();
             refreshAll();
 
@@ -3196,6 +3699,9 @@ QTableWidget::item {
         repo.products = importedProducts;
         repo.orders = importedOrders;
         repo.settings = importedSettings;
+        if (repo.cloudPersistenceEnabled) {
+            repo.normalizeForCloudUser(cloudUsername);
+        }
         if (!repo.findSalesperson(repo.settings.activeSalespersonId)) {
             repo.settings.activeSalespersonId = repo.salespeople.first().id;
         }
@@ -3214,6 +3720,10 @@ QTableWidget::item {
     }
 
     void createAutoBackup() {
+        if (!repo.localPersistenceEnabled) {
+            return;
+        }
+
         QJsonArray salespeopleArray;
         for (const auto& s : repo.salespeople) salespeopleArray.append(toJson(s));
         QJsonArray productsArray;
@@ -3638,6 +4148,8 @@ QTableWidget::item {
     }
 
     void refreshSalespeopleUi() {
+        updateCloudAccountStatus();
+
         salespeopleList->clear();
         for (const auto& s : repo.salespeople) {
             QString text = s.name;
@@ -4002,6 +4514,8 @@ QTableWidget::item {
     }
 
     void refreshSettingsUi() {
+        updateCloudAccountStatus();
+
         if (targetSpin) targetSpin->setValue(repo.settings.bonus.monthlyTargetPoints);
         if (monthlySalesTargetSpin) monthlySalesTargetSpin->setValue(repo.settings.monthlySalesTarget);
 
@@ -4776,6 +5290,9 @@ int main(int argc, char *argv[]) {
     QApplication app(argc, argv);
 
     MainWindow w;
+    if (w.startupWasAborted()) {
+        return 0;
+    }
     w.show();
 
     const QString visualReviewDir = qEnvironmentVariable("PROVI_VISUAL_REVIEW_DIR");

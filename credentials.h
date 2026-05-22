@@ -28,13 +28,24 @@ static QByteArray intramanagerPasswordEntropy() {
     return QByteArrayLiteral("ProviTracker.Intramanager.Password.v1");
 }
 
-static bool protectForCurrentWindowsUser(const QByteArray& plainText, QByteArray* protectedDataOut) {
+static QByteArray cloudSessionEntropy() {
+    return QByteArrayLiteral("ProviTracker.Cloud.Session.v1");
+}
+
+static QString cloudSessionStorePath() {
+    return appStorageDir() + "/cloud_session.json";
+}
+
+static bool protectForCurrentWindowsUserWithEntropy(
+    const QByteArray& plainText,
+    const QByteArray& entropy,
+    const wchar_t* description,
+    QByteArray* protectedDataOut
+    ) {
 #ifdef Q_OS_WIN
     if (plainText.isEmpty() || !protectedDataOut) {
         return false;
     }
-
-    const QByteArray entropy = intramanagerPasswordEntropy();
 
     DATA_BLOB plainBlob;
     plainBlob.cbData = static_cast<DWORD>(plainText.size());
@@ -49,7 +60,7 @@ static bool protectForCurrentWindowsUser(const QByteArray& plainText, QByteArray
 
     const BOOL ok = CryptProtectData(
         &plainBlob,
-        L"ProviTracker Intramanager password",
+        description,
         &entropyBlob,
         nullptr,
         nullptr,
@@ -69,18 +80,22 @@ static bool protectForCurrentWindowsUser(const QByteArray& plainText, QByteArray
     return true;
 #else
     Q_UNUSED(plainText);
+    Q_UNUSED(entropy);
+    Q_UNUSED(description);
     Q_UNUSED(protectedDataOut);
     return false;
 #endif
 }
 
-static bool unprotectForCurrentWindowsUser(const QByteArray& protectedData, QByteArray* plainTextOut) {
+static bool unprotectForCurrentWindowsUserWithEntropy(
+    const QByteArray& protectedData,
+    const QByteArray& entropy,
+    QByteArray* plainTextOut
+    ) {
 #ifdef Q_OS_WIN
     if (protectedData.isEmpty() || !plainTextOut) {
         return false;
     }
-
-    const QByteArray entropy = intramanagerPasswordEntropy();
 
     DATA_BLOB protectedBlob;
     protectedBlob.cbData = static_cast<DWORD>(protectedData.size());
@@ -115,9 +130,27 @@ static bool unprotectForCurrentWindowsUser(const QByteArray& protectedData, QByt
     return true;
 #else
     Q_UNUSED(protectedData);
+    Q_UNUSED(entropy);
     Q_UNUSED(plainTextOut);
     return false;
 #endif
+}
+
+static bool protectForCurrentWindowsUser(const QByteArray& plainText, QByteArray* protectedDataOut) {
+    return protectForCurrentWindowsUserWithEntropy(
+        plainText,
+        intramanagerPasswordEntropy(),
+        L"ProviTracker Intramanager password",
+        protectedDataOut
+        );
+}
+
+static bool unprotectForCurrentWindowsUser(const QByteArray& protectedData, QByteArray* plainTextOut) {
+    return unprotectForCurrentWindowsUserWithEntropy(
+        protectedData,
+        intramanagerPasswordEntropy(),
+        plainTextOut
+        );
 }
 
 static void deleteLegacyIntramanagerCredential() {
@@ -251,6 +284,91 @@ static bool loadIntramanagerPassword(QString* usernameOut, QString* passwordOut)
     }
 
     return true;
+}
+
+static bool saveCloudSession(const QString& username, const QString& token, const QString& expiresAt) {
+    if (username.trimmed().isEmpty() || token.isEmpty()) {
+        return false;
+    }
+
+    QByteArray protectedToken;
+    if (!protectForCurrentWindowsUserWithEntropy(
+            token.toUtf8(),
+            cloudSessionEntropy(),
+            L"ProviTracker cloud session",
+            &protectedToken
+            )) {
+        return false;
+    }
+
+    QDir().mkpath(appStorageDir());
+
+    QJsonObject session;
+    session["format"] = "dpapi-current-user-cloud-v1";
+    session["username"] = username.trimmed();
+    session["token"] = QString::fromLatin1(protectedToken.toBase64());
+    session["expiresAt"] = expiresAt;
+    session["savedAt"] = QDateTime::currentDateTime().toString(Qt::ISODate);
+
+    QSaveFile file(cloudSessionStorePath());
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        return false;
+    }
+
+    file.write(QJsonDocument(session).toJson(QJsonDocument::Indented));
+    return file.commit();
+}
+
+static bool loadCloudSession(QString* usernameOut, QString* tokenOut, QString* expiresAtOut = nullptr) {
+    QFile file(cloudSessionStorePath());
+    if (!file.open(QIODevice::ReadOnly)) {
+        return false;
+    }
+
+    QJsonParseError error;
+    const QJsonDocument doc = QJsonDocument::fromJson(file.readAll(), &error);
+    if (error.error != QJsonParseError::NoError || !doc.isObject()) {
+        return false;
+    }
+
+    const QJsonObject session = doc.object();
+    if (session.value("format").toString() != "dpapi-current-user-cloud-v1") {
+        return false;
+    }
+
+    const QByteArray protectedToken = QByteArray::fromBase64(
+        session.value("token").toString().toLatin1()
+        );
+
+    QByteArray plainToken;
+    if (!unprotectForCurrentWindowsUserWithEntropy(
+            protectedToken,
+            cloudSessionEntropy(),
+            &plainToken
+            )) {
+        return false;
+    }
+
+    const QString token = QString::fromUtf8(plainToken);
+    if (token.isEmpty()) {
+        return false;
+    }
+
+    if (usernameOut) {
+        *usernameOut = session.value("username").toString();
+    }
+    if (tokenOut) {
+        *tokenOut = token;
+    }
+    if (expiresAtOut) {
+        *expiresAtOut = session.value("expiresAt").toString();
+    }
+
+    return true;
+}
+
+static void deleteCloudSession() {
+    QFile::remove(cloudSessionStorePath());
 }
 
 static bool saveMicrosoftRefreshToken(const QString& accountHint, const QString& refreshToken) {
