@@ -253,26 +253,51 @@ static double projectedMonthPoints(double currentPoints, int elapsedWorkingDays,
     return (currentPoints / elapsedWorkingDays) * totalWorkingDays;
 }
 
+static constexpr double AM_BIDRAG_RATE = 0.08;
+
+struct SalaryTaxEstimate {
+    double amBidrag = 0.0;
+    double aTax = 0.0;
+    double totalTax = 0.0;
+    double netSalary = 0.0;
+    double taxableAfterAmAndDeduction = 0.0;
+};
+
+static SalaryTaxEstimate estimateSalaryTax(double grossSalary, double taxDeduction, double taxRatePercent) {
+    SalaryTaxEstimate estimate;
+    if (grossSalary <= 0.0) return estimate;
+
+    const double safeGross = qMax(0.0, grossSalary);
+    const double safeDeduction = qMax(0.0, taxDeduction);
+    const double safeTaxRate = qBound(0.0, taxRatePercent, 100.0) / 100.0;
+
+    estimate.amBidrag = safeGross * AM_BIDRAG_RATE;
+    const double salaryAfterAm = qMax(0.0, safeGross - estimate.amBidrag);
+    estimate.taxableAfterAmAndDeduction = qMax(0.0, salaryAfterAm - safeDeduction);
+    estimate.aTax = estimate.taxableAfterAmAndDeduction * safeTaxRate;
+    estimate.totalTax = estimate.amBidrag + estimate.aTax;
+    estimate.netSalary = qMax(0.0, safeGross - estimate.totalTax);
+    return estimate;
+}
+
 static double estimatedSalaryTax(double grossSalary, double taxDeduction, double taxRatePercent) {
-    if (grossSalary <= 0.0 || taxRatePercent <= 0.0) return 0.0;
-    const double taxableSalary = qMax(0.0, grossSalary - qMax(0.0, taxDeduction));
-    return taxableSalary * (qBound(0.0, taxRatePercent, 100.0) / 100.0);
+    return estimateSalaryTax(grossSalary, taxDeduction, taxRatePercent).totalTax;
 }
 
 static double estimatedNetSalary(double grossSalary, double taxDeduction, double taxRatePercent) {
-    return qMax(0.0, grossSalary - estimatedSalaryTax(grossSalary, taxDeduction, taxRatePercent));
+    return estimateSalaryTax(grossSalary, taxDeduction, taxRatePercent).netSalary;
 }
 
 static QString nextMonthlyTierHint(double points, const BonusSettings& b) {
     for (const auto& tier : b.monthlyRateTiers) {
         if (points < tier.threshold) {
-            return QString("N?ste point-tier: %1 point (%2 kr/point), mangler %3 point")
+            return QString("Næste point-tier: %1 point (%2 kr/point), mangler %3 point")
                 .arg(tier.threshold)
                 .arg(money(tier.ratePerPoint))
                 .arg(money(tier.threshold - points));
         }
     }
-    return "Du er allerede p? h?jeste point-tier";
+    return "Du er allerede på højeste point-tier";
 }
 
 struct ReportSalaryBreakdown {
@@ -285,6 +310,8 @@ struct ReportSalaryBreakdown {
     bool taxConfigured = false;
     double taxDeduction = 0.0;
     double taxRatePercent = 0.0;
+    double amBidrag = 0.0;
+    double aTax = 0.0;
     double taxAmount = 0.0;
     double netSalary = 0.0;
     QString salaryPeriod;

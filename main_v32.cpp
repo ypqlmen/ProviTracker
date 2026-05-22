@@ -20,8 +20,8 @@
 #include "commission.h"
 #include "report_service.h"
 
-static constexpr const char* APP_VERSION = "1.3.25";
-static constexpr int APP_BUILD_VERSION = 10325;
+static constexpr const char* APP_VERSION = "1.3.26";
+static constexpr int APP_BUILD_VERSION = 10326;
 static constexpr const char* UPDATE_APPCAST_URL = "https://raw.githubusercontent.com/ypqlmen/ProviTracker/main/appcast.xml";
 
 static QString psSingleQuoted(QString value) {
@@ -4525,16 +4525,15 @@ QTableWidget::item {
         salary.taxConfigured = repo.settings.taxRatePercent > 0.0;
         salary.taxDeduction = repo.settings.taxDeduction;
         salary.taxRatePercent = repo.settings.taxRatePercent;
-        salary.taxAmount = estimatedSalaryTax(
+        const SalaryTaxEstimate taxEstimate = estimateSalaryTax(
             salary.totalSalary,
             salary.taxDeduction,
             salary.taxRatePercent
             );
-        salary.netSalary = estimatedNetSalary(
-            salary.totalSalary,
-            salary.taxDeduction,
-            salary.taxRatePercent
-            );
+        salary.amBidrag = taxEstimate.amBidrag;
+        salary.aTax = taxEstimate.aTax;
+        salary.taxAmount = taxEstimate.totalTax;
+        salary.netSalary = taxEstimate.netSalary;
         salary.salaryPeriod = intramanagerPeriodLabel(
             intramanagerDate(payrollRange.first.date()),
             intramanagerDate(payrollRange.second.date())

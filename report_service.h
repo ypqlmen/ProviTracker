@@ -34,16 +34,15 @@ public:
         salary.taxConfigured = repo.settings.taxRatePercent > 0.0;
         salary.taxDeduction = repo.settings.taxDeduction;
         salary.taxRatePercent = repo.settings.taxRatePercent;
-        salary.taxAmount = estimatedSalaryTax(
+        const SalaryTaxEstimate taxEstimate = estimateSalaryTax(
             salary.totalSalary,
             salary.taxDeduction,
             salary.taxRatePercent
             );
-        salary.netSalary = estimatedNetSalary(
-            salary.totalSalary,
-            salary.taxDeduction,
-            salary.taxRatePercent
-            );
+        salary.amBidrag = taxEstimate.amBidrag;
+        salary.aTax = taxEstimate.aTax;
+        salary.taxAmount = taxEstimate.totalTax;
+        salary.netSalary = taxEstimate.netSalary;
 
         QString html;
         QTextStream ts(&html);
@@ -130,7 +129,9 @@ public:
         if (salary.taxConfigured) {
             ts << "<tr><td>Skattefradrag</td><td>" << money(salary.taxDeduction) << " kr</td></tr>";
             ts << "<tr><td>Trækprocent</td><td>" << money(salary.taxRatePercent) << " %</td></tr>";
-            ts << "<tr><td>Estimeret skat</td><td>" << money(salary.taxAmount) << " kr</td></tr>";
+            ts << "<tr><td>AM-bidrag (8%)</td><td>" << money(salary.amBidrag) << " kr</td></tr>";
+            ts << "<tr><td>A-skat</td><td>" << money(salary.aTax) << " kr</td></tr>";
+            ts << "<tr><td>Estimeret skat inkl. AM-bidrag</td><td>" << money(salary.taxAmount) << " kr</td></tr>";
             ts << "<tr><td><strong>Udbetalt</strong></td><td><strong>" << money(salary.netSalary) << " kr</strong></td></tr>";
         } else {
             ts << "<tr><td>Udbetalt</td><td>Indstil skattefradrag og trækprocent i Indstillinger</td></tr>";

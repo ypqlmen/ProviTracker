@@ -6,17 +6,17 @@
     <title>Provi Tracker Updates</title>
 
     <item>
-      <title>Version 1.3.25</title>
-      <pubDate>Fri, 22 May 2026 12:00:00 +0000</pubDate>
+      <title>Version 1.3.26</title>
+      <pubDate>Sat, 23 May 2026 12:00:00 +0000</pubDate>
       <enclosure
-        url="https://github.com/ypqlmen/ProviTracker/releases/download/autoupdate/ProviBeregnerSetup-1.3.25.exe"
-        length="273681292"
-        sparkle:version="10325"
-        sparkle:shortVersionString="1.3.25"
+        url="https://github.com/ypqlmen/ProviTracker/releases/download/autoupdate/ProviBeregnerSetup-1.3.26.exe"
+        length="273666778"
+        sparkle:version="10326"
+        sparkle:shortVersionString="1.3.26"
         sparkle:installerArguments="/VERYSILENT /SUPPRESSMSGBOXES /NORESTART"
-        provi:zipUrl="https://github.com/ypqlmen/ProviTracker/releases/download/autoupdate/ProviTrackerUpdate-1.3.25.zip"
-        provi:zipLength="273192538"
-        provi:zipSha256="c3b1502415239e08bc053625deb6fba4c68d8a489218cc256cf1cb7c51c844a5"
+        provi:zipUrl="https://github.com/ypqlmen/ProviTracker/releases/download/autoupdate/ProviTrackerUpdate-1.3.26.zip"
+        provi:zipLength="273179370"
+        provi:zipSha256="f23e9f988d21c6d20f3b4b422d976b7b7144f921e0f8fa5bdf8295535f7c0dbe"
         type="application/octet-stream" />
     </item>
 
