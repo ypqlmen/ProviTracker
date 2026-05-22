@@ -18,6 +18,7 @@ create table if not exists public.provi_user_data (
     orders jsonb not null default '[]'::jsonb,
     products jsonb not null default '[]'::jsonb,
     salesperson jsonb not null default '{}'::jsonb,
+    secrets jsonb not null default '{}'::jsonb,
     migrated_at timestamptz,
     updated_at timestamptz not null default now()
 );
@@ -72,6 +73,7 @@ as $$
         'orders', coalesce(d.orders, '[]'::jsonb),
         'products', coalesce(d.products, '[]'::jsonb),
         'salesperson', coalesce(d.salesperson, '{}'::jsonb),
+        'secrets', coalesce(d.secrets, '{}'::jsonb),
         'updated_at', d.updated_at,
         'migrated_at', d.migrated_at
     )
@@ -91,7 +93,8 @@ as $$
         d.settings <> '{}'::jsonb
         or d.orders <> '[]'::jsonb
         or d.products <> '[]'::jsonb
-        or d.salesperson <> '{}'::jsonb,
+        or d.salesperson <> '{}'::jsonb
+        or d.secrets <> '{}'::jsonb,
         false
     )
     from public.provi_users u
@@ -168,13 +171,14 @@ begin
     values (v_username, v_username_key, extensions.crypt(p_password, extensions.gen_salt('bf')))
     returning id into v_user_id;
 
-    insert into public.provi_user_data(user_id, settings, orders, products, salesperson, migrated_at)
+    insert into public.provi_user_data(user_id, settings, orders, products, salesperson, secrets, migrated_at)
     values (
         v_user_id,
         coalesce(v_payload->'settings', '{}'::jsonb),
         coalesce(v_payload->'orders', '[]'::jsonb),
         coalesce(v_payload->'products', '[]'::jsonb),
         coalesce(v_payload->'salesperson', '{}'::jsonb),
+        coalesce(v_payload->'secrets', '{}'::jsonb),
         case when v_payload <> '{}'::jsonb then now() else null end
     );
 
@@ -261,13 +265,14 @@ begin
         return jsonb_build_object('ok', false, 'error', 'Login-sessionen er udloebet. Log ind igen.');
     end if;
 
-    insert into public.provi_user_data(user_id, settings, orders, products, salesperson, migrated_at, updated_at)
+    insert into public.provi_user_data(user_id, settings, orders, products, salesperson, secrets, migrated_at, updated_at)
     values (
         v_user_id,
         coalesce(v_payload->'settings', '{}'::jsonb),
         coalesce(v_payload->'orders', '[]'::jsonb),
         coalesce(v_payload->'products', '[]'::jsonb),
         coalesce(v_payload->'salesperson', '{}'::jsonb),
+        coalesce(v_payload->'secrets', '{}'::jsonb),
         now(),
         now()
     )
@@ -276,6 +281,7 @@ begin
         orders = excluded.orders,
         products = excluded.products,
         salesperson = excluded.salesperson,
+        secrets = excluded.secrets,
         migrated_at = coalesce(public.provi_user_data.migrated_at, excluded.migrated_at),
         updated_at = now();
 

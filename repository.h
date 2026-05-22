@@ -15,6 +15,7 @@ public:
     QVector<Product> products;
     QVector<Order> orders;
     AppSettings settings;
+    QJsonObject cloudSecrets;
     bool localPersistenceEnabled = true;
     bool cloudPersistenceEnabled = false;
     std::function<void()> cloudSaveRequested;
@@ -113,11 +114,13 @@ public:
         payload["orders"] = ordersJson;
         payload["products"] = productsJson;
         payload["salesperson"] = salespeopleJson.isEmpty() ? QJsonObject() : salespeopleJson.at(0).toObject();
+        payload["secrets"] = cloudSecrets;
         return payload;
     }
 
     void applyCloudPayload(const QJsonObject& payload, const QString& username) {
         settings = fromSettingsJson(payload.value("settings").toObject());
+        cloudSecrets = payload.value("secrets").toObject();
 
         orders.clear();
         for (const auto& v : payload.value("orders").toArray()) {

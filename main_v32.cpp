@@ -20,8 +20,8 @@
 #include "commission.h"
 #include "report_service.h"
 
-static constexpr const char* APP_VERSION = "1.4.0";
-static constexpr int APP_BUILD_VERSION = 10400;
+static constexpr const char* APP_VERSION = "1.4.1";
+static constexpr int APP_BUILD_VERSION = 10401;
 static constexpr const char* UPDATE_APPCAST_URL = "https://raw.githubusercontent.com/ypqlmen/ProviTracker/main/appcast.xml";
 
 static QString psSingleQuoted(QString value) {
@@ -1521,6 +1521,7 @@ private:
     bool startupAborted = false;
     QString cloudUsername;
     QString cloudToken;
+    QByteArray cloudSecretKey;
     QString cloudStatusText;
     QTimer* cloudSaveTimer = nullptr;
     bool cloudSaveInFlight = false;
@@ -2516,15 +2517,122 @@ private:
         return true;
     }
 
+    bool hasCloudSecret(const QString& key) const {
+        return repo.cloudSecrets.value(key).isObject()
+            && repo.cloudSecrets.value(key).toObject().value("format").toString() == "aes-256-gcm-pbkdf2-v1";
+    }
+
+    bool storeEncryptedCloudSecret(const QString& key, const QJsonObject& plainSecret) {
+        if (cloudSecretKey.size() != 32 || plainSecret.isEmpty()) {
+            return false;
+        }
+
+        QJsonObject secret = plainSecret;
+        secret["savedAt"] = QDateTime::currentDateTime().toString(Qt::ISODate);
+        const QJsonObject encrypted = encryptCloudSecretJson(secret, cloudSecretKey);
+        if (encrypted.isEmpty()) {
+            return false;
+        }
+
+        repo.cloudSecrets[key] = encrypted;
+        return true;
+    }
+
+    bool storeIntramanagerSecret(const QString& username, const QString& password) {
+        if (username.trimmed().isEmpty() || password.isEmpty()) {
+            return false;
+        }
+
+        QJsonObject secret;
+        secret["username"] = username.trimmed();
+        secret["password"] = password;
+        return storeEncryptedCloudSecret("intramanagerLogin", secret);
+    }
+
+    bool storeMicrosoftRefreshTokenSecret(const QString& accountHint, const QString& refreshToken) {
+        if (refreshToken.isEmpty()) {
+            return false;
+        }
+
+        QJsonObject secret;
+        secret["accountHint"] = accountHint.trimmed();
+        secret["refreshToken"] = refreshToken;
+        return storeEncryptedCloudSecret("microsoftRefreshToken", secret);
+    }
+
+    void applyCloudSecretsToLocal() {
+        if (cloudSecretKey.size() != 32) {
+            return;
+        }
+
+        const QJsonObject intramanagerSecret = decryptCloudSecretJson(
+            repo.cloudSecrets.value("intramanagerLogin").toObject(),
+            cloudSecretKey
+            );
+        const QString imUsername = intramanagerSecret.value("username").toString();
+        const QString imPassword = intramanagerSecret.value("password").toString();
+        if (!imUsername.trimmed().isEmpty() && !imPassword.isEmpty()) {
+            saveIntramanagerPassword(imUsername, imPassword);
+        }
+
+        const QJsonObject microsoftSecret = decryptCloudSecretJson(
+            repo.cloudSecrets.value("microsoftRefreshToken").toObject(),
+            cloudSecretKey
+            );
+        const QString accountHint = microsoftSecret.value("accountHint").toString();
+        const QString refreshToken = microsoftSecret.value("refreshToken").toString();
+        if (!refreshToken.isEmpty()) {
+            saveMicrosoftRefreshToken(accountHint, refreshToken);
+        }
+    }
+
+    void migrateLocalSecretsToCloudIfNeeded() {
+        if (cloudUsername.trimmed().isEmpty() || cloudToken.isEmpty() || cloudSecretKey.size() != 32) {
+            return;
+        }
+
+        bool changed = false;
+        if (!hasCloudSecret("intramanagerLogin")) {
+            QString username;
+            QString password;
+            if (loadIntramanagerPassword(&username, &password) && !password.isEmpty()) {
+                if (username.trimmed().isEmpty()) {
+                    username = repo.settings.intramanagerUsername;
+                }
+                changed = storeIntramanagerSecret(username, password) || changed;
+            }
+        }
+
+        if (!hasCloudSecret("microsoftRefreshToken")) {
+            QString accountHint;
+            QString refreshToken;
+            if (loadMicrosoftRefreshToken(&accountHint, &refreshToken) && !refreshToken.isEmpty()) {
+                changed = storeMicrosoftRefreshTokenSecret(accountHint, refreshToken) || changed;
+            }
+        }
+
+        if (changed) {
+            const auto saveResult = cloudClient.save(cloudUsername, cloudToken, repo.cloudPayload());
+            cloudStatusText = saveResult.ok
+                ? "Lokale adgangsoplysninger blev krypteret og migreret til cloud."
+                : (saveResult.error.isEmpty() ? "Cloud-gemning af adgangsoplysninger fejlede." : saveResult.error);
+        }
+    }
+
     bool authenticateCloudUser() {
         QString storedUsername;
         QString storedToken;
-        if (loadCloudSession(&storedUsername, &storedToken)) {
+        QByteArray storedSecretKey;
+        if (loadCloudSession(&storedUsername, &storedToken, nullptr, &storedSecretKey)
+            && storedSecretKey.size() == 32) {
             const auto loadResult = cloudClient.load(storedUsername, storedToken);
             if (loadResult.ok) {
                 cloudUsername = storedUsername;
                 cloudToken = storedToken;
+                cloudSecretKey = storedSecretKey;
                 if (applyCloudResult(loadResult, true)) {
+                    applyCloudSecretsToLocal();
+                    migrateLocalSecretsToCloudIfNeeded();
                     cloudStatusText = "Logget ind som " + cloudUsername + ".";
                     return true;
                 }
@@ -2547,6 +2655,12 @@ private:
             const QString password = dialog.password();
             suggestedUsername = username;
 
+            QByteArray candidateSecretKey;
+            if (!deriveCloudSecretKey(username, password, &candidateSecretKey)) {
+                QMessageBox::warning(this, "Login", "Kunne ikke danne krypteringsnoegle til cloud-adgangsoplysninger.");
+                continue;
+            }
+
             ProviCloudClient::Result result;
             const bool isRegister = dialog.action() == CloudLoginDialog::Action::Register;
             if (isRegister) {
@@ -2566,7 +2680,8 @@ private:
 
             cloudUsername = result.username.isEmpty() ? username : result.username;
             cloudToken = result.token;
-            if (!saveCloudSession(cloudUsername, cloudToken, result.expiresAt)) {
+            cloudSecretKey = candidateSecretKey;
+            if (!saveCloudSession(cloudUsername, cloudToken, result.expiresAt, cloudSecretKey)) {
                 QMessageBox::warning(
                     this,
                     "Login",
@@ -2577,6 +2692,9 @@ private:
             if (!applyCloudResult(result, !isRegister)) {
                 continue;
             }
+
+            applyCloudSecretsToLocal();
+            migrateLocalSecretsToCloudIfNeeded();
 
             cloudStatusText = isRegister
                 ? "Bruger oprettet og lokal opsaetning migreret til cloud."
@@ -3442,6 +3560,9 @@ QTableWidget::item {
 
             if (!password.isEmpty()) {
                 passwordSaved = saveIntramanagerPassword(username, password);
+                if (passwordSaved && storeIntramanagerSecret(username, password)) {
+                    scheduleCloudSave();
+                }
             }
 
             if (!passwordSaved) {
@@ -3449,7 +3570,11 @@ QTableWidget::item {
             } else {
                 intramanagerStatusLabel->setText("Intramanager og løn er gemt.");
                 intramanagerPasswordEdit->clear();
-                intramanagerPasswordEdit->setPlaceholderText("Adgangskode er gemt krypteret lokalt");
+                intramanagerPasswordEdit->setPlaceholderText(
+                    hasCloudSecret("intramanagerLogin")
+                        ? "Adgangskode er gemt krypteret i cloud"
+                        : "Adgangskode er gemt krypteret lokalt"
+                    );
             }
 
             refreshAll();
@@ -3482,6 +3607,8 @@ QTableWidget::item {
             microsoftAccessToken.clear();
             microsoftAccessTokenExpiresAt = QDateTime();
             deleteMicrosoftRefreshToken();
+            repo.cloudSecrets.remove("microsoftRefreshToken");
+            scheduleCloudSave();
             if (salesRegistrationStatusLabel) {
                 salesRegistrationStatusLabel->setText("Microsoft-login er fjernet fra denne computer.");
             }
@@ -4335,6 +4462,9 @@ QTableWidget::item {
                 repo.settings.microsoftAccountHint = accountHint;
                 repo.saveSettings();
                 saveMicrosoftRefreshToken(accountHint, refreshToken);
+                if (storeMicrosoftRefreshTokenSecret(accountHint, refreshToken)) {
+                    scheduleCloudSave();
+                }
             }
 
             if (done) done(true, microsoftAccessToken, QString());
@@ -4547,7 +4677,11 @@ QTableWidget::item {
             intramanagerPasswordEdit->clear();
 
             if (hasPassword && !storedPass.isEmpty()) {
-                intramanagerPasswordEdit->setPlaceholderText("Adgangskode er gemt krypteret lokalt");
+                intramanagerPasswordEdit->setPlaceholderText(
+                    hasCloudSecret("intramanagerLogin")
+                        ? "Adgangskode er gemt krypteret i cloud"
+                        : "Adgangskode er gemt krypteret lokalt"
+                    );
             } else {
                 intramanagerPasswordEdit->setPlaceholderText("Indtast Intramanager adgangskode");
             }

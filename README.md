@@ -43,8 +43,9 @@ Cloud-data pr. bruger:
 - `orders`
 - `products`
 - én `salesperson`, normaliseret til brugerens brugernavn
+- `secrets` med Intramanager-adgangskode og Microsoft refresh-token krypteret client-side
 
-Ved første login med en tom cloud-profil uploader appen automatisk de gamle lokale JSON-data. Derefter er Supabase source of truth for indstillinger, ordrer, produkter og sælgeren. Den lokale computer gemmer kun en DPAPI-krypteret cloud-session samt særskilte lokale secrets som Intramanager-login og Microsoft refresh-token.
+Ved første login med en tom cloud-profil uploader appen automatisk de gamle lokale JSON-data. Derefter er Supabase source of truth for indstillinger, ordrer, produkter, sælgeren og krypterede adgangsoplysninger. Secrets krypteres med AES-256-GCM før upload med en nøgle afledt af brugerens Provi-login. Den lokale computer gemmer kun en DPAPI-krypteret cloud-session og en DPAPI-krypteret kopi af krypteringsnøglen, så automatisk login kan åbne de krypterede secrets igen.
 
 Databaseschema og RPC-funktioner ligger i `docs/supabase_cloud_schema.sql`.
 
@@ -122,10 +123,10 @@ Appen læser appcast fra:
 
 GitHub Release-tagget til auto-update er `autoupdate`. Auto-update i appen henter zip-assetet, pakker det ud i brugerens tempmappe, starter installeren og rydder op bagefter.
 
-Aktuelle assets for version 1.4.0:
+Aktuelle assets for version 1.4.1:
 
-- `ProviTrackerUpdate-1.4.0.zip`
-- `ProviBeregnerSetup-1.4.0.exe`
+- `ProviTrackerUpdate-1.4.1.zip`
+- `ProviBeregnerSetup-1.4.1.exe`
 
 Bemærk: den oprindelige 1.1-build indeholdt WinSparkle DLL'en, men ikke en appcast-URL i selve programmet eller installeren. Brugere på 1.1 skal derfor installere en nyere version manuelt én gang; derefter kan auto-update hente fremtidige versioner.
 

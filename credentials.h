@@ -5,6 +5,7 @@
 #include "storage_paths.h"
 #ifdef Q_OS_WIN
 #include <windows.h>
+#include <bcrypt.h>
 #include <wincrypt.h>
 #include <wincred.h>
 #endif
@@ -32,8 +33,271 @@ static QByteArray cloudSessionEntropy() {
     return QByteArrayLiteral("ProviTracker.Cloud.Session.v1");
 }
 
+static QByteArray cloudSecretKeyEntropy() {
+    return QByteArrayLiteral("ProviTracker.Cloud.SecretKey.v1");
+}
+
 static QString cloudSessionStorePath() {
     return appStorageDir() + "/cloud_session.json";
+}
+
+static QByteArray cloudSecretSalt(const QString& username) {
+    return QByteArrayLiteral("ProviTracker.CloudSecrets.v1:")
+        + username.trimmed().toUtf8().toLower();
+}
+
+static bool randomBytes(QByteArray* out, qsizetype size) {
+    if (!out || size <= 0) {
+        return false;
+    }
+
+#ifdef Q_OS_WIN
+    out->resize(size);
+    return BCryptGenRandom(
+        nullptr,
+        reinterpret_cast<PUCHAR>(out->data()),
+        static_cast<ULONG>(out->size()),
+        BCRYPT_USE_SYSTEM_PREFERRED_RNG
+        ) == 0;
+#else
+    Q_UNUSED(out);
+    Q_UNUSED(size);
+    return false;
+#endif
+}
+
+static bool deriveCloudSecretKey(const QString& username, const QString& password, QByteArray* keyOut) {
+    if (!keyOut || username.trimmed().isEmpty() || password.isEmpty()) {
+        return false;
+    }
+
+#ifdef Q_OS_WIN
+    BCRYPT_ALG_HANDLE hAlg = nullptr;
+    NTSTATUS status = BCryptOpenAlgorithmProvider(
+        &hAlg,
+        BCRYPT_SHA256_ALGORITHM,
+        nullptr,
+        BCRYPT_ALG_HANDLE_HMAC_FLAG
+        );
+    if (status != 0) {
+        return false;
+    }
+
+    const QByteArray salt = cloudSecretSalt(username);
+    const QByteArray passwordBytes = password.toUtf8();
+    QByteArray key(32, Qt::Uninitialized);
+    status = BCryptDeriveKeyPBKDF2(
+        hAlg,
+        reinterpret_cast<PUCHAR>(const_cast<char*>(passwordBytes.constData())),
+        static_cast<ULONG>(passwordBytes.size()),
+        reinterpret_cast<PUCHAR>(const_cast<char*>(salt.constData())),
+        static_cast<ULONG>(salt.size()),
+        210000,
+        reinterpret_cast<PUCHAR>(key.data()),
+        static_cast<ULONG>(key.size()),
+        0
+        );
+    BCryptCloseAlgorithmProvider(hAlg, 0);
+
+    if (status != 0) {
+        return false;
+    }
+
+    *keyOut = key;
+    return true;
+#else
+    Q_UNUSED(username);
+    Q_UNUSED(password);
+    return false;
+#endif
+}
+
+static bool aesGcmCrypt(
+    bool encrypt,
+    const QByteArray& key,
+    const QByteArray& nonce,
+    const QByteArray& input,
+    const QByteArray& tagIn,
+    QByteArray* output,
+    QByteArray* tagOut
+    ) {
+    if (!output || key.size() != 32 || nonce.size() != 12) {
+        return false;
+    }
+
+#ifdef Q_OS_WIN
+    BCRYPT_ALG_HANDLE hAlg = nullptr;
+    BCRYPT_KEY_HANDLE hKey = nullptr;
+    NTSTATUS status = BCryptOpenAlgorithmProvider(&hAlg, BCRYPT_AES_ALGORITHM, nullptr, 0);
+    if (status != 0) {
+        return false;
+    }
+
+    const wchar_t chainMode[] = BCRYPT_CHAIN_MODE_GCM;
+    status = BCryptSetProperty(
+        hAlg,
+        BCRYPT_CHAINING_MODE,
+        reinterpret_cast<PUCHAR>(const_cast<wchar_t*>(chainMode)),
+        static_cast<ULONG>(sizeof(chainMode)),
+        0
+        );
+    if (status != 0) {
+        BCryptCloseAlgorithmProvider(hAlg, 0);
+        return false;
+    }
+
+    DWORD objectLength = 0;
+    DWORD bytesDone = 0;
+    status = BCryptGetProperty(
+        hAlg,
+        BCRYPT_OBJECT_LENGTH,
+        reinterpret_cast<PUCHAR>(&objectLength),
+        sizeof(objectLength),
+        &bytesDone,
+        0
+        );
+    if (status != 0 || objectLength == 0) {
+        BCryptCloseAlgorithmProvider(hAlg, 0);
+        return false;
+    }
+
+    QByteArray keyObject(static_cast<int>(objectLength), Qt::Uninitialized);
+    QByteArray mutableKey = key;
+    status = BCryptGenerateSymmetricKey(
+        hAlg,
+        &hKey,
+        reinterpret_cast<PUCHAR>(keyObject.data()),
+        objectLength,
+        reinterpret_cast<PUCHAR>(mutableKey.data()),
+        static_cast<ULONG>(mutableKey.size()),
+        0
+        );
+    if (status != 0) {
+        BCryptCloseAlgorithmProvider(hAlg, 0);
+        return false;
+    }
+
+    QByteArray mutableNonce = nonce;
+    QByteArray mutableInput = input;
+    QByteArray tag = encrypt ? QByteArray(16, Qt::Uninitialized) : tagIn;
+    if (tag.size() != 16) {
+        BCryptDestroyKey(hKey);
+        BCryptCloseAlgorithmProvider(hAlg, 0);
+        return false;
+    }
+
+    BCRYPT_AUTHENTICATED_CIPHER_MODE_INFO authInfo;
+    BCRYPT_INIT_AUTH_MODE_INFO(authInfo);
+    authInfo.pbNonce = reinterpret_cast<PUCHAR>(mutableNonce.data());
+    authInfo.cbNonce = static_cast<ULONG>(mutableNonce.size());
+    authInfo.pbTag = reinterpret_cast<PUCHAR>(tag.data());
+    authInfo.cbTag = static_cast<ULONG>(tag.size());
+
+    QByteArray result(input.size(), Qt::Uninitialized);
+    ULONG resultSize = 0;
+    if (encrypt) {
+        status = BCryptEncrypt(
+            hKey,
+            reinterpret_cast<PUCHAR>(mutableInput.data()),
+            static_cast<ULONG>(mutableInput.size()),
+            &authInfo,
+            nullptr,
+            0,
+            reinterpret_cast<PUCHAR>(result.data()),
+            static_cast<ULONG>(result.size()),
+            &resultSize,
+            0
+            );
+    } else {
+        status = BCryptDecrypt(
+            hKey,
+            reinterpret_cast<PUCHAR>(mutableInput.data()),
+            static_cast<ULONG>(mutableInput.size()),
+            &authInfo,
+            nullptr,
+            0,
+            reinterpret_cast<PUCHAR>(result.data()),
+            static_cast<ULONG>(result.size()),
+            &resultSize,
+            0
+            );
+    }
+
+    BCryptDestroyKey(hKey);
+    BCryptCloseAlgorithmProvider(hAlg, 0);
+
+    if (status != 0) {
+        return false;
+    }
+
+    result.resize(static_cast<int>(resultSize));
+    *output = result;
+    if (encrypt && tagOut) {
+        *tagOut = tag;
+    }
+    return true;
+#else
+    Q_UNUSED(encrypt);
+    Q_UNUSED(key);
+    Q_UNUSED(nonce);
+    Q_UNUSED(input);
+    Q_UNUSED(tagIn);
+    Q_UNUSED(output);
+    Q_UNUSED(tagOut);
+    return false;
+#endif
+}
+
+static QJsonObject encryptCloudSecretJson(const QJsonObject& plain, const QByteArray& key) {
+    QJsonObject encrypted;
+    if (plain.isEmpty() || key.size() != 32) {
+        return encrypted;
+    }
+
+    QByteArray nonce;
+    QByteArray cipher;
+    QByteArray tag;
+    if (!randomBytes(&nonce, 12)) {
+        return encrypted;
+    }
+
+    const QByteArray plainBytes = QJsonDocument(plain).toJson(QJsonDocument::Compact);
+    if (!aesGcmCrypt(true, key, nonce, plainBytes, QByteArray(), &cipher, &tag)) {
+        return {};
+    }
+
+    encrypted["format"] = "aes-256-gcm-pbkdf2-v1";
+    encrypted["nonce"] = QString::fromLatin1(nonce.toBase64());
+    encrypted["ciphertext"] = QString::fromLatin1(cipher.toBase64());
+    encrypted["tag"] = QString::fromLatin1(tag.toBase64());
+    return encrypted;
+}
+
+static QJsonObject decryptCloudSecretJson(const QJsonObject& encrypted, const QByteArray& key) {
+    if (encrypted.isEmpty() || key.size() != 32) {
+        return {};
+    }
+
+    if (encrypted.value("format").toString() != "aes-256-gcm-pbkdf2-v1") {
+        return {};
+    }
+
+    const QByteArray nonce = QByteArray::fromBase64(encrypted.value("nonce").toString().toLatin1());
+    const QByteArray cipher = QByteArray::fromBase64(encrypted.value("ciphertext").toString().toLatin1());
+    const QByteArray tag = QByteArray::fromBase64(encrypted.value("tag").toString().toLatin1());
+
+    QByteArray plainBytes;
+    if (!aesGcmCrypt(false, key, nonce, cipher, tag, &plainBytes, nullptr)) {
+        return {};
+    }
+
+    QJsonParseError error;
+    const QJsonDocument doc = QJsonDocument::fromJson(plainBytes, &error);
+    if (error.error != QJsonParseError::NoError || !doc.isObject()) {
+        return {};
+    }
+
+    return doc.object();
 }
 
 static bool protectForCurrentWindowsUserWithEntropy(
@@ -286,7 +550,12 @@ static bool loadIntramanagerPassword(QString* usernameOut, QString* passwordOut)
     return true;
 }
 
-static bool saveCloudSession(const QString& username, const QString& token, const QString& expiresAt) {
+static bool saveCloudSession(
+    const QString& username,
+    const QString& token,
+    const QString& expiresAt,
+    const QByteArray& cloudSecretKey = QByteArray()
+    ) {
     if (username.trimmed().isEmpty() || token.isEmpty()) {
         return false;
     }
@@ -310,6 +579,18 @@ static bool saveCloudSession(const QString& username, const QString& token, cons
     session["expiresAt"] = expiresAt;
     session["savedAt"] = QDateTime::currentDateTime().toString(Qt::ISODate);
 
+    if (cloudSecretKey.size() == 32) {
+        QByteArray protectedSecretKey;
+        if (protectForCurrentWindowsUserWithEntropy(
+                cloudSecretKey,
+                cloudSecretKeyEntropy(),
+                L"ProviTracker cloud secret key",
+                &protectedSecretKey
+                )) {
+            session["secretKey"] = QString::fromLatin1(protectedSecretKey.toBase64());
+        }
+    }
+
     QSaveFile file(cloudSessionStorePath());
     if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
         return false;
@@ -319,7 +600,12 @@ static bool saveCloudSession(const QString& username, const QString& token, cons
     return file.commit();
 }
 
-static bool loadCloudSession(QString* usernameOut, QString* tokenOut, QString* expiresAtOut = nullptr) {
+static bool loadCloudSession(
+    QString* usernameOut,
+    QString* tokenOut,
+    QString* expiresAtOut = nullptr,
+    QByteArray* cloudSecretKeyOut = nullptr
+    ) {
     QFile file(cloudSessionStorePath());
     if (!file.open(QIODevice::ReadOnly)) {
         return false;
@@ -362,6 +648,23 @@ static bool loadCloudSession(QString* usernameOut, QString* tokenOut, QString* e
     }
     if (expiresAtOut) {
         *expiresAtOut = session.value("expiresAt").toString();
+    }
+
+    if (cloudSecretKeyOut) {
+        cloudSecretKeyOut->clear();
+        const QString protectedSecretKeyText = session.value("secretKey").toString();
+        if (!protectedSecretKeyText.isEmpty()) {
+            const QByteArray protectedSecretKey = QByteArray::fromBase64(protectedSecretKeyText.toLatin1());
+            QByteArray plainSecretKey;
+            if (unprotectForCurrentWindowsUserWithEntropy(
+                    protectedSecretKey,
+                    cloudSecretKeyEntropy(),
+                    &plainSecretKey
+                    )
+                && plainSecretKey.size() == 32) {
+                *cloudSecretKeyOut = plainSecretKey;
+            }
+        }
     }
 
     return true;
