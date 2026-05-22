@@ -1,18 +1,22 @@
 <?xml version="1.0" encoding="utf-8"?>
 <rss version="2.0"
-     xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
+     xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle"
+     xmlns:provi="https://provi-tracker.local/update">
   <channel>
     <title>Provi Tracker Updates</title>
 
     <item>
-      <title>Version 1.3.23</title>
-      <pubDate>Wed, 20 May 2026 12:00:00 +0000</pubDate>
+      <title>Version 1.3.24</title>
+      <pubDate>Fri, 22 May 2026 12:00:00 +0000</pubDate>
       <enclosure
-        url="https://github.com/ypqlmen/ProviTracker/releases/download/autoupdate/ProviBeregnerSetup-1.3.23.exe"
-        length="273703860"
-        sparkle:version="10323"
-        sparkle:shortVersionString="1.3.23"
+        url="https://github.com/ypqlmen/ProviTracker/releases/download/autoupdate/ProviBeregnerSetup-1.3.24.exe"
+        length="273691056"
+        sparkle:version="10324"
+        sparkle:shortVersionString="1.3.24"
         sparkle:installerArguments="/VERYSILENT /SUPPRESSMSGBOXES /NORESTART"
+        provi:zipUrl="https://github.com/ypqlmen/ProviTracker/releases/download/autoupdate/ProviTrackerUpdate-1.3.24.zip"
+        provi:zipLength="273203530"
+        provi:zipSha256="87074c62141020445bb160f26d14f48bba14071004c7f4c27bf66fdbfb92b609"
         type="application/octet-stream" />
     </item>
 
