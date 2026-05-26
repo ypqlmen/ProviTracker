@@ -6,17 +6,17 @@
     <title>Provi Tracker Updates</title>
 
     <item>
-      <title>Version 1.4.1</title>
-      <pubDate>Sat, 23 May 2026 12:00:00 +0000</pubDate>
+      <title>Version 1.4.2</title>
+      <pubDate>Tue, 26 May 2026 12:00:00 +0000</pubDate>
       <enclosure
-        url="https://github.com/ypqlmen/ProviTracker/releases/download/autoupdate/ProviBeregnerSetup-1.4.1.exe"
-        length="273717821"
-        sparkle:version="10401"
-        sparkle:shortVersionString="1.4.1"
+        url="https://github.com/ypqlmen/ProviTracker/releases/download/autoupdate/ProviBeregnerSetup-1.4.2.exe"
+        length="273698664"
+        sparkle:version="10402"
+        sparkle:shortVersionString="1.4.2"
         sparkle:installerArguments="/VERYSILENT /SUPPRESSMSGBOXES /NORESTART"
-        provi:zipUrl="https://github.com/ypqlmen/ProviTracker/releases/download/autoupdate/ProviTrackerUpdate-1.4.1.zip"
-        provi:zipLength="273230762"
-        provi:zipSha256="0e81f798f9569dc800245d537dc1eb57724b61fa7a91b1bd57a6e9a83e226545"
+        provi:zipUrl="https://github.com/ypqlmen/ProviTracker/releases/download/autoupdate/ProviTrackerUpdate-1.4.2.zip"
+        provi:zipLength="273208851"
+        provi:zipSha256="cbaca884d27a91da077f35ba796ddb369aa39dcaffd19ebae22420c81d772190"
         type="application/octet-stream" />
     </item>
 
