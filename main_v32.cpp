@@ -20,8 +20,8 @@
 #include "commission.h"
 #include "report_service.h"
 
-static constexpr const char* APP_VERSION = "1.4.1";
-static constexpr int APP_BUILD_VERSION = 10401;
+static constexpr const char* APP_VERSION = "1.4.2";
+static constexpr int APP_BUILD_VERSION = 10402;
 static constexpr const char* UPDATE_APPCAST_URL = "https://raw.githubusercontent.com/ypqlmen/ProviTracker/main/appcast.xml";
 
 static QString psSingleQuoted(QString value) {
@@ -532,17 +532,53 @@ public:
         : QDialog(parent) {
         setWindowTitle("Provi Tracker login");
         setModal(true);
-        resize(430, 260);
+        resize(460, 310);
+        setMinimumWidth(440);
+        setStyleSheet(R"(
+            QDialog {
+                background: #0F172A;
+                color: #E6EEF8;
+                font-size: 13px;
+            }
+            QLabel {
+                color: #E6EEF8;
+                background: transparent;
+            }
+            QLineEdit {
+                background: #0B1424;
+                color: #EAF4FF;
+                border: 1px solid #2A3B5F;
+                border-radius: 14px;
+                padding: 9px 12px;
+                min-height: 22px;
+                selection-background-color: #14B8A6;
+                selection-color: #06202A;
+            }
+            QLineEdit:focus {
+                border: 1px solid #35D8C7;
+            }
+            QPushButton {
+                background: #14B8A6;
+                color: #06202A;
+                border: none;
+                padding: 10px 14px;
+                border-radius: 14px;
+                font-weight: 800;
+                min-height: 22px;
+            }
+            QPushButton:hover { background: #2DD4BF; }
+            QPushButton:pressed { background: #0EA5A4; }
+        )");
 
         auto* layout = new QVBoxLayout(this);
-        layout->setContentsMargins(18, 18, 18, 18);
-        layout->setSpacing(12);
+        layout->setContentsMargins(22, 22, 22, 22);
+        layout->setSpacing(14);
 
         auto* title = new QLabel("Log ind");
         title->setStyleSheet("font-size:22px;font-weight:900;color:#F8FBFF;");
         layout->addWidget(title);
 
-        auto* hint = new QLabel("Din opsaetning, ordrer og produkter hentes fra Provi Tracker cloud.");
+        auto* hint = new QLabel("Din opsætning, ordrer og produkter hentes fra Provi Tracker cloud.");
         hint->setWordWrap(true);
         hint->setStyleSheet("color:#BFD7EE;");
         layout->addWidget(hint);
@@ -552,6 +588,8 @@ public:
         passwordEdit = new QLineEdit;
         passwordEdit->setEchoMode(QLineEdit::Password);
         passwordEdit->setPlaceholderText("Adgangskode");
+        usernameEdit->setMinimumHeight(40);
+        passwordEdit->setMinimumHeight(40);
 
         layout->addWidget(usernameEdit);
         layout->addWidget(passwordEdit);
@@ -565,6 +603,8 @@ public:
         buttons->setSpacing(10);
         auto* loginBtn = new QPushButton("Log ind");
         auto* registerBtn = new QPushButton("Opret bruger");
+        loginBtn->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+        registerBtn->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
         buttons->addWidget(loginBtn);
         buttons->addWidget(registerBtn);
         layout->addLayout(buttons);
@@ -617,6 +657,7 @@ static QPair<QFrame*, QVBoxLayout*> createCard(const QString& title) {
     layout->setSpacing(8);
 
     auto* titleLabel = new QLabel(title);
+    titleLabel->setWordWrap(true);
     titleLabel->setTextInteractionFlags(Qt::NoTextInteraction);
     titleLabel->setStyleSheet("color:#9CC7E8; font-size:12px; font-weight:700;");
 
@@ -831,14 +872,14 @@ static bool confirmQuestion(QWidget* parent, const QString& title, const QString
 static QPair<QFrame*, QLabel*> createKpiCard(const QString& title) {
     auto card = createCard(title);
 
-    card.first->setMinimumHeight(148);
-    card.first->setMaximumHeight(184);
-    card.first->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    card.first->setMinimumHeight(166);
+    card.first->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
 
     auto* valueLabel = new QLabel("-");
     valueLabel->setWordWrap(true);
     valueLabel->setAlignment(Qt::AlignLeft | Qt::AlignTop);
-    valueLabel->setMinimumHeight(94);
+    valueLabel->setMinimumHeight(118);
+    valueLabel->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
     valueLabel->setTextInteractionFlags(Qt::NoTextInteraction);
     valueLabel->setStyleSheet(
         "QLabel { "
@@ -888,6 +929,48 @@ static QFrame* createProgressCard(const QString& title, QProgressBar** barOut, Q
     *hintOut = hint;
 
     return card.first;
+}
+
+static void configureSettingsForm(QFormLayout* form) {
+    if (!form) return;
+    form->setHorizontalSpacing(16);
+    form->setVerticalSpacing(12);
+    form->setLabelAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+    form->setFormAlignment(Qt::AlignTop);
+    form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
+    form->setRowWrapPolicy(QFormLayout::DontWrapRows);
+}
+
+static void configureSettingsField(QWidget* widget, int minWidth = 220) {
+    if (!widget) return;
+    widget->setMinimumHeight(34);
+    widget->setMinimumWidth(minWidth);
+    widget->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+}
+
+static void configureSettingsButton(QPushButton* button) {
+    if (!button) return;
+    button->setMinimumHeight(36);
+    button->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+}
+
+static QWidget* createSettingsButtonGrid(const QVector<QPushButton*>& buttons) {
+    auto* container = new QWidget;
+    auto* grid = new QGridLayout(container);
+    grid->setContentsMargins(0, 0, 0, 0);
+    grid->setHorizontalSpacing(12);
+    grid->setVerticalSpacing(10);
+    grid->setColumnStretch(0, 1);
+    grid->setColumnStretch(1, 1);
+
+    for (int i = 0; i < buttons.size(); ++i) {
+        configureSettingsButton(buttons[i]);
+        grid->addWidget(buttons[i], i / 2, i % 2);
+    }
+
+    container->setMinimumWidth(320);
+    container->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    return container;
 }
 
 
@@ -1576,6 +1659,7 @@ private:
     QDateTime intramanagerLastAutoHoursRefreshUtc;
     QSet<QString> intramanagerPendingFetchKeys;
     QMap<QString, QDateTime> intramanagerReportRefreshRequestedAt;
+    QMap<QString, QDateTime> intramanagerDashboardRefreshRequestedAt;
 
     QDoubleSpinBox* hourlyRateSpin = nullptr;
     QDoubleSpinBox* taxDeductionSpin = nullptr;
@@ -2495,12 +2579,12 @@ private:
                 QMessageBox::warning(
                     this,
                     "Migration fejlede",
-                    saveResult.error.isEmpty() ? "Den lokale opsaetning kunne ikke uploades til cloud." : saveResult.error
+                    saveResult.error.isEmpty() ? "Den lokale opsætning kunne ikke uploades til cloud." : saveResult.error
                     );
                 return false;
             }
 
-            cloudStatusText = "Lokal opsaetning blev migreret til cloud.";
+            cloudStatusText = "Lokal opsætning blev migreret til cloud.";
             return true;
         }
 
@@ -2513,7 +2597,7 @@ private:
             repo.applyCloudPayload(result.data, cloudUsername);
         }
 
-        cloudStatusText = "Cloud-data er indlaest.";
+        cloudStatusText = "Cloud-data er indlæst.";
         return true;
     }
 
@@ -2657,7 +2741,7 @@ private:
 
             QByteArray candidateSecretKey;
             if (!deriveCloudSecretKey(username, password, &candidateSecretKey)) {
-                QMessageBox::warning(this, "Login", "Kunne ikke danne krypteringsnoegle til cloud-adgangsoplysninger.");
+                QMessageBox::warning(this, "Login", "Kunne ikke danne krypteringsnøgle til cloud-adgangsoplysninger.");
                 continue;
             }
 
@@ -2685,7 +2769,7 @@ private:
                 QMessageBox::warning(
                     this,
                     "Login",
-                    "Du er logget ind, men sessionen kunne ikke gemmes krypteret paa computeren."
+                    "Du er logget ind, men sessionen kunne ikke gemmes krypteret på computeren."
                     );
             }
 
@@ -2697,7 +2781,7 @@ private:
             migrateLocalSecretsToCloudIfNeeded();
 
             cloudStatusText = isRegister
-                ? "Bruger oprettet og lokal opsaetning migreret til cloud."
+                ? "Bruger oprettet og lokal opsætning migreret til cloud."
                 : "Logget ind som " + cloudUsername + ".";
             return true;
         }
@@ -2771,7 +2855,7 @@ private:
     }
 
     void logoutCloudUser() {
-        if (!confirmQuestion(this, "Log ud", "Vil du logge ud af Provi Tracker cloud paa denne computer?")) {
+        if (!confirmQuestion(this, "Log ud", "Vil du logge ud af Provi Tracker cloud på denne computer?")) {
             return;
         }
 
@@ -3332,72 +3416,92 @@ QTableWidget::item {
 
     QWidget* buildSettingsTab() {
         auto* w = new QWidget;
-        auto* layout = new QHBoxLayout(w);
+        auto* outerLayout = new QVBoxLayout(w);
+        outerLayout->setContentsMargins(0, 0, 0, 0);
+        outerLayout->setSpacing(0);
+
+        auto* scroll = new QScrollArea;
+        scroll->setWidgetResizable(true);
+        scroll->setFrameShape(QFrame::NoFrame);
+        scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+        scroll->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+
+        auto* content = new QWidget;
+        content->setMinimumWidth(720);
+
+        auto* layout = new QVBoxLayout(content);
         layout->setSpacing(18);
-        layout->setContentsMargins(0, 0, 0, 0);
+        layout->setContentsMargins(0, 0, 4, 0);
 
         auto* left = new QVBoxLayout;
         left->setSpacing(18);
 
         auto goalCard = createCard("Mål");
         auto* form = new QFormLayout;
-        form->setSpacing(12);
-        form->setLabelAlignment(Qt::AlignLeft | Qt::AlignVCenter);
-        form->setFormAlignment(Qt::AlignTop | Qt::AlignLeft);
+        configureSettingsForm(form);
 
         targetSpin = new QDoubleSpinBox;
         targetSpin->setRange(0, 100000);
         targetSpin->setDecimals(2);
         targetSpin->setButtonSymbols(QAbstractSpinBox::NoButtons);
+        configureSettingsField(targetSpin);
 
         monthlySalesTargetSpin = new QSpinBox;
         monthlySalesTargetSpin->setRange(0, 100000);
         monthlySalesTargetSpin->setButtonSymbols(QAbstractSpinBox::NoButtons);
+        configureSettingsField(monthlySalesTargetSpin);
 
         form->addRow("Pointmål for måneden", targetSpin);
         form->addRow("Salgsmål for måneden", monthlySalesTargetSpin);
 
         auto* saveGoalBtn = new QPushButton("Gem mål");
+        configureSettingsButton(saveGoalBtn);
         form->addRow(saveGoalBtn);
 
         goalCard.second->addLayout(form);
         goalCard.second->addStretch();
-        left->addWidget(goalCard.first, 1);
+        left->addWidget(goalCard.first);
 
         auto intramanagerCard = createCard("Intramanager og timeløn");
 
         auto* imForm = new QFormLayout;
-        imForm->setSpacing(12);
+        configureSettingsForm(imForm);
 
         intramanagerEnabledCheck = new QCheckBox("Aktivér Intramanager og automatisk timehentning");
         intramanagerEnabledCheck->setFocusPolicy(Qt::NoFocus);
 
         intramanagerUsernameEdit = new QLineEdit;
         intramanagerUsernameEdit->setPlaceholderText("Brugernavn til Intramanager");
+        configureSettingsField(intramanagerUsernameEdit);
 
         intramanagerPasswordEdit = new QLineEdit;
         intramanagerPasswordEdit->setEchoMode(QLineEdit::Password);
         intramanagerPasswordEdit->setPlaceholderText("Adgangskode til Intramanager");
+        configureSettingsField(intramanagerPasswordEdit);
 
         hourlyRateSpin = new QDoubleSpinBox;
         hourlyRateSpin->setRange(0, 10000);
         hourlyRateSpin->setDecimals(2);
         hourlyRateSpin->setSuffix(" kr/t");
         hourlyRateSpin->setButtonSymbols(QAbstractSpinBox::NoButtons);
+        configureSettingsField(hourlyRateSpin);
 
         taxDeductionSpin = new QDoubleSpinBox;
         taxDeductionSpin->setRange(0, 100000);
         taxDeductionSpin->setDecimals(2);
         taxDeductionSpin->setSuffix(" kr/md");
         taxDeductionSpin->setButtonSymbols(QAbstractSpinBox::NoButtons);
+        configureSettingsField(taxDeductionSpin);
 
         taxRateSpin = new QDoubleSpinBox;
         taxRateSpin->setRange(0, 100);
         taxRateSpin->setDecimals(2);
         taxRateSpin->setSuffix(" %");
         taxRateSpin->setButtonSymbols(QAbstractSpinBox::NoButtons);
+        configureSettingsField(taxRateSpin);
 
         auto* saveIntramanagerBtn = new QPushButton("Gem Intramanager og løn");
+        configureSettingsButton(saveIntramanagerBtn);
 
         intramanagerStatusLabel = new QLabel("Timer hentes automatisk, når rapporter har brug for dem.");
         intramanagerStatusLabel->setWordWrap(true);
@@ -3415,20 +3519,19 @@ QTableWidget::item {
         intramanagerCard.second->addLayout(imForm);
         intramanagerCard.second->addStretch();
 
-        left->addWidget(intramanagerCard.first, 1);
+        left->addWidget(intramanagerCard.first);
 
         auto salesRegistrationCard = createCard("Salgsregistrering");
         auto* salesRegForm = new QFormLayout;
-        salesRegForm->setSpacing(12);
-        salesRegForm->setLabelAlignment(Qt::AlignLeft | Qt::AlignVCenter);
-        salesRegForm->setFormAlignment(Qt::AlignTop);
-        salesRegForm->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
+        configureSettingsForm(salesRegForm);
 
         defaultSellerInitialsEdit = new QLineEdit;
         defaultSellerInitialsEdit->setPlaceholderText("Standard initialer ved nye ordrer");
+        configureSettingsField(defaultSellerInitialsEdit);
 
         salesRegistrationRecipientEdit = new QLineEdit;
         salesRegistrationRecipientEdit->setPlaceholderText("Mailboks som modtager salgs-reg mails");
+        configureSettingsField(salesRegistrationRecipientEdit);
 
         salesRegistrationEnabledCheck = new QCheckBox("Send salgs-reg automatisk ved ny ordre");
         salesRegistrationEnabledCheck->setFocusPolicy(Qt::NoFocus);
@@ -3439,36 +3542,22 @@ QTableWidget::item {
 
         microsoftTenantIdEdit = new QLineEdit;
         microsoftTenantIdEdit->setPlaceholderText("organizations eller tenant-id");
+        configureSettingsField(microsoftTenantIdEdit);
 
         microsoftClientIdEdit = new QLineEdit;
         microsoftClientIdEdit->setPlaceholderText("Client ID fra Entra app registration");
+        configureSettingsField(microsoftClientIdEdit);
 
         microsoftScopeEdit = new QLineEdit;
         microsoftScopeEdit->setPlaceholderText("https://graph.microsoft.com/Mail.Send");
+        configureSettingsField(microsoftScopeEdit);
 
         auto* saveSalesRegistrationBtn = new QPushButton("Gem salgsregistrering");
         auto* testSalesRegistrationBtn = new QPushButton("Send testmail");
         auto* microsoftLoginBtn = new QPushButton("Log ind");
         auto* microsoftLogoutBtn = new QPushButton("Log ud");
-        auto* microsoftButtonRow = new QHBoxLayout;
-        microsoftButtonRow->setSpacing(12);
-        microsoftButtonRow->addWidget(microsoftLoginBtn);
-        microsoftButtonRow->addWidget(microsoftLogoutBtn);
-        microsoftButtonRow->addStretch();
-
-        auto* salesActionRow = new QHBoxLayout;
-        salesActionRow->setSpacing(12);
-        salesActionRow->addWidget(saveSalesRegistrationBtn);
-        salesActionRow->addWidget(testSalesRegistrationBtn);
-        salesActionRow->addStretch();
-
-        for (auto* button : {saveSalesRegistrationBtn, testSalesRegistrationBtn, microsoftLoginBtn, microsoftLogoutBtn}) {
-            button->setObjectName("compactActionButton");
-            button->setMinimumHeight(34);
-            button->setMaximumHeight(34);
-            button->setMinimumWidth(126);
-            button->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
-        }
+        auto* microsoftButtonRow = createSettingsButtonGrid(QVector<QPushButton*>{microsoftLoginBtn, microsoftLogoutBtn});
+        auto* salesActionRow = createSettingsButtonGrid(QVector<QPushButton*>{saveSalesRegistrationBtn, testSalesRegistrationBtn});
 
         salesRegistrationStatusLabel = new QLabel("Sender salgs-reg som Microsoft-mail med JSON til mailflow.");
         salesRegistrationStatusLabel->setWordWrap(true);
@@ -3487,7 +3576,7 @@ QTableWidget::item {
 
         salesRegistrationCard.second->addLayout(salesRegForm);
         salesRegistrationCard.second->addStretch();
-        left->addWidget(salesRegistrationCard.first, 1);
+        left->addWidget(salesRegistrationCard.first);
 
         auto* right = new QVBoxLayout;
         right->setSpacing(18);
@@ -3497,11 +3586,16 @@ QTableWidget::item {
 
         auto* sellerNameEdit = new QLineEdit;
         sellerNameEdit->setPlaceholderText("Nyt sælgernavn");
+        configureSettingsField(sellerNameEdit);
 
         auto* addSellerBtn = new QPushButton("Tilføj sælger");
         auto* activateBtn = new QPushButton("Sæt som aktiv");
         auto* deleteSellerBtn = new QPushButton("Slet valgt sælger");
         auto* logoutCloudBtn = new QPushButton("Log ud");
+        configureSettingsButton(addSellerBtn);
+        configureSettingsButton(activateBtn);
+        configureSettingsButton(deleteSellerBtn);
+        configureSettingsButton(logoutCloudBtn);
 
         sellerNameEdit->hide();
         addSellerBtn->hide();
@@ -3522,20 +3616,25 @@ QTableWidget::item {
         sellerCard.second->addWidget(logoutCloudBtn);
         sellerCard.second->addStretch();
 
-        right->addWidget(sellerCard.first, 1);
+        right->addWidget(sellerCard.first);
 
         auto backupCard = createCard("Backup");
         auto* exportBackupBtn = new QPushButton("Eksportér backup");
         auto* importBackupBtn = new QPushButton("Importér backup");
+        configureSettingsButton(exportBackupBtn);
+        configureSettingsButton(importBackupBtn);
 
         backupCard.second->addWidget(exportBackupBtn);
         backupCard.second->addWidget(importBackupBtn);
         backupCard.second->addStretch();
 
         right->addWidget(backupCard.first);
+        right->addStretch();
 
-        layout->addLayout(left, 1);
-        layout->addLayout(right, 1);
+        layout->addLayout(left);
+        layout->addLayout(right);
+        scroll->setWidget(content);
+        outerLayout->addWidget(scroll, 1);
 
         connect(saveGoalBtn, &QPushButton::clicked, this, [this]() {
             repo.settings.bonus.monthlyTargetPoints = targetSpin->value();
@@ -3974,6 +4073,37 @@ QTableWidget::item {
         generateReport();
     }
 
+    void requestDashboardHoursIfNeeded(const QPair<QDateTime, QDateTime>& range, int maxAgeMinutes = 60) {
+        if (!repo.settings.intramanagerEnabled) return;
+
+        const QString fromDate = intramanagerDate(range.first.date());
+        const QString toDate = intramanagerDate(range.second.date());
+        const QString key = "dashboard:" + intramanagerPeriodKey(fromDate, toDate);
+        const auto cached = cachedIntramanagerHours(fromDate, toDate);
+        const bool periodEnded = range.second.date() < QDate::currentDate();
+
+        if (cached.has_value() && (periodEnded || intramanagerHoursEntryIsFresh(*cached, maxAgeMinutes))) {
+            return;
+        }
+
+        const QDateTime nowUtc = QDateTime::currentDateTimeUtc();
+        const QDateTime lastRequested = intramanagerDashboardRefreshRequestedAt.value(key);
+        if (lastRequested.isValid() && lastRequested.secsTo(nowUtc) < 30 * 60) {
+            return;
+        }
+
+        intramanagerDashboardRefreshRequestedAt[key] = nowUtc;
+        fetchIntramanagerHoursAsync(fromDate, toDate, true);
+    }
+
+    void refreshDashboardPayrollHoursIfNeeded(
+        const QPair<QDateTime, QDateTime>& currentPayPeriod,
+        const QPair<QDateTime, QDateTime>& nextPayPeriod
+        ) {
+        requestDashboardHoursIfNeeded(currentPayPeriod);
+        requestDashboardHoursIfNeeded(nextPayPeriod);
+    }
+
     void refreshDashboard() {
         const auto* s = activeSalesperson();
         if (!s) return;
@@ -3986,6 +4116,7 @@ QTableWidget::item {
         const auto currentPayPeriod = payrollRangeEndingInMonth(now);
         const auto nextPayPeriod = payrollRangeEndingInMonth(now.addMonths(1));
         const auto dayBonusPeriod = payrollBonusRange(now);
+        refreshDashboardPayrollHoursIfNeeded(currentPayPeriod, nextPayPeriod);
         auto cachedHoursForRange = [this](const QPair<QDateTime, QDateTime>& range) {
             const QString from = intramanagerDate(range.first.date());
             const QString to = intramanagerDate(range.second.date());
@@ -4920,7 +5051,7 @@ QTableWidget::item {
             body["content"] =
                 "<p>Salgsregistrering fra Provi Tracker.</p>"
                 + payload.value("mailHtml").toString()
-                + "<p>JSON-data er vedhaeftet til Power Automate-mailflowet.</p>";
+                + "<p>JSON-data er vedhæftet til Power Automate-mailflowet.</p>";
 
             QJsonObject attachment;
             attachment["@odata.type"] = "#microsoft.graph.fileAttachment";
@@ -5125,7 +5256,7 @@ QTableWidget::item {
         }
     }
 
-    // Maanedsprovision bruger kalendermåneden; timer og dagspointbonus følger lønperioden 21.-20.
+    // Månedsprovision bruger kalendermåneden; timer og dagspointbonus følger lønperioden 21.-20.
     QPair<QString, QString> reportHoursDates(const ReportRange& range) const {
         return {intramanagerDate(range.hoursFrom.date()), intramanagerDate(range.hoursTo.date())};
     }

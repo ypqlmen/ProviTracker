@@ -10,7 +10,7 @@ LOGIN_URL = BASE_URL + "reports/history/"
 HISTORY_URL = BASE_URL + "reports/history/"
 PUNCH_URL = BASE_URL + "reports/punch-in/"
 DEBUG_ENABLED = False
-OFFICE_ONLY_MESSAGE = "Man kan kun stemple ind eller ud p? kontorets internet."
+OFFICE_ONLY_MESSAGE = "Man kan kun stemple ind eller ud på kontorets internet."
 
 
 def configure_playwright_browser_path():
@@ -50,9 +50,9 @@ def looks_office_only(text):
         "ip adresse",
         "kontor",
         "kontorets",
-        "netv?rk",
+        "netværk",
         "netvaerk",
-        "adgang n?gtet",
+        "adgang nægtet",
         "adgang naegtet",
         "ikke tilladt",
         "not allowed",
@@ -381,9 +381,12 @@ def search_history(page, from_date, to_date, debug_dir, prefix):
 
     page.locator('button[type="submit"]').click()
     try:
-        page.wait_for_selector("#main table, #main tbody tr, text=Intet blev fundet", timeout=5000)
+        page.wait_for_selector("#main table, #main tbody tr", timeout=5000)
     except PlaywrightTimeoutError:
-        page.wait_for_timeout(1500)
+        try:
+            page.get_by_text("Intet blev fundet", exact=False).wait_for(timeout=1500)
+        except PlaywrightTimeoutError:
+            page.wait_for_timeout(1500)
 
     save_debug_screenshot(page, debug_dir, f"{prefix}_results.png")
 
@@ -498,7 +501,7 @@ def fetch_hours(page, args, debug_dir):
         return {
             "success": False,
             "stage": "parse_hours",
-            "error": "Kunne ikke finde total l?ntimer i resultattabellen.",
+            "error": "Kunne ikke finde total løntimer i resultattabellen.",
             "periodFrom": args.from_date,
             "periodTo": args.to_date,
             "debugDir": str(debug_dir)
@@ -574,7 +577,7 @@ def read_punch_state_from_history(page, target_date, debug_dir, prefix):
             "statusKnown": True,
             "clockedIn": False,
             "statusText": "Stemplet ud",
-            "detail": "Der er ikke fundet en ?ben stempling for i dag.",
+            "detail": "Der er ikke fundet en åben stempling for i dag.",
             "lastStart": "",
             "lastStop": ""
         }
@@ -683,13 +686,13 @@ def read_punch_state_from_punch_page(page, debug_dir, prefix):
             "statusKnown": False,
             "clockedIn": False,
             "statusText": "Status ukendt",
-            "detail": "Intramanager-stempelsiden blev hentet, men status kunne ikke afl?ses.",
+            "detail": "Intramanager-stempelsiden blev hentet, men status kunne ikke aflæses.",
             "lastStart": "",
             "lastStop": "",
         }
 
     status_text = "Stemplet ind" if clocked_in else "Stemplet ud"
-    detail = "Status afl?st fra Intramanager-stempelsiden."
+    detail = "Status aflæst fra Intramanager-stempelsiden."
 
     return {
         "success": True,
@@ -926,7 +929,7 @@ def click_punch_dialog_confirmation(page, wants_out):
         if wants_out
         else ["stempel ind", "stempl ind", "check ind", "start"]
     )
-    confirmation_terms = action_terms + ["bekr?ft", "bekraeft", "gem", "ja", "ok", "forts?t", "fortsaet"]
+    confirmation_terms = action_terms + ["bekræft", "bekraeft", "gem", "ja", "ok", "fortsæt", "fortsaet"]
 
     dialog_scopes = [
         ".punch-in-dialog",
