@@ -9,6 +9,7 @@ BASE_URL = "https://5r.intramanager.com/"
 LOGIN_URL = BASE_URL + "reports/history/"
 HISTORY_URL = BASE_URL + "reports/history/"
 PUNCH_URL = BASE_URL + "reports/punch-in/"
+KVIKOC_URL = "https://kvikoc.tdc.dk/"
 DEBUG_ENABLED = False
 OFFICE_ONLY_MESSAGE = "Man kan kun stemple ind eller ud på kontorets internet."
 
@@ -167,6 +168,458 @@ def save_session_state(context, args):
         context.storage_state(path=str(path))
     except Exception:
         pass
+
+
+def kvikoc_wait(page, timeout=3000):
+    try:
+        page.wait_for_load_state("networkidle", timeout=timeout)
+    except Exception:
+        page.wait_for_timeout(min(timeout, 3000))
+
+
+def kvikoc_body_text(page):
+    try:
+        return clean_text(page.locator("body").inner_text(timeout=3000))
+    except Exception:
+        return ""
+
+
+def kvikoc_logged_in(page):
+    text = kvikoc_body_text(page).lower()
+    return "kvikoc" in text and ("vælg sælger" in text or "vaelg sælger" in text or "ordresøgning" in text)
+
+
+def kvikoc_login(page, args, debug_dir):
+    page.goto(KVIKOC_URL, wait_until="domcontentloaded", timeout=60000)
+    kvikoc_wait(page, 10000)
+
+    if kvikoc_logged_in(page):
+        return {"success": True, "stage": "kvikoc_login_cached"}
+
+    try:
+        page.locator("#username").fill(args.username, timeout=15000)
+        page.locator("#password").fill(args.password, timeout=15000)
+        page.evaluate(
+            """() => {
+                const ok = document.querySelector('input[name="pf.ok"]');
+                if (ok) ok.value = 'clicked';
+                if (document.forms.length) document.forms[0].submit();
+            }"""
+        )
+    except Exception as exc:
+        save_debug_screenshot(page, debug_dir, "kvikoc_login_fields_failed.png", force=True)
+        write_debug_text(debug_dir / "kvikoc_login_fields_failed.html", page.content(), force=True)
+        return {
+            "success": False,
+            "stage": "kvikoc_login",
+            "error": f"Kunne ikke udfylde KvikOC-login: {exc}",
+            "debugDir": str(debug_dir),
+        }
+
+    try:
+        page.wait_for_selector("#salesmanForm1\\:salesman", timeout=45000)
+    except Exception:
+        save_debug_screenshot(page, debug_dir, "kvikoc_after_login_failed.png", force=True)
+        write_debug_text(debug_dir / "kvikoc_after_login_failed.html", page.content(), force=True)
+        return {
+            "success": False,
+            "stage": "kvikoc_login",
+            "error": "KvikOC-login lykkedes ikke, eller sælgerlisten blev ikke fundet.",
+            "debugDir": str(debug_dir),
+        }
+
+    return {"success": True, "stage": "kvikoc_login"}
+
+
+def kvikoc_select_seller(page, args, debug_dir):
+    seller_name = clean_text(getattr(args, "seller_name", "")) or "Victor K"
+    seller_code = clean_text(getattr(args, "seller_code", ""))
+    if not seller_code:
+        return {
+            "success": False,
+            "stage": "kvikoc_seller",
+            "error": "Sælgerkode mangler.",
+        }
+
+    try:
+        page.wait_for_selector("#salesmanForm1\\:salesman", timeout=30000)
+        option_value = page.eval_on_selector(
+            "#salesmanForm1\\:salesman",
+            r"""(select, sellerName) => {
+                const needle = (sellerName || '').toLowerCase().replace(/\./g, '').trim();
+                for (const option of Array.from(select.options)) {
+                    const text = (option.textContent || '').toLowerCase().replace(/\./g, '').trim();
+                    if (text.includes(needle)) return option.value;
+                }
+                return '';
+            }""",
+            seller_name,
+        )
+        if not option_value:
+            return {
+                "success": False,
+                "stage": "kvikoc_seller",
+                "error": f"Kunne ikke finde sælgeren '{seller_name}' i KvikOC.",
+            }
+
+        selected_value = page.eval_on_selector("#salesmanForm1\\:salesman", "el => el.value")
+        if selected_value != option_value:
+            page.select_option("#salesmanForm1\\:salesman", value=option_value)
+            kvikoc_wait(page, 5000)
+
+        password_box = page.locator("#j_idt331\\:inputId")
+        if password_box.count() > 0 and password_box.first.is_visible(timeout=2000):
+            password_box.first.fill(seller_code, timeout=10000)
+            page.locator("#j_idt331\\:buttontValidate").click(timeout=10000)
+            kvikoc_wait(page, 6000)
+
+        try:
+            page.wait_for_selector("#accordPanel\\:0\\:searchCardForm\\:cvrNr:not([disabled]), #accordPanel\\:0\\:searchCardForm\\:telNr:not([disabled])", timeout=30000)
+        except Exception:
+            save_debug_screenshot(page, debug_dir, "kvikoc_seller_failed.png", force=True)
+            write_debug_text(debug_dir / "kvikoc_seller_failed.html", page.content(), force=True)
+            return {
+                "success": False,
+                "stage": "kvikoc_seller",
+                "error": "KvikOC accepterede ikke sælgerlogin, eller søgefelterne blev ikke aktive.",
+                "debugDir": str(debug_dir),
+            }
+
+        return {"success": True, "stage": "kvikoc_seller"}
+    except Exception as exc:
+        save_debug_screenshot(page, debug_dir, "kvikoc_seller_exception.png", force=True)
+        write_debug_text(debug_dir / "kvikoc_seller_exception.html", page.content(), force=True)
+        return {
+            "success": False,
+            "stage": "kvikoc_seller",
+            "error": f"KvikOC sælgerlogin fejlede: {exc}",
+            "debugDir": str(debug_dir),
+        }
+
+
+def kvikoc_extract_customer_name(page):
+    try:
+        return page.evaluate(
+            r"""() => {
+                const text = document.body ? document.body.innerText : '';
+                const match = text.match(/Kundens navn:\s*([^\n\r]+)/i);
+                if (!match) return '';
+                return (match[1] || '').replace(/\s*Kundetype:.*/i, '').trim();
+            }"""
+        )
+    except Exception:
+        return ""
+
+
+def kvikoc_wait_for_search_result(page):
+    try:
+        page.wait_for_function(
+            """() => {
+                const body = document.body ? document.body.innerText : '';
+                return body.includes('Kundens oplysninger')
+                    || body.includes('Vis Alle Abonnementer')
+                    || body.includes('Hent Kunde')
+                    || body.includes('No records found')
+                    || body.includes('Ingen poster');
+            }""",
+            timeout=45000,
+        )
+    except Exception:
+        pass
+    kvikoc_wait(page, 2000)
+
+
+def kvikoc_search(page, args, debug_dir):
+    cvr = re.sub(r"\D+", "", clean_text(getattr(args, "cvr", "")))
+    phone = re.sub(r"\D+", "", clean_text(getattr(args, "phone", "")))
+
+    if not cvr and not phone:
+        return {
+            "success": False,
+            "stage": "kvikoc_input",
+            "error": "Indtast CVR-nummer eller mobilnummer.",
+        }
+
+    try:
+        cvr_field = page.locator("#accordPanel\\:0\\:searchCardForm\\:cvrNr")
+        phone_field = page.locator("#accordPanel\\:0\\:searchCardForm\\:telNr")
+
+        if cvr:
+            cvr_field.fill(cvr, timeout=10000)
+            if phone_field.count() > 0:
+                phone_field.fill("", timeout=5000)
+        else:
+            phone_field.fill(phone, timeout=10000)
+            if cvr_field.count() > 0:
+                cvr_field.fill("", timeout=5000)
+
+        page.locator("#accordPanel\\:0\\:searchCardForm\\:searchId").click(timeout=10000)
+        kvikoc_wait_for_search_result(page)
+    except Exception as exc:
+        save_debug_screenshot(page, debug_dir, "kvikoc_search_failed.png", force=True)
+        write_debug_text(debug_dir / "kvikoc_search_failed.html", page.content(), force=True)
+        return {
+            "success": False,
+            "stage": "kvikoc_search",
+            "error": f"KvikOC-søgning fejlede: {exc}",
+            "debugDir": str(debug_dir),
+        }
+
+    return {"success": True, "stage": "kvikoc_search", "queryType": "cvr" if cvr else "phone"}
+
+
+def kvikoc_all_subscriptions_visible(page):
+    try:
+        return page.locator("div[id$='hentkunde2']").count() > 0
+    except Exception:
+        return False
+
+
+def kvikoc_open_customer_account(page, debug_dir):
+    if kvikoc_all_subscriptions_visible(page):
+        return {"success": True, "stage": "kvikoc_customer_open"}
+
+    customer_name = kvikoc_extract_customer_name(page).lower()
+
+    try:
+        rows = page.locator("tbody[id$='bulkCvrTable_data'] > tr:not(.ui-expanded-row-content)")
+        row_count = rows.count()
+        if row_count <= 0:
+            return {"success": True, "stage": "kvikoc_customer_open"}
+
+        selected_index = 0
+        if customer_name:
+            for index in range(row_count):
+                try:
+                    if customer_name in rows.nth(index).inner_text(timeout=1000).lower():
+                        selected_index = index
+                        break
+                except Exception:
+                    pass
+
+        row = rows.nth(selected_index)
+        toggler = row.locator(".ui-row-toggler").first
+        if toggler.count() > 0:
+            toggler.click(timeout=10000)
+            try:
+                page.wait_for_function(
+                    """() => Array.from(document.querySelectorAll('a'))
+                        .some(a => (a.id || '').endsWith('bulkcvrcomman'))""",
+                    timeout=15000,
+                )
+            except Exception:
+                kvikoc_wait(page, 5000)
+
+        account_link_text = page.evaluate(
+            """() => {
+                const link = Array.from(document.querySelectorAll('a'))
+                    .find(a => (a.id || '').endsWith('bulkcvrcomman'));
+                return link ? (link.innerText || link.textContent || '').trim() : '';
+            }"""
+        )
+        if account_link_text:
+            page.get_by_text(account_link_text, exact=True).click(timeout=10000)
+            try:
+                page.wait_for_selector("div[id$='hentkunde2']", timeout=45000)
+            except Exception:
+                pass
+            kvikoc_wait(page, 3000)
+
+        return {"success": True, "stage": "kvikoc_customer_open"}
+    except Exception as exc:
+        save_debug_screenshot(page, debug_dir, "kvikoc_customer_open_failed.png", force=True)
+        write_debug_text(debug_dir / "kvikoc_customer_open_failed.html", page.content(), force=True)
+        return {
+            "success": False,
+            "stage": "kvikoc_customer_open",
+            "error": f"Kunne ikke åbne kundens abonnementer i KvikOC: {exc}",
+            "debugDir": str(debug_dir),
+        }
+
+
+def kvikoc_extract_subscription_rows(page):
+    return page.evaluate(
+        r"""() => {
+            const table = document.querySelector('div[id$="hentkunde2"] table')
+                || document.querySelector('div[id$="hentkunde"] table');
+            if (!table) return [];
+            const body = table.querySelector('tbody[id$="hentkunde2_data"]')
+                || table.querySelector('tbody[id$="hentkunde_data"]')
+                || table.querySelector('tbody');
+            if (!body) return [];
+
+            const rows = [];
+            for (const tr of Array.from(body.querySelectorAll(':scope > tr'))) {
+                if (tr.classList.contains('ui-expanded-row-content')) continue;
+                const cells = Array.from(tr.querySelectorAll(':scope > td'))
+                    .map(td => (td.innerText || td.textContent || '').trim().replace(/\s+/g, ' '));
+                if (cells.length >= 9 && cells[1]) {
+                    rows.push({
+                        phone: cells[1],
+                        status: cells[2],
+                        subscription: cells[3],
+                        category: cells[4],
+                        system: cells[5],
+                        dealer: cells[6],
+                        created: cells[7],
+                        binding: cells[8],
+                    });
+                }
+            }
+            return rows;
+        }"""
+    )
+
+
+def kvikoc_active_subscription_page(page):
+    try:
+        return clean_text(
+            page.locator("div[id$='hentkunde2_paginator_bottom'] .ui-paginator-page.ui-state-active")
+            .first.inner_text(timeout=1000)
+        )
+    except Exception:
+        return ""
+
+
+def kvikoc_collect_subscriptions(page):
+    rows = []
+    seen_signatures = set()
+
+    def append_current_page():
+        page_rows = kvikoc_extract_subscription_rows(page)
+        signature = kvikoc_active_subscription_page(page) + "|" + "|".join(
+            row.get("phone", "") for row in page_rows[:4]
+        )
+        if signature in seen_signatures:
+            return False
+        seen_signatures.add(signature)
+        rows.extend(page_rows)
+        return True
+
+    try:
+        expected_total = page.evaluate(
+            r"""() => {
+                const header = Array.from(document.querySelectorAll('h3'))
+                    .map(h => h.innerText || '')
+                    .find(text => text.includes('Vis Alle Abonnementer')) || '';
+                const match = header.match(/\((\d+)\)/);
+                return match ? Number(match[1]) : 0;
+            }"""
+        )
+    except Exception:
+        expected_total = 0
+
+    try:
+        page_labels = page.evaluate(
+            """() => Array.from(
+                document.querySelectorAll('div[id$="hentkunde2_paginator_bottom"] .ui-paginator-page')
+            ).map(el => (el.innerText || el.textContent || '').trim()).filter(Boolean)"""
+        )
+    except Exception:
+        page_labels = []
+
+    if not page_labels:
+        return kvikoc_extract_subscription_rows(page)
+
+    for page_label in page_labels:
+        active_page = kvikoc_active_subscription_page(page)
+        if active_page != page_label:
+            try:
+                page.locator(
+                    "div[id$='hentkunde2_paginator_bottom'] .ui-paginator-page",
+                    has_text=page_label,
+                ).first.click(timeout=10000)
+                kvikoc_wait(page, 4000)
+            except Exception:
+                pass
+
+        append_current_page()
+
+    for _ in range(50):
+        unique_so_far = {
+            (row.get("phone", ""), row.get("subscription", ""), row.get("category", ""))
+            for row in rows
+        }
+        if expected_total and len(unique_so_far) >= expected_total:
+            break
+
+        next_button = page.locator("div[id$='hentkunde2_paginator_bottom'] .ui-paginator-next").first
+        try:
+            if next_button.count() <= 0:
+                break
+            if "ui-state-disabled" in (next_button.get_attribute("class") or ""):
+                break
+            next_button.click(timeout=10000)
+            kvikoc_wait(page, 4000)
+        except Exception:
+            break
+        if not append_current_page():
+            break
+
+    unique_so_far = {
+        (row.get("phone", ""), row.get("subscription", ""), row.get("category", ""))
+        for row in rows
+    }
+    if expected_total and len(unique_so_far) < expected_total:
+        last_button = page.locator("div[id$='hentkunde2_paginator_bottom'] .ui-paginator-last").first
+        try:
+            if last_button.count() > 0 and "ui-state-disabled" not in (last_button.get_attribute("class") or ""):
+                last_button.click(timeout=10000)
+                kvikoc_wait(page, 4000)
+                append_current_page()
+        except Exception:
+            pass
+
+    unique = []
+    seen = set()
+    for row in rows:
+        key = (row.get("phone", ""), row.get("subscription", ""), row.get("category", ""))
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(row)
+
+    return unique
+
+
+def kvikoc_build_product_counts(rows):
+    counts = {}
+    for row in rows:
+        name = clean_text(row.get("subscription")) or clean_text(row.get("category")) or "Ukendt"
+        counts[name] = counts.get(name, 0) + 1
+
+    return [
+        {"name": name, "quantity": count}
+        for name, count in sorted(counts.items(), key=lambda item: (-item[1], item[0].lower()))
+    ]
+
+
+def kvikoc_lookup(page, args, debug_dir):
+    search_result = kvikoc_search(page, args, debug_dir)
+    if not search_result.get("success"):
+        return search_result
+
+    open_result = kvikoc_open_customer_account(page, debug_dir)
+    if not open_result.get("success"):
+        return open_result
+
+    rows = kvikoc_collect_subscriptions(page)
+    products = kvikoc_build_product_counts(rows)
+    customer_name = kvikoc_extract_customer_name(page)
+
+    if not rows:
+        save_debug_screenshot(page, debug_dir, "kvikoc_no_subscriptions.png", force=DEBUG_ENABLED)
+        write_debug_text(debug_dir / "kvikoc_no_subscriptions.html", page.content(), force=DEBUG_ENABLED)
+
+    return {
+        "success": True,
+        "stage": "kvikoc_done",
+        "customerName": customer_name,
+        "products": products,
+        "subscriptions": rows,
+        "totalSubscriptions": len(rows),
+        "debugDir": str(debug_dir),
+    }
 
 
 def clear_session_state(page, args):
@@ -1141,7 +1594,7 @@ def toggle_punch(page, args, debug_dir):
 def main():
     parser = argparse.ArgumentParser()
 
-    parser.add_argument("--action", choices=["hours", "punch-status", "punch-toggle", "overview"], default="hours")
+    parser.add_argument("--action", choices=["hours", "punch-status", "punch-toggle", "overview", "kvikoc-lookup"], default="hours")
     parser.add_argument("--username", required=False)
     parser.add_argument("--password", required=False)
     parser.add_argument("--stdin-json", action="store_true")
@@ -1155,6 +1608,10 @@ def main():
     parser.add_argument("--debug", action="store_true")
     parser.add_argument("--headed", action="store_true")
     parser.add_argument("--target-action", choices=["in", "out"], required=False)
+    parser.add_argument("--seller-name", required=False)
+    parser.add_argument("--seller-code", required=False)
+    parser.add_argument("--cvr", required=False)
+    parser.add_argument("--phone", required=False)
 
     args = parser.parse_args()
 
@@ -1171,6 +1628,11 @@ def main():
         args.target_action = payload.get("targetAction", args.target_action)
         args.session_state = payload.get("sessionState", args.session_state)
         args.debug = bool(payload.get("debug", args.debug))
+        args.debug_dir = payload.get("debugDir", args.debug_dir)
+        args.seller_name = payload.get("sellerName", args.seller_name)
+        args.seller_code = payload.get("sellerCode", args.seller_code)
+        args.cvr = payload.get("cvr", args.cvr)
+        args.phone = payload.get("phone", args.phone)
 
     global DEBUG_ENABLED
     DEBUG_ENABLED = bool(args.debug)
@@ -1184,6 +1646,14 @@ def main():
             "success": False,
             "stage": "input",
             "error": "Fra-dato og til-dato mangler."
+        })
+        return
+
+    if args.action == "kvikoc-lookup" and not clean_text(args.cvr or "") and not clean_text(args.phone or ""):
+        output({
+            "success": False,
+            "stage": "input",
+            "error": "CVR-nummer eller mobilnummer mangler."
         })
         return
 
@@ -1212,7 +1682,10 @@ def main():
             context = create_browser_context(browser, args)
             page = context.new_page()
 
-            login_result = login(page, args, debug_dir)
+            if args.action == "kvikoc-lookup":
+                login_result = kvikoc_login(page, args, debug_dir)
+            else:
+                login_result = login(page, args, debug_dir)
 
             if not login_result.get("success"):
                 browser.close()
@@ -1221,7 +1694,14 @@ def main():
 
             save_session_state(context, args)
 
-            if args.action == "hours":
+            if args.action == "kvikoc-lookup":
+                seller_result = kvikoc_select_seller(page, args, debug_dir)
+                if not seller_result.get("success"):
+                    browser.close()
+                    output(seller_result)
+                    return
+                result = kvikoc_lookup(page, args, debug_dir)
+            elif args.action == "hours":
                 result = fetch_hours(page, args, debug_dir)
             elif args.action == "punch-status":
                 result = fetch_punch_status(page, args, debug_dir)

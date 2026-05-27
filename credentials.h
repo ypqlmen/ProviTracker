@@ -29,6 +29,14 @@ static QByteArray intramanagerPasswordEntropy() {
     return QByteArrayLiteral("ProviTracker.Intramanager.Password.v1");
 }
 
+static QString kvikocCredentialStorePath() {
+    return appStorageDir() + "/kvikoc_login.json";
+}
+
+static QByteArray kvikocCredentialEntropy() {
+    return QByteArrayLiteral("ProviTracker.KvikOC.Login.v1");
+}
+
 static QByteArray cloudSessionEntropy() {
     return QByteArrayLiteral("ProviTracker.Cloud.Session.v1");
 }
@@ -547,6 +555,110 @@ static bool loadIntramanagerPassword(QString* usernameOut, QString* passwordOut)
         saveIntramanagerPassword(legacyUsername, legacyPassword);
     }
 
+    return true;
+}
+
+struct KvikocCredentials {
+    QString username;
+    QString password;
+    QString sellerName;
+    QString sellerCode;
+};
+
+static bool saveKvikocCredentials(
+    const QString& username,
+    const QString& password,
+    const QString& sellerName,
+    const QString& sellerCode
+    ) {
+    if (username.trimmed().isEmpty() || password.isEmpty() || sellerCode.trimmed().isEmpty()) {
+        return false;
+    }
+
+    QJsonObject plain;
+    plain["username"] = username.trimmed();
+    plain["password"] = password;
+    plain["sellerName"] = sellerName.trimmed().isEmpty() ? "Victor K" : sellerName.trimmed();
+    plain["sellerCode"] = sellerCode.trimmed();
+    plain["savedAt"] = QDateTime::currentDateTime().toString(Qt::ISODate);
+
+    QByteArray protectedLogin;
+    if (!protectForCurrentWindowsUserWithEntropy(
+            QJsonDocument(plain).toJson(QJsonDocument::Compact),
+            kvikocCredentialEntropy(),
+            L"ProviTracker KvikOC login",
+            &protectedLogin
+            )) {
+        return false;
+    }
+
+    QDir().mkpath(appStorageDir());
+
+    QJsonObject stored;
+    stored["format"] = "dpapi-current-user-kvikoc-v1";
+    stored["login"] = QString::fromLatin1(protectedLogin.toBase64());
+
+    QSaveFile file(kvikocCredentialStorePath());
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        return false;
+    }
+
+    file.write(QJsonDocument(stored).toJson(QJsonDocument::Indented));
+    return file.commit();
+}
+
+static bool loadKvikocCredentials(KvikocCredentials* credentialsOut) {
+    if (!credentialsOut) {
+        return false;
+    }
+
+    QFile file(kvikocCredentialStorePath());
+    if (!file.open(QIODevice::ReadOnly)) {
+        return false;
+    }
+
+    QJsonParseError error;
+    const QJsonDocument doc = QJsonDocument::fromJson(file.readAll(), &error);
+    if (error.error != QJsonParseError::NoError || !doc.isObject()) {
+        return false;
+    }
+
+    const QJsonObject stored = doc.object();
+    if (stored.value("format").toString() != "dpapi-current-user-kvikoc-v1") {
+        return false;
+    }
+
+    const QByteArray protectedLogin = QByteArray::fromBase64(
+        stored.value("login").toString().toLatin1()
+        );
+
+    QByteArray plainBytes;
+    if (!unprotectForCurrentWindowsUserWithEntropy(
+            protectedLogin,
+            kvikocCredentialEntropy(),
+            &plainBytes
+            )) {
+        return false;
+    }
+
+    QJsonParseError plainError;
+    const QJsonDocument plainDoc = QJsonDocument::fromJson(plainBytes, &plainError);
+    if (plainError.error != QJsonParseError::NoError || !plainDoc.isObject()) {
+        return false;
+    }
+
+    const QJsonObject plain = plainDoc.object();
+    KvikocCredentials credentials;
+    credentials.username = plain.value("username").toString().trimmed();
+    credentials.password = plain.value("password").toString();
+    credentials.sellerName = plain.value("sellerName").toString("Victor K").trimmed();
+    credentials.sellerCode = plain.value("sellerCode").toString().trimmed();
+
+    if (credentials.username.isEmpty() || credentials.password.isEmpty() || credentials.sellerCode.isEmpty()) {
+        return false;
+    }
+
+    *credentialsOut = credentials;
     return true;
 }
 

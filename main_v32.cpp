@@ -20,8 +20,8 @@
 #include "commission.h"
 #include "report_service.h"
 
-static constexpr const char* APP_VERSION = "1.4.3";
-static constexpr int APP_BUILD_VERSION = 10403;
+static constexpr const char* APP_VERSION = "1.5.0";
+static constexpr int APP_BUILD_VERSION = 10500;
 static constexpr const char* UPDATE_APPCAST_URL = "https://raw.githubusercontent.com/ypqlmen/ProviTracker/main/appcast.xml";
 
 static QString psSingleQuoted(QString value) {
@@ -1711,6 +1711,45 @@ private:
     bool microsoftOAuthRunning = false;
     QTcpServer* microsoftOAuthServer = nullptr;
 
+    QLineEdit* kvikocUsernameEdit = nullptr;
+    QLineEdit* kvikocPasswordEdit = nullptr;
+    QLineEdit* kvikocSellerNameEdit = nullptr;
+    QLineEdit* kvikocSellerCodeEdit = nullptr;
+    QLineEdit* kvikocCvrEdit = nullptr;
+    QLineEdit* kvikocPhoneEdit = nullptr;
+    QPushButton* kvikocLookupButton = nullptr;
+    QPushButton* kvikocCopyButton = nullptr;
+    QLabel* kvikocStatusLabel = nullptr;
+    QLabel* kvikocSummaryLabel = nullptr;
+    QProgressBar* kvikocLoadingBar = nullptr;
+    QTableWidget* kvikocProductsTable = nullptr;
+    QTableWidget* kvikocSubscriptionsTable = nullptr;
+    bool kvikocLookupRunning = false;
+
+    struct KvikocProductResult {
+        QString name;
+        int quantity = 0;
+    };
+
+    struct KvikocSubscriptionResult {
+        QString phone;
+        QString status;
+        QString subscription;
+        QString category;
+        QString system;
+        QString created;
+    };
+
+    struct KvikocLookupResult {
+        bool success = false;
+        QString customerName;
+        QString error;
+        QVector<KvikocProductResult> products;
+        QVector<KvikocSubscriptionResult> subscriptions;
+    };
+
+    QVector<KvikocSubscriptionResult> kvikocCachedSubscriptions;
+
     struct IntramanagerFetchResult {
         bool success = false;
         double hours = 0.0;
@@ -1787,6 +1826,240 @@ private:
 
     QString intramanagerSessionStatePath() const {
         return appStorageDir() + "/intramanager_session.json";
+    }
+
+    bool isKvikocPageAllowed() const {
+        return cloudUsername.trimmed().compare("VictorTang", Qt::CaseInsensitive) == 0;
+    }
+
+    QString kvikocSessionStatePath() const {
+        return appStorageDir() + "/kvikoc_session.json";
+    }
+
+    bool prepareKvikocLookup(KvikocCredentials* credentialsOut, QString* workerPathOut, QString* errorOut) const {
+        if (!isKvikocPageAllowed()) {
+            if (errorOut) *errorOut = "KvikOC-siden er kun tilgængelig for VictorTang.";
+            return false;
+        }
+
+        KvikocCredentials credentials;
+        if (!loadKvikocCredentials(&credentials)) {
+            if (errorOut) *errorOut = "Gem KvikOC-login nederst på siden først.";
+            return false;
+        }
+
+        const QString workerPath = intramanagerWorkerPath();
+        if (!QFileInfo::exists(workerPath)) {
+            if (errorOut) *errorOut = "Worker-filen blev ikke fundet:\n" + workerPath;
+            return false;
+        }
+
+        if (credentialsOut) *credentialsOut = credentials;
+        if (workerPathOut) *workerPathOut = workerPath;
+        return true;
+    }
+
+    QJsonObject kvikocPayload(const KvikocCredentials& credentials, const QString& cvr, const QString& phone) const {
+        QJsonObject payload;
+        payload["action"] = "kvikoc-lookup";
+        payload["username"] = credentials.username;
+        payload["password"] = credentials.password;
+        payload["sellerName"] = credentials.sellerName.trimmed().isEmpty() ? "Victor K" : credentials.sellerName.trimmed();
+        payload["sellerCode"] = credentials.sellerCode;
+        payload["cvr"] = cvr.trimmed();
+        payload["phone"] = phone.trimmed();
+        payload["sessionState"] = kvikocSessionStatePath();
+        return payload;
+    }
+
+    QStringList kvikocWorkerArgs() const {
+        return {"--action", "kvikoc-lookup", "--stdin-json"};
+    }
+
+    KvikocLookupResult parseKvikocWorkerOutput(const QByteArray& stdoutData, const QByteArray& stderrData) const {
+        KvikocLookupResult result;
+        QJsonParseError jsonError;
+        const auto doc = QJsonDocument::fromJson(stdoutData, &jsonError);
+
+        if (jsonError.error != QJsonParseError::NoError || !doc.isObject()) {
+            result.error =
+                "Worker returnerede ikke gyldig JSON.\n\nOutput:\n" +
+                QString::fromUtf8(stdoutData) +
+                "\n\nFejl:\n" +
+                QString::fromUtf8(stderrData);
+            return result;
+        }
+
+        const QJsonObject obj = doc.object();
+        if (!obj.value("success").toBool(false)) {
+            result.error = obj.value("error").toString("Ukendt fejl ved KvikOC-opslag.");
+            return result;
+        }
+
+        result.success = true;
+        result.customerName = obj.value("customerName").toString();
+
+        const QJsonArray products = obj.value("products").toArray();
+        for (const auto& value : products) {
+            const QJsonObject item = value.toObject();
+            KvikocProductResult product;
+            product.name = item.value("name").toString();
+            product.quantity = item.value("quantity").toInt();
+            if (!product.name.trimmed().isEmpty()) {
+                result.products.push_back(product);
+            }
+        }
+
+        const QJsonArray subscriptions = obj.value("subscriptions").toArray();
+        for (const auto& value : subscriptions) {
+            const QJsonObject item = value.toObject();
+            KvikocSubscriptionResult subscription;
+            subscription.phone = item.value("phone").toString();
+            subscription.status = item.value("status").toString();
+            subscription.subscription = item.value("subscription").toString();
+            subscription.category = item.value("category").toString();
+            subscription.system = item.value("system").toString();
+            subscription.created = item.value("created").toString();
+            if (!subscription.phone.trimmed().isEmpty()) {
+                result.subscriptions.push_back(subscription);
+            }
+        }
+
+        return result;
+    }
+
+    void setKvikocLookupRunning(bool running) {
+        kvikocLookupRunning = running;
+        if (kvikocLookupButton) kvikocLookupButton->setEnabled(!running);
+        if (kvikocLoadingBar) kvikocLoadingBar->setVisible(running);
+        if (kvikocStatusLabel && running) {
+            kvikocStatusLabel->setText("Henter information fra KvikOC...");
+        }
+    }
+
+    void showKvikocResult(const KvikocLookupResult& result) {
+        kvikocCachedSubscriptions = result.subscriptions;
+
+        if (kvikocSummaryLabel) {
+            const QString customer = result.customerName.trimmed().isEmpty() ? "Kunde fundet" : result.customerName.trimmed();
+            kvikocSummaryLabel->setText(
+                QString("%1 · %2 abonnementer")
+                    .arg(customer)
+                    .arg(result.subscriptions.size())
+                );
+        }
+
+        if (kvikocProductsTable) {
+            kvikocProductsTable->setRowCount(result.products.size());
+            for (int row = 0; row < result.products.size(); ++row) {
+                const auto& product = result.products[row];
+                auto* nameItem = new QTableWidgetItem(product.name);
+                auto* qtyItem = new QTableWidgetItem(QString::number(product.quantity));
+                qtyItem->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
+                kvikocProductsTable->setItem(row, 0, nameItem);
+                kvikocProductsTable->setItem(row, 1, qtyItem);
+            }
+            kvikocProductsTable->resizeRowsToContents();
+        }
+
+        if (kvikocSubscriptionsTable) {
+            kvikocSubscriptionsTable->setRowCount(result.subscriptions.size());
+            for (int row = 0; row < result.subscriptions.size(); ++row) {
+                const auto& subscription = result.subscriptions[row];
+                kvikocSubscriptionsTable->setItem(row, 0, new QTableWidgetItem(subscription.phone));
+                kvikocSubscriptionsTable->setItem(row, 1, new QTableWidgetItem(subscription.subscription));
+                kvikocSubscriptionsTable->setItem(row, 2, new QTableWidgetItem(subscription.status));
+                kvikocSubscriptionsTable->setItem(row, 3, new QTableWidgetItem(subscription.created));
+            }
+            kvikocSubscriptionsTable->resizeRowsToContents();
+        }
+
+        if (kvikocCopyButton) {
+            kvikocCopyButton->setEnabled(!kvikocCachedSubscriptions.isEmpty());
+        }
+
+        if (kvikocStatusLabel) {
+            kvikocStatusLabel->setText(result.subscriptions.isEmpty()
+                ? "Opslaget blev gennemført, men der blev ikke fundet abonnementer."
+                : "Informationen er hentet og klar.");
+        }
+    }
+
+    void runKvikocLookup() {
+        if (kvikocLookupRunning) {
+            return;
+        }
+
+        const QString cvr = kvikocCvrEdit ? kvikocCvrEdit->text().trimmed() : QString();
+        const QString phone = kvikocPhoneEdit ? kvikocPhoneEdit->text().trimmed() : QString();
+        if (cvr.isEmpty() && phone.isEmpty()) {
+            if (kvikocStatusLabel) kvikocStatusLabel->setText("Indtast CVR-nummer eller mobilnummer.");
+            return;
+        }
+
+        KvikocCredentials credentials;
+        QString workerPath;
+        QString error;
+        if (!prepareKvikocLookup(&credentials, &workerPath, &error)) {
+            if (kvikocStatusLabel) kvikocStatusLabel->setText(error);
+            return;
+        }
+
+        setKvikocLookupRunning(true);
+
+        auto* process = new QProcess(this);
+        const QJsonObject payload = kvikocPayload(credentials, cvr, phone);
+
+        connect(process, &QProcess::started, this, [process, payload]() {
+            process->write(QJsonDocument(payload).toJson(QJsonDocument::Compact));
+            process->closeWriteChannel();
+        });
+
+        connect(process, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
+                this, [this, process](int, QProcess::ExitStatus) {
+                    const QByteArray stdoutData = process->readAllStandardOutput();
+                    const QByteArray stderrData = process->readAllStandardError();
+                    process->deleteLater();
+
+                    setKvikocLookupRunning(false);
+
+                    const KvikocLookupResult result = parseKvikocWorkerOutput(stdoutData, stderrData);
+                    if (!result.success) {
+                        if (kvikocStatusLabel) kvikocStatusLabel->setText(result.error);
+                        return;
+                    }
+
+                    showKvikocResult(result);
+                });
+
+        connect(process, &QProcess::errorOccurred, this, [this, process](QProcess::ProcessError error) {
+            if (error != QProcess::FailedToStart) return;
+
+            const QString err = process->errorString();
+            process->deleteLater();
+            setKvikocLookupRunning(false);
+            if (kvikocStatusLabel) {
+                kvikocStatusLabel->setText("Kunne ikke starte KvikOC-worker:\n" + err);
+            }
+        });
+
+        process->start(workerPath, kvikocWorkerArgs());
+    }
+
+    void copyKvikocSubscriptionsToClipboard() {
+        if (kvikocCachedSubscriptions.isEmpty()) {
+            return;
+        }
+
+        QStringList lines;
+        for (const auto& subscription : kvikocCachedSubscriptions) {
+            lines << QString("%1 - %2").arg(subscription.phone, subscription.subscription);
+        }
+
+        QGuiApplication::clipboard()->setText(lines.join("\n"));
+        if (kvikocStatusLabel) {
+            kvikocStatusLabel->setText(QString("%1 numre kopieret.").arg(kvikocCachedSubscriptions.size()));
+        }
     }
 
     bool prepareIntramanagerFetch(QString* usernameOut, QString* passwordOut, QString* workerPathOut, QString* errorOut) const {
@@ -2674,6 +2947,21 @@ private:
         return storeEncryptedCloudSecret("microsoftRefreshToken", secret);
     }
 
+    bool storeKvikocSecret(const KvikocCredentials& credentials) {
+        if (credentials.username.trimmed().isEmpty()
+            || credentials.password.isEmpty()
+            || credentials.sellerCode.trimmed().isEmpty()) {
+            return false;
+        }
+
+        QJsonObject secret;
+        secret["username"] = credentials.username.trimmed();
+        secret["password"] = credentials.password;
+        secret["sellerName"] = credentials.sellerName.trimmed().isEmpty() ? "Victor K" : credentials.sellerName.trimmed();
+        secret["sellerCode"] = credentials.sellerCode.trimmed();
+        return storeEncryptedCloudSecret("kvikocLogin", secret);
+    }
+
     void applyCloudSecretsToLocal() {
         if (cloudSecretKey.size() != 32) {
             return;
@@ -2697,6 +2985,26 @@ private:
         const QString refreshToken = microsoftSecret.value("refreshToken").toString();
         if (!refreshToken.isEmpty()) {
             saveMicrosoftRefreshToken(accountHint, refreshToken);
+        }
+
+        const QJsonObject kvikocSecret = decryptCloudSecretJson(
+            repo.cloudSecrets.value("kvikocLogin").toObject(),
+            cloudSecretKey
+            );
+        KvikocCredentials kvikocCredentials;
+        kvikocCredentials.username = kvikocSecret.value("username").toString();
+        kvikocCredentials.password = kvikocSecret.value("password").toString();
+        kvikocCredentials.sellerName = kvikocSecret.value("sellerName").toString("Victor K");
+        kvikocCredentials.sellerCode = kvikocSecret.value("sellerCode").toString();
+        if (!kvikocCredentials.username.trimmed().isEmpty()
+            && !kvikocCredentials.password.isEmpty()
+            && !kvikocCredentials.sellerCode.trimmed().isEmpty()) {
+            saveKvikocCredentials(
+                kvikocCredentials.username,
+                kvikocCredentials.password,
+                kvikocCredentials.sellerName,
+                kvikocCredentials.sellerCode
+                );
         }
     }
 
@@ -2722,6 +3030,13 @@ private:
             QString refreshToken;
             if (loadMicrosoftRefreshToken(&accountHint, &refreshToken) && !refreshToken.isEmpty()) {
                 changed = storeMicrosoftRefreshTokenSecret(accountHint, refreshToken) || changed;
+            }
+        }
+
+        if (!hasCloudSecret("kvikocLogin")) {
+            KvikocCredentials credentials;
+            if (loadKvikocCredentials(&credentials)) {
+                changed = storeKvikocSecret(credentials) || changed;
             }
         }
 
@@ -3237,6 +3552,9 @@ QTableWidget::item {
         tabs->addTab(buildDashboardTab(), "Dashboard");
         tabs->addTab(buildOrdersTab(), "Ordrer");
         tabs->addTab(buildReportsTab(), "Rapporter");
+        if (isKvikocPageAllowed()) {
+            tabs->addTab(buildKvikocTab(), "KvikOC");
+        }
         tabs->addTab(buildSettingsTab(), "Indstillinger");
 
         root->addWidget(tabs, 1);
@@ -3530,6 +3848,207 @@ QTableWidget::item {
         connect(reportMonthEdit, &QDateEdit::dateChanged, this, [this](const QDate&) { generateReport(); });
         connect(exportBtn, &QPushButton::clicked, this, [this]() { exportCurrentReport(); });
 
+        return w;
+    }
+
+    QWidget* buildKvikocTab() {
+        auto* w = new QWidget;
+        auto* outerLayout = new QVBoxLayout(w);
+        outerLayout->setContentsMargins(0, 0, 0, 0);
+        outerLayout->setSpacing(0);
+
+        auto* scroll = new QScrollArea;
+        scroll->setWidgetResizable(true);
+        scroll->setFrameShape(QFrame::NoFrame);
+        scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+        scroll->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+
+        auto* content = new QWidget;
+        content->setMinimumWidth(980);
+        auto* layout = new QVBoxLayout(content);
+        layout->setContentsMargins(10, 0, 10, 0);
+        layout->setSpacing(14);
+
+        auto searchCard = createCard("KvikOC opslag");
+        auto* searchForm = new QFormLayout;
+        configureSettingsForm(searchForm);
+
+        kvikocCvrEdit = new QLineEdit;
+        kvikocCvrEdit->setPlaceholderText("CVR-nummer");
+        configureSettingsField(kvikocCvrEdit);
+
+        kvikocPhoneEdit = new QLineEdit;
+        kvikocPhoneEdit->setPlaceholderText("Mobilnummer");
+        configureSettingsField(kvikocPhoneEdit);
+
+        kvikocLookupButton = new QPushButton("Hent information");
+        configureSettingsButton(kvikocLookupButton);
+
+        kvikocLoadingBar = new QProgressBar;
+        kvikocLoadingBar->setRange(0, 0);
+        kvikocLoadingBar->setTextVisible(false);
+        kvikocLoadingBar->setMinimumHeight(8);
+        kvikocLoadingBar->setMaximumHeight(8);
+        kvikocLoadingBar->setVisible(false);
+
+        kvikocStatusLabel = new QLabel("Klar til opslag.");
+        kvikocStatusLabel->setWordWrap(true);
+        kvikocStatusLabel->setTextInteractionFlags(Qt::NoTextInteraction);
+        kvikocStatusLabel->setStyleSheet("QLabel { color:#D8F5FF; font-size:13px; font-weight:600; background:transparent; }");
+
+        searchForm->addRow("CVR", kvikocCvrEdit);
+        searchForm->addRow("Mobil", kvikocPhoneEdit);
+        searchForm->addRow(kvikocLookupButton);
+        searchForm->addRow(kvikocLoadingBar);
+        searchForm->addRow("Status", kvikocStatusLabel);
+
+        searchCard.second->addLayout(searchForm);
+        layout->addWidget(searchCard.first);
+
+        auto productsCard = createCard("Produkter");
+        kvikocSummaryLabel = new QLabel("Ingen opslag endnu.");
+        kvikocSummaryLabel->setWordWrap(true);
+        kvikocSummaryLabel->setTextInteractionFlags(Qt::NoTextInteraction);
+        kvikocSummaryLabel->setStyleSheet("QLabel { color:#FFFFFF; font-size:16px; font-weight:800; background:transparent; }");
+
+        kvikocProductsTable = new QTableWidget(0, 2);
+        kvikocProductsTable->setHorizontalHeader(new CleanTableHeaderView(Qt::Horizontal, kvikocProductsTable));
+        kvikocProductsTable->setHorizontalHeaderLabels({"Produkt", "Antal"});
+        kvikocProductsTable->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Stretch);
+        kvikocProductsTable->horizontalHeader()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
+        kvikocProductsTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
+        kvikocProductsTable->setSelectionMode(QAbstractItemView::NoSelection);
+        kvikocProductsTable->verticalHeader()->setVisible(false);
+        kvikocProductsTable->setShowGrid(false);
+        kvikocProductsTable->setMinimumHeight(150);
+        styleDataTable(kvikocProductsTable, true);
+
+        productsCard.second->addWidget(kvikocSummaryLabel);
+        productsCard.second->addWidget(kvikocProductsTable);
+        layout->addWidget(productsCard.first);
+
+        auto subscriptionsCard = createCard("Abonnementer");
+        kvikocCopyButton = new QPushButton("Kopiér numre og abonnementer");
+        configureSettingsButton(kvikocCopyButton);
+        kvikocCopyButton->setEnabled(false);
+
+        kvikocSubscriptionsTable = new QTableWidget(0, 4);
+        kvikocSubscriptionsTable->setHorizontalHeader(new CleanTableHeaderView(Qt::Horizontal, kvikocSubscriptionsTable));
+        kvikocSubscriptionsTable->setHorizontalHeaderLabels({"Nummer", "Abonnement", "Status", "Oprettet"});
+        kvikocSubscriptionsTable->horizontalHeader()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
+        kvikocSubscriptionsTable->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Stretch);
+        kvikocSubscriptionsTable->horizontalHeader()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
+        kvikocSubscriptionsTable->horizontalHeader()->setSectionResizeMode(3, QHeaderView::ResizeToContents);
+        kvikocSubscriptionsTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
+        kvikocSubscriptionsTable->setSelectionBehavior(QAbstractItemView::SelectRows);
+        kvikocSubscriptionsTable->setSelectionMode(QAbstractItemView::SingleSelection);
+        kvikocSubscriptionsTable->verticalHeader()->setVisible(false);
+        kvikocSubscriptionsTable->setShowGrid(false);
+        kvikocSubscriptionsTable->setMinimumHeight(260);
+        styleDataTable(kvikocSubscriptionsTable, true);
+
+        subscriptionsCard.second->addWidget(kvikocCopyButton);
+        subscriptionsCard.second->addWidget(kvikocSubscriptionsTable);
+        layout->addWidget(subscriptionsCard.first);
+
+        auto loginCard = createCard("KvikOC-login");
+        auto* loginForm = new QFormLayout;
+        configureSettingsForm(loginForm);
+
+        kvikocUsernameEdit = new QLineEdit;
+        kvikocUsernameEdit->setPlaceholderText("KvikOC brugernavn");
+        configureSettingsField(kvikocUsernameEdit);
+
+        kvikocPasswordEdit = new QLineEdit;
+        kvikocPasswordEdit->setEchoMode(QLineEdit::Password);
+        kvikocPasswordEdit->setPlaceholderText("KvikOC adgangskode");
+        configureSettingsField(kvikocPasswordEdit);
+
+        kvikocSellerNameEdit = new QLineEdit;
+        kvikocSellerNameEdit->setPlaceholderText("Sælgernavn");
+        kvikocSellerNameEdit->setText("Victor K");
+        configureSettingsField(kvikocSellerNameEdit);
+
+        kvikocSellerCodeEdit = new QLineEdit;
+        kvikocSellerCodeEdit->setEchoMode(QLineEdit::Password);
+        kvikocSellerCodeEdit->setPlaceholderText("Sælgerkode");
+        configureSettingsField(kvikocSellerCodeEdit);
+
+        auto* saveLoginBtn = new QPushButton("Gem KvikOC-login");
+        configureSettingsButton(saveLoginBtn);
+
+        KvikocCredentials savedCredentials;
+        if (loadKvikocCredentials(&savedCredentials)) {
+            kvikocUsernameEdit->setText(savedCredentials.username);
+            kvikocSellerNameEdit->setText(savedCredentials.sellerName.trimmed().isEmpty() ? "Victor K" : savedCredentials.sellerName);
+            kvikocPasswordEdit->setPlaceholderText("Adgangskode er gemt krypteret");
+            kvikocSellerCodeEdit->setPlaceholderText("Sælgerkode er gemt krypteret");
+            kvikocStatusLabel->setText("KvikOC-login er gemt.");
+        }
+
+        loginForm->addRow("Brugernavn", kvikocUsernameEdit);
+        loginForm->addRow("Adgangskode", kvikocPasswordEdit);
+        loginForm->addRow("Sælger", kvikocSellerNameEdit);
+        loginForm->addRow("Sælgerkode", kvikocSellerCodeEdit);
+        loginForm->addRow(saveLoginBtn);
+
+        loginCard.second->addLayout(loginForm);
+        layout->addWidget(loginCard.first);
+        layout->addStretch();
+
+        connect(kvikocLookupButton, &QPushButton::clicked, this, [this]() {
+            runKvikocLookup();
+        });
+
+        connect(kvikocCopyButton, &QPushButton::clicked, this, [this]() {
+            copyKvikocSubscriptionsToClipboard();
+        });
+
+        connect(saveLoginBtn, &QPushButton::clicked, this, [this]() {
+            KvikocCredentials credentials;
+            credentials.username = kvikocUsernameEdit ? kvikocUsernameEdit->text().trimmed() : QString();
+            credentials.password = kvikocPasswordEdit ? kvikocPasswordEdit->text() : QString();
+            credentials.sellerName = kvikocSellerNameEdit ? kvikocSellerNameEdit->text().trimmed() : QString("Victor K");
+            credentials.sellerCode = kvikocSellerCodeEdit ? kvikocSellerCodeEdit->text().trimmed() : QString();
+
+            if (credentials.username.isEmpty() || credentials.password.isEmpty() || credentials.sellerCode.isEmpty()) {
+                if (kvikocStatusLabel) {
+                    kvikocStatusLabel->setText("Brugernavn, adgangskode og sælgerkode skal udfyldes.");
+                }
+                return;
+            }
+
+            if (!saveKvikocCredentials(
+                    credentials.username,
+                    credentials.password,
+                    credentials.sellerName,
+                    credentials.sellerCode
+                    )) {
+                if (kvikocStatusLabel) {
+                    kvikocStatusLabel->setText("KvikOC-login kunne ikke gemmes krypteret.");
+                }
+                return;
+            }
+
+            if (storeKvikocSecret(credentials)) {
+                scheduleCloudSave();
+            }
+
+            if (kvikocPasswordEdit) {
+                kvikocPasswordEdit->clear();
+                kvikocPasswordEdit->setPlaceholderText("Adgangskode er gemt krypteret");
+            }
+            if (kvikocSellerCodeEdit) {
+                kvikocSellerCodeEdit->clear();
+                kvikocSellerCodeEdit->setPlaceholderText("Sælgerkode er gemt krypteret");
+            }
+            if (kvikocStatusLabel) {
+                kvikocStatusLabel->setText("KvikOC-login er gemt.");
+            }
+        });
+
+        scroll->setWidget(content);
+        outerLayout->addWidget(scroll, 1);
         return w;
     }
 
