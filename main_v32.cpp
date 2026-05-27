@@ -20,8 +20,8 @@
 #include "commission.h"
 #include "report_service.h"
 
-static constexpr const char* APP_VERSION = "1.4.2";
-static constexpr int APP_BUILD_VERSION = 10402;
+static constexpr const char* APP_VERSION = "1.4.3";
+static constexpr int APP_BUILD_VERSION = 10403;
 static constexpr const char* UPDATE_APPCAST_URL = "https://raw.githubusercontent.com/ypqlmen/ProviTracker/main/appcast.xml";
 
 static QString psSingleQuoted(QString value) {
@@ -86,6 +86,10 @@ private:
                 deleteLater();
                 return;
             }
+            if (updateAttemptRecently(parsed->buildVersion)) {
+                deleteLater();
+                return;
+            }
 
             update = *parsed;
             downloadUpdateZip();
@@ -143,6 +147,26 @@ private:
         const QStringList parts = version.split('.');
         if (parts.size() < 3) return 0;
         return parts.value(0).toInt() * 10000 + parts.value(1).toInt() * 100 + parts.value(2).toInt();
+    }
+
+    QString updateAttemptMarkerPath(int buildVersion) const {
+        const QString dir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + "/updates";
+        QDir().mkpath(dir);
+        return QDir(dir).filePath(QString("attempt_%1.txt").arg(buildVersion));
+    }
+
+    bool updateAttemptRecently(int buildVersion) const {
+        const QFileInfo marker(updateAttemptMarkerPath(buildVersion));
+        if (!marker.exists()) return false;
+        return marker.lastModified().secsTo(QDateTime::currentDateTime()) < 30 * 60;
+    }
+
+    void rememberUpdateAttempt(int buildVersion) const {
+        QFile marker(updateAttemptMarkerPath(buildVersion));
+        if (marker.open(QIODevice::WriteOnly | QIODevice::Text)) {
+            QTextStream ts(&marker);
+            ts << QDateTime::currentDateTimeUtc().toString(Qt::ISODate) << "\n";
+        }
     }
 
     void downloadUpdateZip() {
@@ -281,6 +305,8 @@ private:
             return;
         }
 
+        rememberUpdateAttempt(update.buildVersion);
+
         QTextStream ts(&script);
         ts << "$ErrorActionPreference = 'SilentlyContinue'\n";
         ts << "$installer = " << psSingleQuoted(installer) << "\n";
@@ -288,6 +314,9 @@ private:
         ts << "$workDir = " << psSingleQuoted(workDir) << "\n";
         ts << "$scriptPath = $PSCommandPath\n";
         ts << "$cleanupRoot = Split-Path -Parent $workDir\n";
+        ts << "$parentPid = " << QString::number(QCoreApplication::applicationPid()) << "\n";
+        ts << "$parent = Get-Process -Id $parentPid -ErrorAction SilentlyContinue\n";
+        ts << "if ($parent) { $parent | Wait-Process -Timeout 25 }\n";
         ts << "$proc = Start-Process -FilePath $installer -ArgumentList $arguments -PassThru\n";
         ts << "if ($proc) { $proc.WaitForExit() }\n";
         ts << "Start-Sleep -Seconds 2\n";
@@ -295,7 +324,7 @@ private:
         ts << "Remove-Item -LiteralPath $workDir -Recurse -Force\n";
         ts << "if ((Test-Path $cleanupRoot) -and -not (Get-ChildItem -LiteralPath $cleanupRoot -Force | Select-Object -First 1)) { Remove-Item -LiteralPath $cleanupRoot -Force }\n";
         ts << "$app = Join-Path $env:LOCALAPPDATA 'Programs\\Provi Tracker\\ProvisionTrackerV2.exe'\n";
-        ts << "if (Test-Path $app) { Start-Process -FilePath $app }\n";
+        ts << "if (Test-Path $app) { Start-Process -FilePath $app -WorkingDirectory (Split-Path -Parent $app) }\n";
         ts << "Remove-Item -LiteralPath $scriptPath -Force\n";
         script.close();
 
@@ -1609,6 +1638,7 @@ private:
     QTimer* cloudSaveTimer = nullptr;
     bool cloudSaveInFlight = false;
     bool cloudSaveAgain = false;
+    bool cloudSaveDirty = false;
     QLabel* cloudAccountStatusLabel = nullptr;
 
     QLabel* activeSalespersonLabel = nullptr;
@@ -2798,10 +2828,12 @@ private:
         }
     }
 
-    void scheduleCloudSave() {
+    void scheduleCloudSave(int delayMs = 100) {
         if (cloudUsername.trimmed().isEmpty() || cloudToken.isEmpty()) {
             return;
         }
+
+        cloudSaveDirty = true;
 
         if (cloudSaveInFlight) {
             cloudSaveAgain = true;
@@ -2809,12 +2841,15 @@ private:
         }
 
         if (cloudSaveTimer) {
-            cloudSaveTimer->start(250);
+            cloudSaveTimer->start(qMax(0, delayMs));
         }
     }
 
     void flushCloudSave() {
         if (cloudUsername.trimmed().isEmpty() || cloudToken.isEmpty()) {
+            return;
+        }
+        if (!cloudSaveDirty && !cloudSaveAgain) {
             return;
         }
 
@@ -2825,6 +2860,7 @@ private:
 
         cloudSaveInFlight = true;
         cloudSaveAgain = false;
+        cloudSaveDirty = false;
         const QJsonObject payload = repo.cloudPayload();
 
         cloudClient.saveAsync(cloudUsername, cloudToken, payload, [this](ProviCloudClient::Result result) {
@@ -2832,14 +2868,76 @@ private:
             if (result.ok) {
                 cloudStatusText = "Cloud-data er gemt.";
             } else {
+                cloudSaveDirty = true;
                 cloudStatusText = result.error.isEmpty() ? "Cloud-gemning fejlede." : result.error;
             }
             updateCloudAccountStatus();
 
             if (cloudSaveAgain) {
                 scheduleCloudSave();
+            } else if (cloudSaveDirty) {
+                scheduleCloudSave(10000);
             }
         });
+    }
+
+    bool waitForCloudSaveInFlight(int timeoutMs = 12000) {
+        QElapsedTimer timer;
+        timer.start();
+        while (cloudSaveInFlight && timer.elapsed() < timeoutMs) {
+            qApp->processEvents(QEventLoop::AllEvents, 50);
+            QThread::msleep(25);
+        }
+        return !cloudSaveInFlight;
+    }
+
+    bool flushCloudSaveSync(const QString& warningMessage = QString()) {
+        if (cloudUsername.trimmed().isEmpty() || cloudToken.isEmpty()) {
+            return true;
+        }
+
+        if (cloudSaveTimer && cloudSaveTimer->isActive()) {
+            cloudSaveTimer->stop();
+        }
+
+        if (!waitForCloudSaveInFlight()) {
+            cloudSaveDirty = true;
+            cloudSaveAgain = true;
+            scheduleCloudSave(1000);
+            if (!warningMessage.isEmpty()) {
+                QMessageBox::warning(this, "Cloud-gemning", warningMessage);
+            }
+            return false;
+        }
+
+        cloudSaveDirty = false;
+        cloudSaveAgain = false;
+        const auto result = cloudClient.save(cloudUsername, cloudToken, repo.cloudPayload());
+        if (result.ok) {
+            cloudStatusText = "Cloud-data er gemt.";
+            updateCloudAccountStatus();
+            return true;
+        }
+
+        cloudSaveDirty = true;
+        cloudStatusText = result.error.isEmpty() ? "Cloud-gemning fejlede." : result.error;
+        updateCloudAccountStatus();
+        scheduleCloudSave(10000);
+        if (!warningMessage.isEmpty()) {
+            QMessageBox::warning(
+                this,
+                "Cloud-gemning",
+                warningMessage + "\n\n" + cloudStatusText
+                );
+        }
+        return false;
+    }
+
+    void saveOrdersAndSyncCloud() {
+        repo.saveOrders();
+        if (repo.cloudPersistenceEnabled) {
+            flushCloudSaveSync("Ordren er gemt i programmet, men kunne ikke gemmes i skyen lige nu. Programmet prøver igen automatisk.");
+        }
     }
 
     void updateCloudAccountStatus() {
@@ -3194,7 +3292,21 @@ QTableWidget::item {
 
     QWidget* buildDashboardTab() {
         auto* w = new QWidget;
-        auto* layout = new QVBoxLayout(w);
+        auto* outerLayout = new QVBoxLayout(w);
+        outerLayout->setContentsMargins(0, 0, 0, 0);
+        outerLayout->setSpacing(0);
+
+        auto* scroll = new QScrollArea;
+        scroll->setWidgetResizable(true);
+        scroll->setFrameShape(QFrame::NoFrame);
+        scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+        scroll->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+
+        auto* content = new QWidget;
+        content->setMinimumWidth(980);
+
+        auto* layout = new QVBoxLayout(content);
+        layout->setContentsMargins(10, 0, 10, 0);
         layout->setSpacing(14);
 
         auto* dashboardTop = new QHBoxLayout;
@@ -3233,6 +3345,11 @@ QTableWidget::item {
         kpiGrid->addWidget(k4.first, 1, 0);
         kpiGrid->addWidget(k5.first, 1, 1);
         kpiGrid->addWidget(k6.first, 1, 2);
+        kpiGrid->setColumnStretch(0, 1);
+        kpiGrid->setColumnStretch(1, 1);
+        kpiGrid->setColumnStretch(2, 1);
+        kpiGrid->setRowStretch(0, 0);
+        kpiGrid->setRowStretch(1, 0);
         layout->addLayout(kpiGrid);
 
         auto punchCard = createCard("Stempelur");
@@ -3281,6 +3398,8 @@ QTableWidget::item {
             toggleIntramanagerPunchAsync();
         });
 
+        scroll->setWidget(content);
+        outerLayout->addWidget(scroll, 1);
         return w;
     }
 
@@ -3427,9 +3546,9 @@ QTableWidget::item {
         scroll->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
 
         auto* content = new QWidget;
-        content->setMinimumWidth(720);
+        content->setMinimumWidth(1040);
 
-        auto* layout = new QVBoxLayout(content);
+        auto* layout = new QHBoxLayout(content);
         layout->setSpacing(18);
         layout->setContentsMargins(0, 0, 4, 0);
 
@@ -3631,8 +3750,8 @@ QTableWidget::item {
         right->addWidget(backupCard.first);
         right->addStretch();
 
-        layout->addLayout(left);
-        layout->addLayout(right);
+        layout->addLayout(left, 3);
+        layout->addLayout(right, 2);
         scroll->setWidget(content);
         outerLayout->addWidget(scroll, 1);
 
@@ -5154,7 +5273,7 @@ QTableWidget::item {
         if (dlg.exec() == QDialog::Accepted) {
             const Order order = dlg.getOrder();
             repo.orders.push_back(order);
-            repo.saveOrders();
+            saveOrdersAndSyncCloud();
             submitSalesRegistrationAsync(order);
             refreshAll();
         }
@@ -5175,7 +5294,7 @@ QTableWidget::item {
         OrderEditorDialog dlg(repo, s->id, repo.orders[repoIndex], this);
         if (dlg.exec() == QDialog::Accepted) {
             repo.orders[repoIndex] = dlg.getOrder();
-            repo.saveOrders();
+            saveOrdersAndSyncCloud();
             refreshAll();
         }
     }
@@ -5185,7 +5304,7 @@ QTableWidget::item {
         if (repoIndex < 0) return;
         if (confirmQuestion(this, "Slet ordre", "Er du sikker på, at du vil slette den valgte ordre?")) {
             repo.orders.removeAt(repoIndex);
-            repo.saveOrders();
+            saveOrdersAndSyncCloud();
             refreshAll();
         }
     }
@@ -5545,7 +5664,9 @@ QTableWidget::item {
 
 protected:
     void closeEvent(QCloseEvent* event) override {
-        // Lukning skal aldrig vente på netværk/worker; det ville fryse appen for almindelige brugere.
+        if (repo.cloudPersistenceEnabled && (cloudSaveDirty || cloudSaveInFlight || cloudSaveAgain)) {
+            flushCloudSaveSync();
+        }
         createAutoBackup();
         QMainWindow::closeEvent(event);
     }
