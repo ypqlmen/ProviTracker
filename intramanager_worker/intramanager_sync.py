@@ -594,18 +594,301 @@ def kvikoc_build_product_counts(rows):
     ]
 
 
+def kvikoc_search_result_not_found(page):
+    try:
+        return page.evaluate(
+            r"""() => {
+                const text = document.body ? document.body.innerText : '';
+                const hasNoRecordsText = /No records found|Ingen poster/i.test(text);
+                const hasSubscriptionPanel = !!document.querySelector('div[id$="hentkunde2"], div[id$="hentkunde"]');
+                const hasCustomerInfo = /Kundens oplysninger|Kundens navn:/i.test(text);
+                const accountLinks = Array.from(document.querySelectorAll('a'))
+                    .filter(a => (a.id || '').endsWith('bulkcvrcomman'))
+                    .filter(a => ((a.innerText || a.textContent || '').trim()));
+                const customerRows = Array.from(document.querySelectorAll('tbody[id$="bulkCvrTable_data"] > tr'))
+                    .filter(tr => !tr.classList.contains('ui-expanded-row-content'))
+                    .filter(tr => !/No records found|Ingen poster/i.test(tr.innerText || ''));
+                return !hasSubscriptionPanel
+                    && !hasCustomerInfo
+                    && accountLinks.length === 0
+                    && (hasNoRecordsText || customerRows.length === 0);
+            }"""
+        )
+    except Exception:
+        return False
+
+
+def kvikoc_customer_account_links(page):
+    if kvikoc_all_subscriptions_visible(page):
+        return []
+
+    row_selector = (
+        "div[id$='bulkCvrTable'] > div.ui-datatable-tablewrapper > table "
+        "> tbody[id$='bulkCvrTable_data'] > tr:not(.ui-expanded-row-content)"
+    )
+
+    def row_has_account(row_index):
+        try:
+            return page.evaluate(
+                """index => {
+                    const row = document.querySelector(`div[id$="bulkCvrTable"] > div.ui-datatable-tablewrapper > table > tbody[id$="bulkCvrTable_data"] > tr[data-ri="${index}"]`);
+                    const expanded = row && row.nextElementSibling && row.nextElementSibling.classList.contains('ui-expanded-row-content')
+                        ? row.nextElementSibling
+                        : null;
+                    if (!expanded) return false;
+                    return Array.from(expanded.querySelectorAll('a'))
+                        .some(a => (a.id || '').endsWith('bulkcvrcomman') && ((a.innerText || a.textContent || '').trim()));
+                }""",
+                row_index,
+            )
+        except Exception:
+            return False
+
+    def expand_row(row_index):
+        if row_has_account(row_index):
+            return
+        row = page.locator(f"{row_selector}[data-ri='{row_index}']").first
+        toggler = row.locator(".ui-row-toggler").first
+        try:
+            if toggler.count() <= 0:
+                return
+            current_link_count = page.locator("a[id$='bulkcvrcomman']").count()
+            row.scroll_into_view_if_needed(timeout=5000)
+            toggler.click(timeout=10000)
+            try:
+                page.wait_for_function(
+                    """data => {
+                        const row = document.querySelector(`div[id$="bulkCvrTable"] > div.ui-datatable-tablewrapper > table > tbody[id$="bulkCvrTable_data"] > tr[data-ri="${data.index}"]`);
+                        const expanded = row && row.nextElementSibling && row.nextElementSibling.classList.contains('ui-expanded-row-content')
+                            ? row.nextElementSibling
+                            : null;
+                        const rowReady = expanded && Array.from(expanded.querySelectorAll('a'))
+                            .some(a => (a.id || '').endsWith('bulkcvrcomman') && ((a.innerText || a.textContent || '').trim()));
+                        const linkCount = Array.from(document.querySelectorAll('a'))
+                            .filter(a => (a.id || '').endsWith('bulkcvrcomman')).length;
+                        return rowReady || linkCount > data.linkCount;
+                    }""",
+                    arg={"index": row_index, "linkCount": current_link_count},
+                    timeout=12000,
+                )
+            except Exception:
+                kvikoc_wait(page, 2500)
+        except Exception:
+            pass
+
+    try:
+        customer_name = kvikoc_extract_customer_name(page).lower()
+        rows = page.locator(row_selector)
+        row_count = rows.count()
+        preferred_indices = []
+        if customer_name:
+            for index in range(row_count):
+                row = rows.nth(index)
+                try:
+                    if customer_name not in row.inner_text(timeout=1000).lower():
+                        continue
+                    preferred_indices.append(index)
+                except Exception:
+                    pass
+
+        if preferred_indices:
+            for index in preferred_indices:
+                row = page.locator("tbody[id$='bulkCvrTable_data'] > tr:not(.ui-expanded-row-content)").nth(index)
+                try:
+                    toggler = row.locator(".ui-row-toggler").first
+                    if toggler.count() <= 0:
+                        continue
+                    current_link_count = page.locator("a[id$='bulkcvrcomman']").count()
+                    row.scroll_into_view_if_needed(timeout=5000)
+                    toggler.click(timeout=10000)
+                    try:
+                        page.wait_for_function(
+                            """expected => Array.from(document.querySelectorAll('a'))
+                                .filter(a => (a.id || '').endsWith('bulkcvrcomman')).length > expected""",
+                            arg=current_link_count,
+                            timeout=12000,
+                        )
+                    except Exception:
+                        kvikoc_wait(page, 3000)
+                except Exception:
+                    pass
+
+            links = page.evaluate(
+                """() => Array.from(document.querySelectorAll('a'))
+                    .filter(a => (a.id || '').endsWith('bulkcvrcomman'))
+                    .map(a => (a.innerText || a.textContent || '').trim())
+                    .filter(Boolean)"""
+            )
+            unique_links = []
+            seen = set()
+            for link in links:
+                key = clean_text(link)
+                if not key or key in seen:
+                    continue
+                seen.add(key)
+                unique_links.append(key)
+            return unique_links
+
+        target_indices = preferred_indices or list(range(row_count))
+        for index in target_indices:
+            row = rows.nth(index)
+            try:
+                row_text = row.inner_text(timeout=1000)
+                if re.search(r"No records found|Ingen poster", row_text, re.IGNORECASE):
+                    continue
+            except Exception:
+                pass
+
+            expand_row(index)
+
+        for index in target_indices:
+            if not row_has_account(index):
+                expand_row(index)
+
+        links = page.evaluate(
+            """() => Array.from(document.querySelectorAll('a'))
+                .filter(a => (a.id || '').endsWith('bulkcvrcomman'))
+                .map(a => (a.innerText || a.textContent || '').trim())
+                .filter(Boolean)"""
+        )
+    except Exception:
+        links = []
+
+    unique_links = []
+    seen = set()
+    for link in links:
+        key = clean_text(link)
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        unique_links.append(key)
+    return unique_links
+
+
+def kvikoc_click_customer_account(page, account_number, debug_dir):
+    try:
+        link = page.locator("a[id$='bulkcvrcomman']").filter(has_text=account_number).first
+        if link.count() <= 0:
+            return {
+                "success": False,
+                "stage": "kvikoc_customer_open",
+                "error": f"Kunne ikke åbne kundenummer {account_number} i KvikOC.",
+                "debugDir": str(debug_dir),
+            }
+
+        link.scroll_into_view_if_needed(timeout=5000)
+        link.click(timeout=10000)
+        try:
+            page.wait_for_function(
+                """() => {
+                    const text = document.body ? document.body.innerText : '';
+                    return text.includes('Vis Alle Abonnementer')
+                        || !!document.querySelector('div[id$="hentkunde2"], div[id$="hentkunde"]');
+                }""",
+                timeout=45000,
+            )
+        except Exception:
+            pass
+        kvikoc_wait(page, 3000)
+        return {"success": True, "stage": "kvikoc_customer_open", "customerNumber": account_number}
+    except Exception as exc:
+        save_debug_screenshot(page, debug_dir, "kvikoc_customer_open_failed.png", force=True)
+        write_debug_text(debug_dir / "kvikoc_customer_open_failed.html", page.content(), force=True)
+        return {
+            "success": False,
+            "stage": "kvikoc_customer_open",
+            "error": f"Kunne ikke åbne kundens abonnementer i KvikOC: {exc}",
+            "debugDir": str(debug_dir),
+        }
+
+
+def kvikoc_open_customer_account(page, debug_dir, account_number=""):
+    if account_number:
+        return kvikoc_click_customer_account(page, account_number, debug_dir)
+
+    if kvikoc_all_subscriptions_visible(page):
+        return {"success": True, "stage": "kvikoc_customer_open"}
+
+    links = kvikoc_customer_account_links(page)
+    if links:
+        return kvikoc_click_customer_account(page, links[0], debug_dir)
+
+    return {"success": True, "stage": "kvikoc_customer_open"}
+
+
+def kvikoc_dedupe_subscription_rows(rows):
+    unique = []
+    seen = set()
+    for row in rows:
+        key = (
+            row.get("customerNumber", ""),
+            row.get("phone", ""),
+            row.get("subscription", ""),
+            row.get("category", ""),
+            row.get("system", ""),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(row)
+    return unique
+
+
 def kvikoc_lookup(page, args, debug_dir):
     search_result = kvikoc_search(page, args, debug_dir)
     if not search_result.get("success"):
         return search_result
 
-    open_result = kvikoc_open_customer_account(page, debug_dir)
-    if not open_result.get("success"):
-        return open_result
+    if kvikoc_search_result_not_found(page):
+        return {
+            "success": True,
+            "stage": "kvikoc_done",
+            "notFound": True,
+            "customerName": "",
+            "products": [],
+            "subscriptions": [],
+            "totalSubscriptions": 0,
+            "debugDir": str(debug_dir),
+        }
 
-    rows = kvikoc_collect_subscriptions(page)
-    products = kvikoc_build_product_counts(rows)
+    customer_accounts = kvikoc_customer_account_links(page)
+    rows = []
     customer_name = kvikoc_extract_customer_name(page)
+
+    if customer_accounts:
+        for index, account_number in enumerate(customer_accounts):
+            open_result = kvikoc_open_customer_account(page, debug_dir, account_number)
+            if not open_result.get("success"):
+                return open_result
+
+            for row in kvikoc_collect_subscriptions(page):
+                row["customerNumber"] = account_number
+                rows.append(row)
+
+            if not customer_name:
+                customer_name = kvikoc_extract_customer_name(page)
+    else:
+        open_result = kvikoc_open_customer_account(page, debug_dir)
+        if not open_result.get("success"):
+            return open_result
+
+        rows = kvikoc_collect_subscriptions(page)
+        customer_name = kvikoc_extract_customer_name(page)
+
+    rows = kvikoc_dedupe_subscription_rows(rows)
+    products = kvikoc_build_product_counts(rows)
+
+    if not rows and not customer_accounts and not clean_text(customer_name):
+        return {
+            "success": True,
+            "stage": "kvikoc_done",
+            "notFound": True,
+            "customerName": "",
+            "products": [],
+            "subscriptions": [],
+            "totalSubscriptions": 0,
+            "debugDir": str(debug_dir),
+        }
 
     if not rows:
         save_debug_screenshot(page, debug_dir, "kvikoc_no_subscriptions.png", force=DEBUG_ENABLED)
@@ -614,7 +897,9 @@ def kvikoc_lookup(page, args, debug_dir):
     return {
         "success": True,
         "stage": "kvikoc_done",
+        "notFound": False,
         "customerName": customer_name,
+        "customerAccounts": customer_accounts,
         "products": products,
         "subscriptions": rows,
         "totalSubscriptions": len(rows),

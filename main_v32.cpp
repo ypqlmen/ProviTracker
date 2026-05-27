@@ -21,7 +21,7 @@
 #include "report_service.h"
 
 static constexpr const char* APP_VERSION = "1.5.0";
-static constexpr int APP_BUILD_VERSION = 10500;
+static constexpr int APP_BUILD_VERSION = 10501;
 static constexpr const char* UPDATE_APPCAST_URL = "https://raw.githubusercontent.com/ypqlmen/ProviTracker/main/appcast.xml";
 
 static QString psSingleQuoted(QString value) {
@@ -1742,6 +1742,7 @@ private:
 
     struct KvikocLookupResult {
         bool success = false;
+        bool notFound = false;
         QString customerName;
         QString error;
         QVector<KvikocProductResult> products;
@@ -1897,6 +1898,7 @@ private:
         }
 
         result.success = true;
+        result.notFound = obj.value("notFound").toBool(false);
         result.customerName = obj.value("customerName").toString();
 
         const QJsonArray products = obj.value("products").toArray();
@@ -1941,7 +1943,9 @@ private:
         kvikocCachedSubscriptions = result.subscriptions;
 
         if (kvikocSummaryLabel) {
-            const QString customer = result.customerName.trimmed().isEmpty() ? "Kunde fundet" : result.customerName.trimmed();
+            const QString customer = result.notFound
+                ? "Ingen kunde fundet"
+                : (result.customerName.trimmed().isEmpty() ? "Kunde fundet" : result.customerName.trimmed());
             kvikocSummaryLabel->setText(
                 QString("%1 · %2 abonnementer")
                     .arg(customer)
@@ -1979,9 +1983,11 @@ private:
         }
 
         if (kvikocStatusLabel) {
-            kvikocStatusLabel->setText(result.subscriptions.isEmpty()
-                ? "Opslaget blev gennemført, men der blev ikke fundet abonnementer."
-                : "Informationen er hentet og klar.");
+            kvikocStatusLabel->setText(result.notFound
+                ? "CVR- eller mobilnummeret blev ikke fundet i KvikOC."
+                : (result.subscriptions.isEmpty()
+                    ? "Opslaget blev gennemført, men der blev ikke fundet abonnementer."
+                    : "Informationen er hentet og klar."));
         }
     }
 
