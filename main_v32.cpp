@@ -21,8 +21,8 @@
 #include "commission.h"
 #include "report_service.h"
 
-static constexpr const char* APP_VERSION = "1.5.0";
-static constexpr int APP_BUILD_VERSION = 10503;
+static constexpr const char* APP_VERSION = "1.5.1";
+static constexpr int APP_BUILD_VERSION = 10504;
 static constexpr const char* UPDATE_APPCAST_URL = "https://raw.githubusercontent.com/ypqlmen/ProviTracker/main/appcast.xml";
 
 static QString psSingleQuoted(QString value) {

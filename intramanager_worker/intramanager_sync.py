@@ -611,16 +611,19 @@ def kvikoc_open_customer_account(page, debug_dir):
         }
 
 
-def kvikoc_extract_subscription_rows(page):
-    return page.evaluate(
+def kvikoc_extract_subscription_rows(page, source_page=""):
+    rows = page.evaluate(
         r"""() => {
             const rows = [];
             const roots = Array.from(document.querySelectorAll('div[id$="hentkunde2"], div[id$="hentkunde"]'));
             for (const root of roots) {
+              let visibleRowIndex = 0;
               for (const tr of Array.from(root.querySelectorAll('table tbody tr'))) {
                 if (tr.classList.contains('ui-expanded-row-content')) continue;
                 const cells = Array.from(tr.querySelectorAll(':scope > td'))
                     .map(td => (td.innerText || td.textContent || '').trim().replace(/\s+/g, ' '));
+                const sourceRow = tr.getAttribute('data-ri') || tr.getAttribute('data-rk') || String(visibleRowIndex);
+                visibleRowIndex += 1;
                 if (cells.length >= 9 && (cells[1] || cells[3] || cells[4])) {
                     rows.push({
                         phone: cells[1],
@@ -631,6 +634,8 @@ def kvikoc_extract_subscription_rows(page):
                         dealer: cells[6],
                         created: cells[7],
                         binding: cells[8],
+                        _sourceRoot: root.id || '',
+                        _sourceRow: sourceRow,
                     });
                 }
               }
@@ -638,6 +643,54 @@ def kvikoc_extract_subscription_rows(page):
             return rows;
         }"""
     )
+    page_label = clean_text(source_page)
+    for row in rows:
+        row["_sourcePage"] = page_label
+    return rows
+
+
+def kvikoc_dedupe_value(value):
+    return clean_text(value).lower()
+
+
+def kvikoc_local_subscription_key(row):
+    phone = clean_text(row.get("phone")).upper()
+    product_bits = (
+        kvikoc_dedupe_value(row.get("subscription")),
+        kvikoc_dedupe_value(row.get("category")),
+        kvikoc_dedupe_value(row.get("system")),
+    )
+    if phone:
+        return ("phone", phone, *product_bits)
+
+    source_bits = (
+        kvikoc_dedupe_value(row.get("_sourceRoot")),
+        kvikoc_dedupe_value(row.get("_sourcePage")),
+        kvikoc_dedupe_value(row.get("_sourceRow")),
+    )
+    detail_bits = (
+        kvikoc_dedupe_value(row.get("status")),
+        kvikoc_dedupe_value(row.get("created")),
+        kvikoc_dedupe_value(row.get("binding")),
+        kvikoc_dedupe_value(row.get("dealer")),
+    )
+    if any(source_bits):
+        return ("row", *source_bits, *product_bits, *detail_bits)
+
+    return ("exact", *product_bits, *detail_bits)
+
+
+def kvikoc_global_subscription_key(row):
+    customer_number = clean_text(row.get("customerNumber"))
+    return (customer_number, *kvikoc_local_subscription_key(row))
+
+
+def kvikoc_public_subscription_row(row):
+    return {
+        key: value
+        for key, value in row.items()
+        if not str(key).startswith("_")
+    }
 
 
 def kvikoc_expand_subscription_rows(page):
@@ -682,9 +735,11 @@ def kvikoc_collect_subscriptions(page):
 
     def append_current_page():
         kvikoc_expand_subscription_rows(page)
-        page_rows = kvikoc_extract_subscription_rows(page)
-        signature = kvikoc_active_subscription_page(page) + "|" + "|".join(
-            row.get("phone", "") for row in page_rows[:4]
+        active_page = kvikoc_active_subscription_page(page)
+        page_rows = kvikoc_extract_subscription_rows(page, active_page)
+        signature = active_page + "|" + "|".join(
+            "?".join(map(str, kvikoc_local_subscription_key(row)))
+            for row in page_rows[:20]
         )
         if signature in seen_signatures:
             return False
@@ -716,7 +771,7 @@ def kvikoc_collect_subscriptions(page):
 
     if not page_labels:
         kvikoc_expand_subscription_rows(page)
-        return kvikoc_extract_subscription_rows(page)
+        return kvikoc_extract_subscription_rows(page, kvikoc_active_subscription_page(page))
 
     for page_label in page_labels:
         active_page = kvikoc_active_subscription_page(page)
@@ -734,7 +789,7 @@ def kvikoc_collect_subscriptions(page):
 
     for _ in range(50):
         unique_so_far = {
-            (row.get("phone", ""), row.get("subscription", ""), row.get("category", ""))
+            kvikoc_local_subscription_key(row)
             for row in rows
         }
         if expected_total and len(unique_so_far) >= expected_total:
@@ -754,7 +809,7 @@ def kvikoc_collect_subscriptions(page):
             break
 
     unique_so_far = {
-        (row.get("phone", ""), row.get("subscription", ""), row.get("category", ""))
+        kvikoc_local_subscription_key(row)
         for row in rows
     }
     if expected_total and len(unique_so_far) < expected_total:
@@ -770,7 +825,7 @@ def kvikoc_collect_subscriptions(page):
     unique = []
     seen = set()
     for row in rows:
-        key = (row.get("phone", ""), row.get("subscription", ""), row.get("category", ""))
+        key = kvikoc_local_subscription_key(row)
         if key in seen:
             continue
         seen.add(key)
@@ -1189,7 +1244,7 @@ def kvikoc_click_customer_account_resilient(page, account_number, debug_dir):
                 return {
                     "success": False,
                     "stage": "kvikoc_customer_open",
-                    "error": f"Kunne ikke ??bne kundenummer {account_number} i KvikOC.",
+                    "error": f"Kunne ikke ?bne kundenummer {account_number} i KvikOC.",
                     "debugDir": str(debug_dir),
                 }
 
@@ -1239,7 +1294,7 @@ def kvikoc_click_customer_account_resilient(page, account_number, debug_dir):
             return {
                 "success": False,
                 "stage": "kvikoc_customer_open",
-                "error": f"Kunne ikke ??bne kundens abonnementer i KvikOC: {exc}",
+            "error": f"Kunne ikke ?bne kundens abonnementer i KvikOC: {exc}",
                 "debugDir": str(debug_dir),
             }
 
@@ -1269,17 +1324,11 @@ def kvikoc_dedupe_subscription_rows(rows):
     unique = []
     seen = set()
     for row in rows:
-        key = (
-            row.get("customerNumber", ""),
-            row.get("phone", ""),
-            row.get("subscription", ""),
-            row.get("category", ""),
-            row.get("system", ""),
-        )
+        key = kvikoc_global_subscription_key(row)
         if key in seen:
             continue
         seen.add(key)
-        unique.append(row)
+        unique.append(kvikoc_public_subscription_row(row))
     return unique
 
 
