@@ -311,22 +311,109 @@ def kvikoc_extract_customer_name(page):
         return ""
 
 
+def kvikoc_loading_active(page):
+    try:
+        return page.evaluate(
+            r"""() => Array.from(document.querySelectorAll('.ui-blockui-content'))
+                .some(el => {
+                    const style = window.getComputedStyle(el);
+                    const opacity = Number(style.opacity || '1');
+                    return style.display !== 'none'
+                        && style.visibility !== 'hidden'
+                        && opacity > 0.05
+                        && /loading/i.test(el.innerText || el.textContent || '');
+                })"""
+        )
+    except Exception:
+        return False
+
+
+def kvikoc_wait_until_idle(page, timeout=240000):
+    try:
+        page.wait_for_function(
+            r"""() => !Array.from(document.querySelectorAll('.ui-blockui-content'))
+                .some(el => {
+                    const style = window.getComputedStyle(el);
+                    const opacity = Number(style.opacity || '1');
+                    return style.display !== 'none'
+                        && style.visibility !== 'hidden'
+                        && opacity > 0.05
+                        && /loading/i.test(el.innerText || el.textContent || '');
+                })""",
+            timeout=timeout,
+        )
+        return True
+    except Exception:
+        return False
+
+
 def kvikoc_wait_for_search_result(page):
     try:
         page.wait_for_function(
             """() => {
                 const body = document.body ? document.body.innerText : '';
+                const loading = Array.from(document.querySelectorAll('.ui-blockui-content'))
+                    .some(el => {
+                        const style = window.getComputedStyle(el);
+                        const opacity = Number(style.opacity || '1');
+                        return style.display !== 'none'
+                            && style.visibility !== 'hidden'
+                            && opacity > 0.05
+                            && /loading/i.test(el.innerText || el.textContent || '');
+                    });
+                if (loading) return false;
                 return body.includes('Kundens oplysninger')
                     || body.includes('Vis Alle Abonnementer')
                     || body.includes('Hent Kunde')
                     || body.includes('No records found')
                     || body.includes('Ingen poster');
             }""",
-            timeout=45000,
+            timeout=240000,
         )
     except Exception:
         pass
-    kvikoc_wait(page, 2000)
+    kvikoc_wait_until_idle(page, timeout=30000)
+    kvikoc_wait(page, 1000)
+
+
+def kvikoc_search_has_result(page):
+    try:
+        return bool(
+            page.evaluate(
+                r"""() => {
+                    const text = document.body ? document.body.innerText : '';
+                    return /Kundens oplysninger|Kundens navn:|Hent Kunde|Vis Alle Abonnementer/i.test(text)
+                        || !!document.querySelector('div[id$="hentkunde2"], div[id$="hentkunde"]')
+                        || Array.from(document.querySelectorAll('a'))
+                            .some(a => (a.id || '').endsWith('bulkcvrcomman'));
+                }"""
+            )
+        )
+    except Exception:
+        return False
+
+
+def kvikoc_reload_if_search_stalled(page):
+    if kvikoc_search_has_result(page):
+        return
+    try:
+        page.reload(wait_until="domcontentloaded", timeout=60000)
+        kvikoc_wait_until_idle(page, timeout=180000)
+        kvikoc_wait(page, 2500)
+    except Exception:
+        pass
+
+
+def kvikoc_submit_search(page):
+    search_button = page.locator("#accordPanel\\:0\\:searchCardForm\\:searchId")
+    try:
+        search_button.click(timeout=10000, force=True)
+    except Exception:
+        pass
+    try:
+        search_button.evaluate("(button) => button.click()", timeout=10000)
+    except Exception:
+        pass
 
 
 def kvikoc_search(page, args, debug_dir):
@@ -353,7 +440,7 @@ def kvikoc_search(page, args, debug_dir):
             if cvr_field.count() > 0:
                 cvr_field.fill("", timeout=5000)
 
-        page.locator("#accordPanel\\:0\\:searchCardForm\\:searchId").click(timeout=10000)
+        kvikoc_submit_search(page)
         kvikoc_wait_for_search_result(page)
     except Exception as exc:
         save_debug_screenshot(page, debug_dir, "kvikoc_search_failed.png", force=True)
@@ -366,6 +453,93 @@ def kvikoc_search(page, args, debug_dir):
         }
 
     return {"success": True, "stage": "kvikoc_search", "queryType": "cvr" if cvr else "phone"}
+
+
+def kvikoc_search_account_number(page, args, debug_dir, account_number):
+    account_number = re.sub(r"\D+", "", clean_text(account_number))
+    if not account_number:
+        return {
+            "success": False,
+            "stage": "kvikoc_account_search",
+            "error": "Kundenummer mangler.",
+        }
+
+    try:
+        page.goto(KVIKOC_URL, wait_until="domcontentloaded", timeout=60000)
+        login_result = kvikoc_login(page, args, debug_dir)
+        if not login_result.get("success"):
+            return login_result
+
+        seller_result = kvikoc_select_seller(page, args, debug_dir)
+        if not seller_result.get("success"):
+            return seller_result
+
+        account_field = page.locator("#accordPanel\\:0\\:searchCardForm\\:accNr")
+        account_field.fill(account_number, timeout=10000)
+        kvikoc_submit_search(page)
+        kvikoc_wait_for_search_result(page)
+        kvikoc_reload_if_search_stalled(page)
+        return {"success": True, "stage": "kvikoc_account_search", "accountNumber": account_number}
+    except Exception as exc:
+        save_debug_screenshot(page, debug_dir, "kvikoc_account_search_failed.png", force=True)
+        write_debug_text(debug_dir / "kvikoc_account_search_failed.html", page.content(), force=True)
+        return {
+            "success": False,
+            "stage": "kvikoc_account_search",
+            "error": f"KvikOC-kundenummeropslag fejlede: {exc}",
+            "debugDir": str(debug_dir),
+        }
+
+
+def kvikoc_search_subscriber_ref(page, args, debug_dir, subscriber_ref):
+    subscriber_ref = clean_text(subscriber_ref).upper()
+    if not subscriber_ref:
+        return {
+            "success": False,
+            "stage": "kvikoc_subscriber_search",
+            "error": "VK-/telefonnummer mangler.",
+        }
+
+    try:
+        candidates = [subscriber_ref]
+        numeric_ref = re.sub(r"^(VK|EM|EF)", "", subscriber_ref, flags=re.IGNORECASE)
+        if numeric_ref and numeric_ref != subscriber_ref:
+            candidates.append(numeric_ref)
+
+        for candidate in candidates:
+            page.goto(KVIKOC_URL, wait_until="domcontentloaded", timeout=60000)
+            login_result = kvikoc_login(page, args, debug_dir)
+            if not login_result.get("success"):
+                return login_result
+
+            seller_result = kvikoc_select_seller(page, args, debug_dir)
+            if not seller_result.get("success"):
+                return seller_result
+
+            phone_field = page.locator("#accordPanel\\:0\\:searchCardForm\\:telNr")
+            phone_field.fill(candidate, timeout=10000)
+            kvikoc_submit_search(page)
+            kvikoc_wait_for_search_result(page)
+            kvikoc_reload_if_search_stalled(page)
+            kvikoc_wait_until_idle(page, timeout=240000)
+            if kvikoc_all_subscriptions_visible(page) or kvikoc_customer_account_links(page):
+                return {"success": True, "stage": "kvikoc_subscriber_search", "subscriberRef": candidate}
+
+        return {
+            "success": False,
+            "stage": "kvikoc_subscriber_search",
+            "error": f"KvikOC fandt ingen resultater for {subscriber_ref}.",
+            "debugDir": str(debug_dir),
+        }
+    except Exception as exc:
+        save_debug_screenshot(page, debug_dir, "kvikoc_subscriber_search_failed.png", force=True)
+        write_debug_text(debug_dir / "kvikoc_subscriber_search_failed.html", page.content(), force=True)
+        return {
+            "success": False,
+            "stage": "kvikoc_subscriber_search",
+            "error": f"KvikOC-VK-opslag fejlede: {exc}",
+            "debugDir": str(debug_dir),
+        }
 
 
 def kvikoc_all_subscriptions_visible(page):
@@ -440,16 +614,10 @@ def kvikoc_open_customer_account(page, debug_dir):
 def kvikoc_extract_subscription_rows(page):
     return page.evaluate(
         r"""() => {
-            const table = document.querySelector('div[id$="hentkunde2"] table')
-                || document.querySelector('div[id$="hentkunde"] table');
-            if (!table) return [];
-            const body = table.querySelector('tbody[id$="hentkunde2_data"]')
-                || table.querySelector('tbody[id$="hentkunde_data"]')
-                || table.querySelector('tbody');
-            if (!body) return [];
-
             const rows = [];
-            for (const tr of Array.from(body.querySelectorAll(':scope > tr'))) {
+            const roots = Array.from(document.querySelectorAll('div[id$="hentkunde2"], div[id$="hentkunde"]'));
+            for (const root of roots) {
+              for (const tr of Array.from(root.querySelectorAll('table tbody tr'))) {
                 if (tr.classList.contains('ui-expanded-row-content')) continue;
                 const cells = Array.from(tr.querySelectorAll(':scope > td'))
                     .map(td => (td.innerText || td.textContent || '').trim().replace(/\s+/g, ' '));
@@ -465,10 +633,37 @@ def kvikoc_extract_subscription_rows(page):
                         binding: cells[8],
                     });
                 }
+              }
             }
             return rows;
         }"""
     )
+
+
+def kvikoc_expand_subscription_rows(page):
+    for _ in range(3):
+        try:
+            clicked = page.evaluate(
+                r"""() => {
+                    const selectors = [
+                        'div[id$="hentkunde2"] tbody[id$="hentkunde2_data"] > tr:not(.ui-expanded-row-content) .ui-row-toggler.ui-icon-circle-triangle-e',
+                        'div[id$="hentkunde"] tbody[id$="hentkunde_data"] > tr:not(.ui-expanded-row-content) .ui-row-toggler.ui-icon-circle-triangle-e'
+                    ];
+                    const togglers = selectors.flatMap(selector => Array.from(document.querySelectorAll(selector)));
+                    for (const toggler of togglers) {
+                        toggler.scrollIntoView({block: 'center', inline: 'nearest'});
+                        toggler.click();
+                    }
+                    return togglers.length;
+                }"""
+            )
+        except Exception:
+            clicked = 0
+
+        if not clicked:
+            break
+        kvikoc_wait_until_idle(page, timeout=60000)
+        kvikoc_wait(page, 1500)
 
 
 def kvikoc_active_subscription_page(page):
@@ -486,6 +681,7 @@ def kvikoc_collect_subscriptions(page):
     seen_signatures = set()
 
     def append_current_page():
+        kvikoc_expand_subscription_rows(page)
         page_rows = kvikoc_extract_subscription_rows(page)
         signature = kvikoc_active_subscription_page(page) + "|" + "|".join(
             row.get("phone", "") for row in page_rows[:4]
@@ -585,7 +781,7 @@ def kvikoc_collect_subscriptions(page):
 def kvikoc_build_product_counts(rows):
     counts = {}
     for row in rows:
-        name = clean_text(row.get("subscription")) or clean_text(row.get("category")) or "Ukendt"
+        name = kvikoc_product_name(row)
         counts[name] = counts.get(name, 0) + 1
 
     return [
@@ -595,6 +791,9 @@ def kvikoc_build_product_counts(rows):
 
 
 def kvikoc_search_result_not_found(page):
+    if kvikoc_loading_active(page):
+        return False
+
     try:
         return page.evaluate(
             r"""() => {
@@ -618,9 +817,79 @@ def kvikoc_search_result_not_found(page):
         return False
 
 
+def kvikoc_bulk_cvr_row_count(page):
+    try:
+        return int(
+            page.evaluate(
+                r"""() => Array.from(
+                    document.querySelectorAll('tbody[id$="bulkCvrTable_data"] > tr:not(.ui-expanded-row-content)')
+                ).filter(row => !/No records found|Ingen poster/i.test(row.innerText || row.textContent || '')).length"""
+            )
+        )
+    except Exception:
+        return 0
+
+
+def kvikoc_activate_customer_account_table(page):
+    if kvikoc_bulk_cvr_row_count(page) > 0:
+        return True
+
+    for label in ("CU konto", "NABS konto"):
+        try:
+            clicked = page.evaluate(
+                r"""label => {
+                    const button = Array.from(document.querySelectorAll('button'))
+                        .find(btn => (btn.innerText || btn.textContent || '').trim().toLowerCase() === label.toLowerCase());
+                    if (!button) return false;
+                    button.scrollIntoView({block: 'center', inline: 'nearest'});
+                    button.click();
+                    return true;
+                }""",
+                label,
+            )
+        except Exception:
+            clicked = False
+
+        if not clicked:
+            continue
+
+        try:
+            page.wait_for_function(
+                r"""() => {
+                    const loading = Array.from(document.querySelectorAll('.ui-blockui-content'))
+                        .some(el => {
+                            const style = window.getComputedStyle(el);
+                            const opacity = Number(style.opacity || '1');
+                            return style.display !== 'none'
+                                && style.visibility !== 'hidden'
+                                && opacity > 0.05
+                                && /loading/i.test(el.innerText || el.textContent || '');
+                        });
+                    if (loading) return false;
+                    return Array.from(
+                        document.querySelectorAll('tbody[id$="bulkCvrTable_data"] > tr:not(.ui-expanded-row-content)')
+                    ).some(row => !/No records found|Ingen poster/i.test(row.innerText || row.textContent || ''))
+                        || Array.from(document.querySelectorAll('a'))
+                            .some(a => (a.id || '').endsWith('bulkcvrcomman'));
+                }""",
+                timeout=60000,
+            )
+        except Exception:
+            pass
+
+        kvikoc_wait_until_idle(page, timeout=60000)
+        kvikoc_wait(page, 1500)
+        if kvikoc_bulk_cvr_row_count(page) > 0:
+            return True
+
+    return kvikoc_bulk_cvr_row_count(page) > 0
+
+
 def kvikoc_customer_account_links(page):
     if kvikoc_all_subscriptions_visible(page):
         return []
+
+    kvikoc_activate_customer_account_table(page)
 
     row_selector = (
         "div[id$='bulkCvrTable'] > div.ui-datatable-tablewrapper > table "
@@ -647,14 +916,21 @@ def kvikoc_customer_account_links(page):
     def expand_row(row_index):
         if row_has_account(row_index):
             return
-        row = page.locator(f"{row_selector}[data-ri='{row_index}']").first
-        toggler = row.locator(".ui-row-toggler").first
         try:
-            if toggler.count() <= 0:
-                return
             current_link_count = page.locator("a[id$='bulkcvrcomman']").count()
-            row.scroll_into_view_if_needed(timeout=5000)
-            toggler.click(timeout=10000)
+            clicked = page.evaluate(
+                """index => {
+                    const row = document.querySelector(`div[id$="bulkCvrTable"] > div.ui-datatable-tablewrapper > table > tbody[id$="bulkCvrTable_data"] > tr[data-ri="${index}"]`);
+                    const toggler = row ? row.querySelector('.ui-row-toggler') : null;
+                    if (!toggler) return false;
+                    row.scrollIntoView({block: 'center', inline: 'nearest'});
+                    toggler.click();
+                    return true;
+                }""",
+                row_index,
+            )
+            if not clicked:
+                return
             try:
                 page.wait_for_function(
                     """data => {
@@ -672,7 +948,10 @@ def kvikoc_customer_account_links(page):
                     timeout=12000,
                 )
             except Exception:
-                kvikoc_wait(page, 2500)
+                pass
+            kvikoc_wait_until_idle(page, timeout=60000)
+            if not row_has_account(row_index):
+                kvikoc_wait(page, 1500)
         except Exception:
             pass
 
@@ -693,25 +972,7 @@ def kvikoc_customer_account_links(page):
 
         if preferred_indices:
             for index in preferred_indices:
-                row = page.locator("tbody[id$='bulkCvrTable_data'] > tr:not(.ui-expanded-row-content)").nth(index)
-                try:
-                    toggler = row.locator(".ui-row-toggler").first
-                    if toggler.count() <= 0:
-                        continue
-                    current_link_count = page.locator("a[id$='bulkcvrcomman']").count()
-                    row.scroll_into_view_if_needed(timeout=5000)
-                    toggler.click(timeout=10000)
-                    try:
-                        page.wait_for_function(
-                            """expected => Array.from(document.querySelectorAll('a'))
-                                .filter(a => (a.id || '').endsWith('bulkcvrcomman')).length > expected""",
-                            arg=current_link_count,
-                            timeout=12000,
-                        )
-                    except Exception:
-                        kvikoc_wait(page, 3000)
-                except Exception:
-                    pass
+                expand_row(index)
 
             links = page.evaluate(
                 """() => Array.from(document.querySelectorAll('a'))
@@ -727,7 +988,8 @@ def kvikoc_customer_account_links(page):
                     continue
                 seen.add(key)
                 unique_links.append(key)
-            return unique_links
+            if unique_links:
+                return unique_links
 
         target_indices = preferred_indices or list(range(row_count))
         for index in target_indices:
@@ -765,10 +1027,84 @@ def kvikoc_customer_account_links(page):
     return unique_links
 
 
-def kvikoc_click_customer_account(page, account_number, debug_dir):
+def kvikoc_customer_account_summaries(page):
+    summaries = []
     try:
-        link = page.locator("a[id$='bulkcvrcomman']").filter(has_text=account_number).first
-        if link.count() <= 0:
+        raw = page.evaluate(
+            r"""() => Array.from(document.querySelectorAll('a'))
+                .filter(a => (a.id || '').endsWith('bulkcvrcomman'))
+                .map(a => {
+                    const row = a.closest('tr');
+                    const cells = row
+                        ? Array.from(row.querySelectorAll(':scope > td'))
+                            .map(td => (td.innerText || td.textContent || '').trim().replace(/\s+/g, ' '))
+                        : [];
+                    const refs = row
+                        ? Array.from(row.querySelectorAll('a[id$="bulkcvrcomman2"]'))
+                            .map(link => (link.innerText || link.textContent || '').trim())
+                            .filter(Boolean)
+                        : [];
+                    const cellRefs = (cells[2] || '')
+                        .split(/\s+/)
+                        .map(text => text.trim())
+                        .filter(text => /^(VK|EM|EF)?\d+$/i.test(text));
+                    return {
+                        accountNumber: (a.innerText || a.textContent || '').trim(),
+                        subscriberRefs: refs.length ? refs : cellRefs,
+                        status: cells[3] || '',
+                        system: cells[4] || '',
+                    };
+                })
+                .filter(item => item.accountNumber)"""
+        )
+    except Exception:
+        raw = []
+
+    seen = set()
+    for item in raw:
+        account_number = clean_text(item.get("accountNumber"))
+        if not account_number or account_number in seen:
+            continue
+        seen.add(account_number)
+        summaries.append(
+            {
+                "accountNumber": account_number,
+                "subscriberRefs": [clean_text(ref) for ref in item.get("subscriberRefs", []) if clean_text(ref)],
+                "status": clean_text(item.get("status")),
+                "system": clean_text(item.get("system")),
+            }
+        )
+    return summaries
+
+
+def kvikoc_click_customer_account(page, account_number, debug_dir):
+    if kvikoc_all_subscriptions_visible(page):
+        return {"success": True, "stage": "kvikoc_customer_open", "customerNumber": account_number}
+
+    try:
+        clicked = page.evaluate(
+            """accountNumber => {
+                const wanted = String(accountNumber || '').trim();
+                const accountLink = Array.from(document.querySelectorAll('a'))
+                    .find(a => (a.id || '').endsWith('bulkcvrcomman')
+                        && ((a.innerText || a.textContent || '').trim() === wanted));
+                if (!accountLink) return false;
+                const row = accountLink.closest('tr');
+                const subscriberLink = row
+                    ? Array.from(row.querySelectorAll('a'))
+                        .find(a => (a.id || '').endsWith('bulkcvrcomman2')
+                            && ((a.innerText || a.textContent || '').trim()))
+                    : null;
+                const link = subscriberLink || accountLink;
+                link.scrollIntoView({block: 'center', inline: 'nearest'});
+                link.click();
+                return true;
+            }""",
+            account_number,
+        )
+        if not clicked:
+            save_debug_screenshot(page, debug_dir, "kvikoc_customer_link_missing.png", force=DEBUG_ENABLED)
+            write_debug_text(debug_dir / "kvikoc_customer_link_missing.html", page.content(), force=DEBUG_ENABLED)
             return {
                 "success": False,
                 "stage": "kvikoc_customer_open",
@@ -776,20 +1112,38 @@ def kvikoc_click_customer_account(page, account_number, debug_dir):
                 "debugDir": str(debug_dir),
             }
 
-        link.scroll_into_view_if_needed(timeout=5000)
-        link.click(timeout=10000)
+        ready = False
         try:
             page.wait_for_function(
                 """() => {
                     const text = document.body ? document.body.innerText : '';
+                    const loading = Array.from(document.querySelectorAll('.ui-blockui-content'))
+                        .some(el => {
+                            const style = window.getComputedStyle(el);
+                            const opacity = Number(style.opacity || '1');
+                            return style.display !== 'none'
+                                && style.visibility !== 'hidden'
+                                && opacity > 0.05
+                                && /loading/i.test(el.innerText || el.textContent || '');
+                        });
+                    if (loading) return false;
                     return text.includes('Vis Alle Abonnementer')
                         || !!document.querySelector('div[id$="hentkunde2"], div[id$="hentkunde"]');
                 }""",
-                timeout=45000,
+                timeout=240000,
             )
+            ready = True
         except Exception:
             pass
-        kvikoc_wait(page, 3000)
+        kvikoc_wait_until_idle(page, timeout=60000)
+        kvikoc_wait(page, 1500)
+        if not ready and kvikoc_loading_active(page):
+            return {
+                "success": False,
+                "stage": "kvikoc_customer_open",
+                "error": f"KvikOC blev ved med at loade kundenummer {account_number}.",
+                "debugDir": str(debug_dir),
+            }
         return {"success": True, "stage": "kvikoc_customer_open", "customerNumber": account_number}
     except Exception as exc:
         save_debug_screenshot(page, debug_dir, "kvikoc_customer_open_failed.png", force=True)
@@ -802,16 +1156,110 @@ def kvikoc_click_customer_account(page, account_number, debug_dir):
         }
 
 
+def kvikoc_click_customer_account_resilient(page, account_number, debug_dir):
+    if kvikoc_all_subscriptions_visible(page):
+        return {"success": True, "stage": "kvikoc_customer_open", "customerNumber": account_number}
+
+    for attempt in range(2):
+        try:
+            clicked = page.evaluate(
+                """accountNumber => {
+                    const wanted = String(accountNumber || '').trim();
+                    const accountLink = Array.from(document.querySelectorAll('a'))
+                        .find(a => (a.id || '').endsWith('bulkcvrcomman')
+                            && ((a.innerText || a.textContent || '').trim() === wanted));
+                    if (!accountLink) return false;
+                    const row = accountLink.closest('tr');
+                    const subscriberLink = row
+                        ? Array.from(row.querySelectorAll('a'))
+                            .find(a => (a.id || '').endsWith('bulkcvrcomman2')
+                                && ((a.innerText || a.textContent || '').trim()))
+                        : null;
+                    const link = subscriberLink || accountLink;
+                    link.scrollIntoView({block: 'center', inline: 'nearest'});
+                    link.click();
+                    return true;
+                }""",
+                account_number,
+            )
+            if not clicked:
+                save_debug_screenshot(page, debug_dir, "kvikoc_customer_link_missing.png", force=DEBUG_ENABLED)
+                write_debug_text(debug_dir / "kvikoc_customer_link_missing.html", page.content(), force=DEBUG_ENABLED)
+                return {
+                    "success": False,
+                    "stage": "kvikoc_customer_open",
+                    "error": f"Kunne ikke Ã¥bne kundenummer {account_number} i KvikOC.",
+                    "debugDir": str(debug_dir),
+                }
+
+            ready = False
+            try:
+                page.wait_for_function(
+                    """() => {
+                        const text = document.body ? document.body.innerText : '';
+                        const loading = Array.from(document.querySelectorAll('.ui-blockui-content'))
+                            .some(el => {
+                                const style = window.getComputedStyle(el);
+                                const opacity = Number(style.opacity || '1');
+                                return style.display !== 'none'
+                                    && style.visibility !== 'hidden'
+                                    && opacity > 0.05
+                                    && /loading/i.test(el.innerText || el.textContent || '');
+                            });
+                        if (loading) return false;
+                        return text.includes('Vis Alle Abonnementer')
+                            || !!document.querySelector('div[id$="hentkunde2"], div[id$="hentkunde"]');
+                    }""",
+                    timeout=240000,
+                )
+                ready = True
+            except Exception:
+                pass
+
+            kvikoc_wait_until_idle(page, timeout=60000)
+            kvikoc_wait(page, 1500)
+            if ready or kvikoc_all_subscriptions_visible(page):
+                return {"success": True, "stage": "kvikoc_customer_open", "customerNumber": account_number}
+
+            if not kvikoc_loading_active(page):
+                return {"success": True, "stage": "kvikoc_customer_open", "customerNumber": account_number}
+
+            if attempt == 0:
+                try:
+                    page.reload(wait_until="domcontentloaded", timeout=60000)
+                    kvikoc_wait_until_idle(page, timeout=120000)
+                    kvikoc_wait(page, 2500)
+                    kvikoc_activate_customer_account_table(page)
+                except Exception:
+                    pass
+        except Exception as exc:
+            save_debug_screenshot(page, debug_dir, "kvikoc_customer_open_failed.png", force=True)
+            write_debug_text(debug_dir / "kvikoc_customer_open_failed.html", page.content(), force=True)
+            return {
+                "success": False,
+                "stage": "kvikoc_customer_open",
+                "error": f"Kunne ikke Ã¥bne kundens abonnementer i KvikOC: {exc}",
+                "debugDir": str(debug_dir),
+            }
+
+    return {
+        "success": False,
+        "stage": "kvikoc_customer_open",
+        "error": f"KvikOC blev ved med at loade kundenummer {account_number}.",
+        "debugDir": str(debug_dir),
+    }
+
+
 def kvikoc_open_customer_account(page, debug_dir, account_number=""):
     if account_number:
-        return kvikoc_click_customer_account(page, account_number, debug_dir)
+        return kvikoc_click_customer_account_resilient(page, account_number, debug_dir)
 
     if kvikoc_all_subscriptions_visible(page):
         return {"success": True, "stage": "kvikoc_customer_open"}
 
     links = kvikoc_customer_account_links(page)
     if links:
-        return kvikoc_click_customer_account(page, links[0], debug_dir)
+        return kvikoc_click_customer_account_resilient(page, links[0], debug_dir)
 
     return {"success": True, "stage": "kvikoc_customer_open"}
 
@@ -834,6 +1282,35 @@ def kvikoc_dedupe_subscription_rows(rows):
     return unique
 
 
+def kvikoc_product_name(row):
+    subscription = clean_text(row.get("subscription"))
+    category = clean_text(row.get("category"))
+    phone = clean_text(row.get("phone")).upper()
+
+    if subscription.lower() == "fastnet":
+        if re.fullmatch(r"(EM|EF)\d+", phone):
+            return "Fiber/internetforbindelse"
+        return "Fastnet"
+
+    return subscription or category or "Ukendt"
+
+
+def kvikoc_fallback_fixed_line_row(account_summary):
+    account_number = clean_text(account_summary.get("accountNumber"))
+    return {
+        "phone": "",
+        "status": clean_text(account_summary.get("status")) or "Aktivt",
+        "subscription": "Fastnet",
+        "category": "Fastnet",
+        "system": clean_text(account_summary.get("system")),
+        "dealer": "",
+        "created": "",
+        "binding": "",
+        "customerNumber": account_number,
+        "synthetic": True,
+    }
+
+
 def kvikoc_lookup(page, args, debug_dir):
     search_result = kvikoc_search(page, args, debug_dir)
     if not search_result.get("success"):
@@ -851,22 +1328,94 @@ def kvikoc_lookup(page, args, debug_dir):
             "debugDir": str(debug_dir),
         }
 
-    customer_accounts = kvikoc_customer_account_links(page)
+    customer_accounts = []
+    account_summaries = []
+    for search_attempt in range(3):
+        customer_accounts = kvikoc_customer_account_links(page)
+        account_summaries = kvikoc_customer_account_summaries(page)
+        if customer_accounts or account_summaries or kvikoc_all_subscriptions_visible(page):
+            break
+        if search_attempt >= 2:
+            break
+        try:
+            page.goto(KVIKOC_URL, wait_until="domcontentloaded", timeout=60000)
+            login_result = kvikoc_login(page, args, debug_dir)
+            if not login_result.get("success"):
+                return login_result
+            seller_result = kvikoc_select_seller(page, args, debug_dir)
+            if not seller_result.get("success"):
+                return seller_result
+            search_result = kvikoc_search(page, args, debug_dir)
+            if not search_result.get("success"):
+                return search_result
+        except Exception:
+            break
     rows = []
     customer_name = kvikoc_extract_customer_name(page)
 
-    if customer_accounts:
-        for index, account_number in enumerate(customer_accounts):
-            open_result = kvikoc_open_customer_account(page, debug_dir, account_number)
-            if not open_result.get("success"):
-                return open_result
+    if account_summaries:
+        opened_detail_account = False
+        for summary in account_summaries:
+            account_number = summary.get("accountNumber", "")
+            subscriber_refs = summary.get("subscriberRefs", [])
+            if not subscriber_refs:
+                rows.append(kvikoc_fallback_fixed_line_row(summary))
+                continue
 
-            for row in kvikoc_collect_subscriptions(page):
+            if opened_detail_account:
+                continue
+
+            detail_rows = []
+            subscriber_search_result = kvikoc_search_subscriber_ref(page, args, debug_dir, subscriber_refs[0])
+            if subscriber_search_result.get("success"):
+                detail_rows = kvikoc_collect_subscriptions(page)
+
+            if not detail_rows:
+                open_result = kvikoc_open_customer_account(page, debug_dir, account_number)
+                if not open_result.get("success"):
+                    save_debug_screenshot(page, debug_dir, f"kvikoc_direct_open_failed_{account_number}.png", force=DEBUG_ENABLED)
+                    write_debug_text(debug_dir / f"kvikoc_direct_open_failed_{account_number}.html", page.content(), force=DEBUG_ENABLED)
+                    account_search_result = kvikoc_search_account_number(page, args, debug_dir, account_number)
+                    if not account_search_result.get("success"):
+                        return account_search_result
+
+                    open_result = kvikoc_open_customer_account(page, debug_dir, account_number)
+                    if not open_result.get("success") and not kvikoc_all_subscriptions_visible(page):
+                        return open_result
+
+                detail_rows = kvikoc_collect_subscriptions(page)
+
+            if not detail_rows:
+                save_debug_screenshot(page, debug_dir, f"kvikoc_direct_open_empty_{account_number}.png", force=DEBUG_ENABLED)
+                write_debug_text(debug_dir / f"kvikoc_direct_open_empty_{account_number}.html", page.content(), force=DEBUG_ENABLED)
+                account_search_result = kvikoc_search_account_number(page, args, debug_dir, account_number)
+                if not account_search_result.get("success"):
+                    return account_search_result
+                if not kvikoc_all_subscriptions_visible(page):
+                    open_result = kvikoc_open_customer_account(page, debug_dir, account_number)
+                    if not open_result.get("success") and not kvikoc_all_subscriptions_visible(page):
+                        return open_result
+                detail_rows = kvikoc_collect_subscriptions(page)
+
+            for row in detail_rows:
                 row["customerNumber"] = account_number
                 rows.append(row)
 
+            opened_detail_account = True
             if not customer_name:
                 customer_name = kvikoc_extract_customer_name(page)
+    elif customer_accounts:
+        account_number = customer_accounts[0]
+        open_result = kvikoc_open_customer_account(page, debug_dir, account_number)
+        if not open_result.get("success"):
+            return open_result
+
+        for row in kvikoc_collect_subscriptions(page):
+            row["customerNumber"] = account_number
+            rows.append(row)
+
+        if not customer_name:
+            customer_name = kvikoc_extract_customer_name(page)
     else:
         open_result = kvikoc_open_customer_account(page, debug_dir)
         if not open_result.get("success"):

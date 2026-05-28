@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <cmath>
 #include <functional>
+#include <memory>
 #include <optional>
 #include "storage_paths.h"
 #include "domain.h"
@@ -21,7 +22,7 @@
 #include "report_service.h"
 
 static constexpr const char* APP_VERSION = "1.5.0";
-static constexpr int APP_BUILD_VERSION = 10501;
+static constexpr int APP_BUILD_VERSION = 10502;
 static constexpr const char* UPDATE_APPCAST_URL = "https://raw.githubusercontent.com/ypqlmen/ProviTracker/main/appcast.xml";
 
 static QString psSingleQuoted(QString value) {
@@ -50,7 +51,7 @@ private:
         QString shortVersion;
         QString zipUrl;
         QString zipSha256;
-        QString installerArguments = "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART";
+        QString installerArguments = "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /CLOSEAPPLICATIONS /FORCECLOSEAPPLICATIONS";
     };
 
     QNetworkAccessManager network;
@@ -118,7 +119,7 @@ private:
 
             info.installerArguments = attrs.value("http://www.andymatuschak.org/xml-namespaces/sparkle", "installerArguments").toString();
             if (info.installerArguments.isEmpty()) info.installerArguments = attrs.value("sparkle:installerArguments").toString();
-            if (info.installerArguments.isEmpty()) info.installerArguments = "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART";
+            if (info.installerArguments.isEmpty()) info.installerArguments = "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /CLOSEAPPLICATIONS /FORCECLOSEAPPLICATIONS";
 
             info.zipUrl = attrs.value("https://provi-tracker.local/update", "zipUrl").toString();
             if (info.zipUrl.isEmpty()) info.zipUrl = attrs.value("provi:zipUrl").toString();
@@ -317,14 +318,15 @@ private:
         ts << "$parentPid = " << QString::number(QCoreApplication::applicationPid()) << "\n";
         ts << "$parent = Get-Process -Id $parentPid -ErrorAction SilentlyContinue\n";
         ts << "if ($parent) { $parent | Wait-Process -Timeout 25 }\n";
+        ts << "$exitCode = 1\n";
         ts << "$proc = Start-Process -FilePath $installer -ArgumentList $arguments -PassThru\n";
-        ts << "if ($proc) { $proc.WaitForExit() }\n";
+        ts << "if ($proc) { $proc.WaitForExit(); $exitCode = $proc.ExitCode }\n";
         ts << "Start-Sleep -Seconds 2\n";
         ts << "Set-Location -LiteralPath $env:TEMP\n";
         ts << "Remove-Item -LiteralPath $workDir -Recurse -Force\n";
         ts << "if ((Test-Path $cleanupRoot) -and -not (Get-ChildItem -LiteralPath $cleanupRoot -Force | Select-Object -First 1)) { Remove-Item -LiteralPath $cleanupRoot -Force }\n";
         ts << "$app = Join-Path $env:LOCALAPPDATA 'Programs\\Provi Tracker\\ProvisionTrackerV2.exe'\n";
-        ts << "if (Test-Path $app) { Start-Process -FilePath $app -WorkingDirectory (Split-Path -Parent $app) }\n";
+        ts << "if (($exitCode -eq 0) -and (Test-Path $app)) { Start-Process -FilePath $app -WorkingDirectory (Split-Path -Parent $app) }\n";
         ts << "Remove-Item -LiteralPath $scriptPath -Force\n";
         script.close();
 
@@ -1721,7 +1723,6 @@ private:
     QPushButton* kvikocCopyButton = nullptr;
     QLabel* kvikocStatusLabel = nullptr;
     QLabel* kvikocSummaryLabel = nullptr;
-    QProgressBar* kvikocLoadingBar = nullptr;
     QTableWidget* kvikocProductsTable = nullptr;
     QTableWidget* kvikocSubscriptionsTable = nullptr;
     bool kvikocLookupRunning = false;
@@ -1743,6 +1744,7 @@ private:
     struct KvikocLookupResult {
         bool success = false;
         bool notFound = false;
+        int totalSubscriptions = 0;
         QString customerName;
         QString error;
         QVector<KvikocProductResult> products;
@@ -1900,6 +1902,7 @@ private:
         result.success = true;
         result.notFound = obj.value("notFound").toBool(false);
         result.customerName = obj.value("customerName").toString();
+        result.totalSubscriptions = obj.value("totalSubscriptions").toInt(0);
 
         const QJsonArray products = obj.value("products").toArray();
         for (const auto& value : products) {
@@ -1926,6 +1929,9 @@ private:
                 result.subscriptions.push_back(subscription);
             }
         }
+        if (result.totalSubscriptions <= 0) {
+            result.totalSubscriptions = result.subscriptions.size();
+        }
 
         return result;
     }
@@ -1933,7 +1939,6 @@ private:
     void setKvikocLookupRunning(bool running) {
         kvikocLookupRunning = running;
         if (kvikocLookupButton) kvikocLookupButton->setEnabled(!running);
-        if (kvikocLoadingBar) kvikocLoadingBar->setVisible(running);
         if (kvikocStatusLabel && running) {
             kvikocStatusLabel->setText("Henter information fra KvikOC...");
         }
@@ -1949,7 +1954,7 @@ private:
             kvikocSummaryLabel->setText(
                 QString("%1 · %2 abonnementer")
                     .arg(customer)
-                    .arg(result.subscriptions.size())
+                    .arg(result.totalSubscriptions)
                 );
         }
 
@@ -2014,6 +2019,7 @@ private:
         setKvikocLookupRunning(true);
 
         auto* process = new QProcess(this);
+        auto timedOut = std::make_shared<bool>(false);
         const QJsonObject payload = kvikocPayload(credentials, cvr, phone);
 
         connect(process, &QProcess::started, this, [process, payload]() {
@@ -2022,12 +2028,18 @@ private:
         });
 
         connect(process, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
-                this, [this, process](int, QProcess::ExitStatus) {
+                this, [this, process, timedOut](int, QProcess::ExitStatus) {
                     const QByteArray stdoutData = process->readAllStandardOutput();
                     const QByteArray stderrData = process->readAllStandardError();
                     process->deleteLater();
 
                     setKvikocLookupRunning(false);
+                    if (*timedOut) {
+                        if (kvikocStatusLabel) {
+                            kvikocStatusLabel->setText("KvikOC svarede for langsomt. Prøv igen om lidt.");
+                        }
+                        return;
+                    }
 
                     const KvikocLookupResult result = parseKvikocWorkerOutput(stdoutData, stderrData);
                     if (!result.success) {
@@ -2047,6 +2059,14 @@ private:
             if (kvikocStatusLabel) {
                 kvikocStatusLabel->setText("Kunne ikke starte KvikOC-worker:\n" + err);
             }
+        });
+
+        QTimer::singleShot(20 * 60 * 1000, process, [process, timedOut]() {
+            if (process->state() == QProcess::NotRunning) {
+                return;
+            }
+            *timedOut = true;
+            process->kill();
         });
 
         process->start(workerPath, kvikocWorkerArgs());
@@ -3890,13 +3910,6 @@ QTableWidget::item {
         kvikocLookupButton = new QPushButton("Hent information");
         configureSettingsButton(kvikocLookupButton);
 
-        kvikocLoadingBar = new QProgressBar;
-        kvikocLoadingBar->setRange(0, 0);
-        kvikocLoadingBar->setTextVisible(false);
-        kvikocLoadingBar->setMinimumHeight(8);
-        kvikocLoadingBar->setMaximumHeight(8);
-        kvikocLoadingBar->setVisible(false);
-
         kvikocStatusLabel = new QLabel("Klar til opslag.");
         kvikocStatusLabel->setWordWrap(true);
         kvikocStatusLabel->setTextInteractionFlags(Qt::NoTextInteraction);
@@ -3905,7 +3918,6 @@ QTableWidget::item {
         searchForm->addRow("CVR", kvikocCvrEdit);
         searchForm->addRow("Mobil", kvikocPhoneEdit);
         searchForm->addRow(kvikocLookupButton);
-        searchForm->addRow(kvikocLoadingBar);
         searchForm->addRow("Status", kvikocStatusLabel);
 
         searchCard.second->addLayout(searchForm);
