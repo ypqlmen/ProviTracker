@@ -11,7 +11,7 @@ HISTORY_URL = BASE_URL + "reports/history/"
 PUNCH_URL = BASE_URL + "reports/punch-in/"
 KVIKOC_URL = "https://kvikoc.tdc.dk/"
 DEBUG_ENABLED = False
-OFFICE_ONLY_MESSAGE = "Man kan kun stemple ind eller ud på kontorets internet."
+OFFICE_ONLY_MESSAGE = "Man kan kun stemple ind eller ud p? kontorets internet."
 
 
 def configure_playwright_browser_path():
@@ -51,9 +51,9 @@ def looks_office_only(text):
         "ip adresse",
         "kontor",
         "kontorets",
-        "netværk",
+        "netv?rk",
         "netvaerk",
-        "adgang nægtet",
+        "adgang n?gtet",
         "adgang naegtet",
         "ikke tilladt",
         "not allowed",
@@ -186,7 +186,7 @@ def kvikoc_body_text(page):
 
 def kvikoc_logged_in(page):
     text = kvikoc_body_text(page).lower()
-    return "kvikoc" in text and ("vælg sælger" in text or "vaelg sælger" in text or "ordresøgning" in text)
+    return "kvikoc" in text and ("v?lg s?lger" in text or "vaelg s?lger" in text or "ordres?gning" in text)
 
 
 def kvikoc_login(page, args, debug_dir):
@@ -224,7 +224,7 @@ def kvikoc_login(page, args, debug_dir):
         return {
             "success": False,
             "stage": "kvikoc_login",
-            "error": "KvikOC-login lykkedes ikke, eller sælgerlisten blev ikke fundet.",
+            "error": "KvikOC-login lykkedes ikke, eller s?lgerlisten blev ikke fundet.",
             "debugDir": str(debug_dir),
         }
 
@@ -238,7 +238,7 @@ def kvikoc_select_seller(page, args, debug_dir):
         return {
             "success": False,
             "stage": "kvikoc_seller",
-            "error": "Sælgerkode mangler.",
+            "error": "S?lgerkode mangler.",
         }
 
     try:
@@ -259,7 +259,7 @@ def kvikoc_select_seller(page, args, debug_dir):
             return {
                 "success": False,
                 "stage": "kvikoc_seller",
-                "error": f"Kunne ikke finde sælgeren '{seller_name}' i KvikOC.",
+                "error": f"Kunne ikke finde s?lgeren '{seller_name}' i KvikOC.",
             }
 
         selected_value = page.eval_on_selector("#salesmanForm1\\:salesman", "el => el.value")
@@ -281,7 +281,7 @@ def kvikoc_select_seller(page, args, debug_dir):
             return {
                 "success": False,
                 "stage": "kvikoc_seller",
-                "error": "KvikOC accepterede ikke sælgerlogin, eller søgefelterne blev ikke aktive.",
+                "error": "KvikOC accepterede ikke s?lgerlogin, eller s?gefelterne blev ikke aktive.",
                 "debugDir": str(debug_dir),
             }
 
@@ -292,7 +292,7 @@ def kvikoc_select_seller(page, args, debug_dir):
         return {
             "success": False,
             "stage": "kvikoc_seller",
-            "error": f"KvikOC sælgerlogin fejlede: {exc}",
+            "error": f"KvikOC s?lgerlogin fejlede: {exc}",
             "debugDir": str(debug_dir),
         }
 
@@ -448,7 +448,7 @@ def kvikoc_search(page, args, debug_dir):
         return {
             "success": False,
             "stage": "kvikoc_search",
-            "error": f"KvikOC-søgning fejlede: {exc}",
+            "error": f"KvikOC-s?gning fejlede: {exc}",
             "debugDir": str(debug_dir),
         }
 
@@ -606,7 +606,7 @@ def kvikoc_open_customer_account(page, debug_dir):
         return {
             "success": False,
             "stage": "kvikoc_customer_open",
-            "error": f"Kunne ikke åbne kundens abonnementer i KvikOC: {exc}",
+            "error": f"Kunne ikke ?bne kundens abonnementer i KvikOC: {exc}",
             "debugDir": str(debug_dir),
         }
 
@@ -621,7 +621,7 @@ def kvikoc_extract_subscription_rows(page):
                 if (tr.classList.contains('ui-expanded-row-content')) continue;
                 const cells = Array.from(tr.querySelectorAll(':scope > td'))
                     .map(td => (td.innerText || td.textContent || '').trim().replace(/\s+/g, ' '));
-                if (cells.length >= 9 && cells[1]) {
+                if (cells.length >= 9 && (cells[1] || cells[3] || cells[4])) {
                     rows.push({
                         phone: cells[1],
                         status: cells[2],
@@ -715,6 +715,7 @@ def kvikoc_collect_subscriptions(page):
         page_labels = []
 
     if not page_labels:
+        kvikoc_expand_subscription_rows(page)
         return kvikoc_extract_subscription_rows(page)
 
     for page_label in page_labels:
@@ -1108,7 +1109,7 @@ def kvikoc_click_customer_account(page, account_number, debug_dir):
             return {
                 "success": False,
                 "stage": "kvikoc_customer_open",
-                "error": f"Kunne ikke åbne kundenummer {account_number} i KvikOC.",
+                "error": f"Kunne ikke ?bne kundenummer {account_number} i KvikOC.",
                 "debugDir": str(debug_dir),
             }
 
@@ -1151,7 +1152,7 @@ def kvikoc_click_customer_account(page, account_number, debug_dir):
         return {
             "success": False,
             "stage": "kvikoc_customer_open",
-            "error": f"Kunne ikke åbne kundens abonnementer i KvikOC: {exc}",
+            "error": f"Kunne ikke ?bne kundens abonnementer i KvikOC: {exc}",
             "debugDir": str(debug_dir),
         }
 
@@ -1188,7 +1189,7 @@ def kvikoc_click_customer_account_resilient(page, account_number, debug_dir):
                 return {
                     "success": False,
                     "stage": "kvikoc_customer_open",
-                    "error": f"Kunne ikke Ã¥bne kundenummer {account_number} i KvikOC.",
+                    "error": f"Kunne ikke ??bne kundenummer {account_number} i KvikOC.",
                     "debugDir": str(debug_dir),
                 }
 
@@ -1238,7 +1239,7 @@ def kvikoc_click_customer_account_resilient(page, account_number, debug_dir):
             return {
                 "success": False,
                 "stage": "kvikoc_customer_open",
-                "error": f"Kunne ikke Ã¥bne kundens abonnementer i KvikOC: {exc}",
+                "error": f"Kunne ikke ??bne kundens abonnementer i KvikOC: {exc}",
                 "debugDir": str(debug_dir),
             }
 
@@ -1354,7 +1355,6 @@ def kvikoc_lookup(page, args, debug_dir):
     customer_name = kvikoc_extract_customer_name(page)
 
     if account_summaries:
-        opened_detail_account = False
         for summary in account_summaries:
             account_number = summary.get("accountNumber", "")
             subscriber_refs = summary.get("subscriberRefs", [])
@@ -1362,13 +1362,15 @@ def kvikoc_lookup(page, args, debug_dir):
                 rows.append(kvikoc_fallback_fixed_line_row(summary))
                 continue
 
-            if opened_detail_account:
-                continue
-
             detail_rows = []
-            subscriber_search_result = kvikoc_search_subscriber_ref(page, args, debug_dir, subscriber_refs[0])
-            if subscriber_search_result.get("success"):
-                detail_rows = kvikoc_collect_subscriptions(page)
+            for subscriber_ref in subscriber_refs:
+                subscriber_search_result = kvikoc_search_subscriber_ref(page, args, debug_dir, subscriber_ref)
+                if not subscriber_search_result.get("success"):
+                    continue
+
+                for row in kvikoc_collect_subscriptions(page):
+                    row["customerNumber"] = account_number
+                    detail_rows.append(row)
 
             if not detail_rows:
                 open_result = kvikoc_open_customer_account(page, debug_dir, account_number)
@@ -1401,18 +1403,28 @@ def kvikoc_lookup(page, args, debug_dir):
                 row["customerNumber"] = account_number
                 rows.append(row)
 
-            opened_detail_account = True
             if not customer_name:
                 customer_name = kvikoc_extract_customer_name(page)
     elif customer_accounts:
-        account_number = customer_accounts[0]
-        open_result = kvikoc_open_customer_account(page, debug_dir, account_number)
-        if not open_result.get("success"):
-            return open_result
+        for account_number in customer_accounts:
+            account_search_result = kvikoc_search_account_number(page, args, debug_dir, account_number)
+            if not account_search_result.get("success"):
+                continue
 
-        for row in kvikoc_collect_subscriptions(page):
-            row["customerNumber"] = account_number
-            rows.append(row)
+            if not kvikoc_all_subscriptions_visible(page):
+                open_result = kvikoc_open_customer_account(page, debug_dir, account_number)
+                if not open_result.get("success") and not kvikoc_all_subscriptions_visible(page):
+                    continue
+
+            account_rows = kvikoc_collect_subscriptions(page)
+            if not account_rows:
+                open_result = kvikoc_open_customer_account(page, debug_dir, account_number)
+                if open_result.get("success") or kvikoc_all_subscriptions_visible(page):
+                    account_rows = kvikoc_collect_subscriptions(page)
+
+            for row in account_rows:
+                row["customerNumber"] = account_number
+                rows.append(row)
 
         if not customer_name:
             customer_name = kvikoc_extract_customer_name(page)
@@ -1788,7 +1800,7 @@ def fetch_hours(page, args, debug_dir):
         return {
             "success": False,
             "stage": "parse_hours",
-            "error": "Kunne ikke finde total løntimer i resultattabellen.",
+            "error": "Kunne ikke finde total l?ntimer i resultattabellen.",
             "periodFrom": args.from_date,
             "periodTo": args.to_date,
             "debugDir": str(debug_dir)
@@ -1864,7 +1876,7 @@ def read_punch_state_from_history(page, target_date, debug_dir, prefix):
             "statusKnown": True,
             "clockedIn": False,
             "statusText": "Stemplet ud",
-            "detail": "Der er ikke fundet en åben stempling for i dag.",
+            "detail": "Der er ikke fundet en ?ben stempling for i dag.",
             "lastStart": "",
             "lastStop": ""
         }
@@ -1973,13 +1985,13 @@ def read_punch_state_from_punch_page(page, debug_dir, prefix):
             "statusKnown": False,
             "clockedIn": False,
             "statusText": "Status ukendt",
-            "detail": "Intramanager-stempelsiden blev hentet, men status kunne ikke aflæses.",
+            "detail": "Intramanager-stempelsiden blev hentet, men status kunne ikke afl?ses.",
             "lastStart": "",
             "lastStop": "",
         }
 
     status_text = "Stemplet ind" if clocked_in else "Stemplet ud"
-    detail = "Status aflæst fra Intramanager-stempelsiden."
+    detail = "Status afl?st fra Intramanager-stempelsiden."
 
     return {
         "success": True,
@@ -2216,7 +2228,7 @@ def click_punch_dialog_confirmation(page, wants_out):
         if wants_out
         else ["stempel ind", "stempl ind", "check ind", "start"]
     )
-    confirmation_terms = action_terms + ["bekræft", "bekraeft", "gem", "ja", "ok", "fortsæt", "fortsaet"]
+    confirmation_terms = action_terms + ["bekr?ft", "bekraeft", "gem", "ja", "ok", "forts?t", "fortsaet"]
 
     dialog_scopes = [
         ".punch-in-dialog",
