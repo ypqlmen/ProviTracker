@@ -189,9 +189,10 @@ def kvikoc_logged_in(page):
     return "kvikoc" in text and ("v?lg s?lger" in text or "vaelg s?lger" in text or "ordres?gning" in text)
 
 
-def kvikoc_login(page, args, debug_dir):
-    page.goto(KVIKOC_URL, wait_until="domcontentloaded", timeout=60000)
-    kvikoc_wait(page, 10000)
+def kvikoc_login(page, args, debug_dir, navigate=True):
+    if navigate:
+        page.goto(KVIKOC_URL, wait_until="domcontentloaded", timeout=60000)
+        kvikoc_wait(page, 5000)
 
     if kvikoc_logged_in(page):
         return {"success": True, "stage": "kvikoc_login_cached"}
@@ -229,6 +230,53 @@ def kvikoc_login(page, args, debug_dir):
         }
 
     return {"success": True, "stage": "kvikoc_login"}
+
+
+def kvikoc_search_fields_ready(page):
+    try:
+        return bool(
+            page.evaluate(
+                r"""() => {
+                    const selectors = [
+                        '#accordPanel\\:0\\:searchCardForm\\:cvrNr',
+                        '#accordPanel\\:0\\:searchCardForm\\:telNr',
+                        '#accordPanel\\:0\\:searchCardForm\\:accNr'
+                    ];
+                    return selectors.some(selector => {
+                        const el = document.querySelector(selector);
+                        return el && !el.disabled && el.offsetParent !== null;
+                    });
+                }"""
+            )
+        )
+    except Exception:
+        return False
+
+
+def kvikoc_prepare_search_form(page, args, debug_dir):
+    if kvikoc_search_fields_ready(page):
+        return {"success": True, "stage": "kvikoc_search_ready"}
+
+    try:
+        page.goto(KVIKOC_URL, wait_until="domcontentloaded", timeout=60000)
+    except Exception:
+        pass
+
+    if kvikoc_search_fields_ready(page):
+        return {"success": True, "stage": "kvikoc_search_ready"}
+
+    login_result = kvikoc_login(page, args, debug_dir, navigate=False)
+    if not login_result.get("success"):
+        return login_result
+
+    if kvikoc_search_fields_ready(page):
+        return {"success": True, "stage": "kvikoc_search_ready"}
+
+    seller_result = kvikoc_select_seller(page, args, debug_dir)
+    if not seller_result.get("success"):
+        return seller_result
+
+    return {"success": True, "stage": "kvikoc_search_ready"}
 
 
 def kvikoc_select_seller(page, args, debug_dir):
@@ -465,16 +513,16 @@ def kvikoc_search_account_number(page, args, debug_dir, account_number):
         }
 
     try:
-        page.goto(KVIKOC_URL, wait_until="domcontentloaded", timeout=60000)
-        login_result = kvikoc_login(page, args, debug_dir)
-        if not login_result.get("success"):
-            return login_result
-
-        seller_result = kvikoc_select_seller(page, args, debug_dir)
-        if not seller_result.get("success"):
-            return seller_result
+        ready_result = kvikoc_prepare_search_form(page, args, debug_dir)
+        if not ready_result.get("success"):
+            return ready_result
 
         account_field = page.locator("#accordPanel\\:0\\:searchCardForm\\:accNr")
+        try:
+            page.locator("#accordPanel\\:0\\:searchCardForm\\:cvrNr").fill("", timeout=2000)
+            page.locator("#accordPanel\\:0\\:searchCardForm\\:telNr").fill("", timeout=2000)
+        except Exception:
+            pass
         account_field.fill(account_number, timeout=10000)
         kvikoc_submit_search(page)
         kvikoc_wait_for_search_result(page)
@@ -507,16 +555,16 @@ def kvikoc_search_subscriber_ref(page, args, debug_dir, subscriber_ref):
             candidates.append(numeric_ref)
 
         for candidate in candidates:
-            page.goto(KVIKOC_URL, wait_until="domcontentloaded", timeout=60000)
-            login_result = kvikoc_login(page, args, debug_dir)
-            if not login_result.get("success"):
-                return login_result
-
-            seller_result = kvikoc_select_seller(page, args, debug_dir)
-            if not seller_result.get("success"):
-                return seller_result
+            ready_result = kvikoc_prepare_search_form(page, args, debug_dir)
+            if not ready_result.get("success"):
+                return ready_result
 
             phone_field = page.locator("#accordPanel\\:0\\:searchCardForm\\:telNr")
+            try:
+                page.locator("#accordPanel\\:0\\:searchCardForm\\:cvrNr").fill("", timeout=2000)
+                page.locator("#accordPanel\\:0\\:searchCardForm\\:accNr").fill("", timeout=2000)
+            except Exception:
+                pass
             phone_field.fill(candidate, timeout=10000)
             kvikoc_submit_search(page)
             kvikoc_wait_for_search_result(page)
@@ -933,8 +981,9 @@ def kvikoc_activate_customer_account_table(page):
         except Exception:
             pass
 
-        kvikoc_wait_until_idle(page, timeout=60000)
-        kvikoc_wait(page, 1500)
+        if kvikoc_loading_active(page):
+            kvikoc_wait_until_idle(page, timeout=15000)
+        page.wait_for_timeout(300)
         if kvikoc_bulk_cvr_row_count(page) > 0:
             return True
 
@@ -1005,9 +1054,10 @@ def kvikoc_customer_account_links(page):
                 )
             except Exception:
                 pass
-            kvikoc_wait_until_idle(page, timeout=60000)
+            if kvikoc_loading_active(page):
+                kvikoc_wait_until_idle(page, timeout=15000)
             if not row_has_account(row_index):
-                kvikoc_wait(page, 1500)
+                page.wait_for_timeout(300)
         except Exception:
             pass
 
@@ -1015,9 +1065,25 @@ def kvikoc_customer_account_links(page):
         customer_name = kvikoc_extract_customer_name(page).lower()
         rows = page.locator(row_selector)
         row_count = rows.count()
+        unique_indices = []
+        seen_row_signatures = set()
+        for index in range(row_count):
+            row = rows.nth(index)
+            try:
+                row_text = clean_text(row.inner_text(timeout=1000)).lower()
+            except Exception:
+                row_text = ""
+            if re.search(r"No records found|Ingen poster", row_text, re.IGNORECASE):
+                continue
+            signature = row_text or f"row-{index}"
+            if signature in seen_row_signatures:
+                continue
+            seen_row_signatures.add(signature)
+            unique_indices.append(index)
+
         preferred_indices = []
         if customer_name:
-            for index in range(row_count):
+            for index in unique_indices:
                 row = rows.nth(index)
                 try:
                     if customer_name not in row.inner_text(timeout=1000).lower():
@@ -1047,7 +1113,7 @@ def kvikoc_customer_account_links(page):
             if unique_links:
                 return unique_links
 
-        target_indices = preferred_indices or list(range(row_count))
+        target_indices = preferred_indices or unique_indices
         for index in target_indices:
             row = rows.nth(index)
             try:

@@ -21,8 +21,8 @@
 #include "commission.h"
 #include "report_service.h"
 
-static constexpr const char* APP_VERSION = "1.5.1";
-static constexpr int APP_BUILD_VERSION = 10504;
+static constexpr const char* APP_VERSION = "1.5.2";
+static constexpr int APP_BUILD_VERSION = 10505;
 static constexpr const char* UPDATE_APPCAST_URL = "https://raw.githubusercontent.com/ypqlmen/ProviTracker/main/appcast.xml";
 
 static QString psSingleQuoted(QString value) {
@@ -306,27 +306,43 @@ private:
             return;
         }
 
+        const QString targetDir = QDir::toNativeSeparators(QCoreApplication::applicationDirPath());
+        const QString currentApp = QDir::toNativeSeparators(QCoreApplication::applicationFilePath());
+        const QString markerPath = QDir::toNativeSeparators(updateAttemptMarkerPath(update.buildVersion));
+        const QString logDir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + "/updates";
+        const QString logPath = QDir::toNativeSeparators(QDir(logDir).filePath(QString("last_update_%1.log").arg(update.buildVersion)));
+
         rememberUpdateAttempt(update.buildVersion);
 
         QTextStream ts(&script);
-        ts << "$ErrorActionPreference = 'SilentlyContinue'\n";
+        ts << "$ErrorActionPreference = 'Continue'\n";
         ts << "$installer = " << psSingleQuoted(installer) << "\n";
-        ts << "$arguments = " << psSingleQuoted(update.installerArguments) << "\n";
+        ts << "$arguments = @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/CLOSEAPPLICATIONS', '/FORCECLOSEAPPLICATIONS')\n";
+        ts << "$targetDir = " << psSingleQuoted(targetDir) << "\n";
+        ts << "$arguments += ('/DIR=\"' + $targetDir + '\"')\n";
+        ts << "$currentApp = " << psSingleQuoted(currentApp) << "\n";
+        ts << "$markerPath = " << psSingleQuoted(markerPath) << "\n";
+        ts << "$logPath = " << psSingleQuoted(logPath) << "\n";
         ts << "$workDir = " << psSingleQuoted(workDir) << "\n";
         ts << "$scriptPath = $PSCommandPath\n";
         ts << "$cleanupRoot = Split-Path -Parent $workDir\n";
         ts << "$parentPid = " << QString::number(QCoreApplication::applicationPid()) << "\n";
+        ts << "New-Item -ItemType Directory -Force -Path (Split-Path -Parent $logPath) | Out-Null\n";
+        ts << "Set-Content -LiteralPath $logPath -Value ('Starter update ' + (Get-Date).ToString('s') + ' til ' + $targetDir)\n";
         ts << "$parent = Get-Process -Id $parentPid -ErrorAction SilentlyContinue\n";
         ts << "if ($parent) { $parent | Wait-Process -Timeout 25 }\n";
         ts << "$exitCode = 1\n";
-        ts << "$proc = Start-Process -FilePath $installer -ArgumentList $arguments -PassThru\n";
-        ts << "if ($proc) { $proc.WaitForExit(); $exitCode = $proc.ExitCode }\n";
+        ts << "$proc = Start-Process -FilePath $installer -ArgumentList $arguments -PassThru -Wait\n";
+        ts << "if ($proc) { $exitCode = $proc.ExitCode }\n";
+        ts << "Add-Content -LiteralPath $logPath -Value ('Installer exit code: ' + $exitCode)\n";
         ts << "Start-Sleep -Seconds 2\n";
         ts << "Set-Location -LiteralPath $env:TEMP\n";
         ts << "Remove-Item -LiteralPath $workDir -Recurse -Force\n";
         ts << "if ((Test-Path $cleanupRoot) -and -not (Get-ChildItem -LiteralPath $cleanupRoot -Force | Select-Object -First 1)) { Remove-Item -LiteralPath $cleanupRoot -Force }\n";
         ts << "$app = Join-Path $env:LOCALAPPDATA 'Programs\\Provi Tracker\\ProvisionTrackerV2.exe'\n";
-        ts << "if (($exitCode -eq 0) -and (Test-Path $app)) { Start-Process -FilePath $app -WorkingDirectory (Split-Path -Parent $app) }\n";
+        ts << "if ($exitCode -ne 0) { Remove-Item -LiteralPath $markerPath -Force }\n";
+        ts << "if (($exitCode -eq 0) -and (Test-Path $currentApp)) { Start-Process -FilePath $currentApp -WorkingDirectory (Split-Path -Parent $currentApp) }\n";
+        ts << "elseif (($exitCode -eq 0) -and (Test-Path $app)) { Start-Process -FilePath $app -WorkingDirectory (Split-Path -Parent $app) }\n";
         ts << "Remove-Item -LiteralPath $scriptPath -Force\n";
         script.close();
 
