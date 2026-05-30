@@ -59,6 +59,7 @@ Source: "{#BuildDir}\intramanager_worker\b\*"; DestDir: "{app}\intramanager_work
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
+Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Check: ShouldRefreshDesktopShortcut
 
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; Flags: nowait postinstall skipifsilent
@@ -66,6 +67,11 @@ Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChang
 [Code]
 const
   Legacy11UninstallKey = 'Software\Microsoft\Windows\CurrentVersion\Uninstall\{CBA2670F-F574-46E0-8913-FBEF7822C1B7}_is1';
+
+function ShouldRefreshDesktopShortcut: Boolean;
+begin
+  Result := WizardSilent;
+end;
 
 procedure CopyFileIfMissing(Source, Target: string);
 begin
