@@ -21,8 +21,8 @@
 #include "commission.h"
 #include "report_service.h"
 
-static constexpr const char* APP_VERSION = "1.5.2";
-static constexpr int APP_BUILD_VERSION = 10505;
+static constexpr const char* APP_VERSION = "1.5.3";
+static constexpr int APP_BUILD_VERSION = 10506;
 static constexpr const char* UPDATE_APPCAST_URL = "https://raw.githubusercontent.com/ypqlmen/ProviTracker/main/appcast.xml";
 
 static QString psSingleQuoted(QString value) {
@@ -159,14 +159,25 @@ private:
     bool updateAttemptRecently(int buildVersion) const {
         const QFileInfo marker(updateAttemptMarkerPath(buildVersion));
         if (!marker.exists()) return false;
-        return marker.lastModified().secsTo(QDateTime::currentDateTime()) < 30 * 60;
+
+        QFile markerFile(marker.filePath());
+        QString markerText;
+        if (markerFile.open(QIODevice::ReadOnly | QIODevice::Text)) {
+            markerText = QString::fromUtf8(markerFile.readAll()).toLower();
+        }
+
+        const int cooldownSeconds = markerText.contains("success")
+            ? 24 * 60 * 60
+            : 30 * 60;
+        return marker.lastModified().secsTo(QDateTime::currentDateTime()) < cooldownSeconds;
     }
 
     void rememberUpdateAttempt(int buildVersion) const {
         QFile marker(updateAttemptMarkerPath(buildVersion));
         if (marker.open(QIODevice::WriteOnly | QIODevice::Text)) {
             QTextStream ts(&marker);
-            ts << QDateTime::currentDateTimeUtc().toString(Qt::ISODate) << "\n";
+            ts << "started " << QDateTime::currentDateTimeUtc().toString(Qt::ISODate) << "\n";
+            ts << QCoreApplication::applicationFilePath() << "\n";
         }
     }
 
@@ -335,6 +346,7 @@ private:
         ts << "$proc = Start-Process -FilePath $installer -ArgumentList $arguments -PassThru -Wait\n";
         ts << "if ($proc) { $exitCode = $proc.ExitCode }\n";
         ts << "Add-Content -LiteralPath $logPath -Value ('Installer exit code: ' + $exitCode)\n";
+        ts << "if ($exitCode -eq 0) { Set-Content -LiteralPath $markerPath -Value ('success ' + (Get-Date).ToString('s') + ' ' + $currentApp + ' -> ' + $targetDir) }\n";
         ts << "Start-Sleep -Seconds 2\n";
         ts << "Set-Location -LiteralPath $env:TEMP\n";
         ts << "Remove-Item -LiteralPath $workDir -Recurse -Force\n";
@@ -1848,7 +1860,9 @@ private:
     }
 
     bool isKvikocPageAllowed() const {
-        return cloudUsername.trimmed().compare("VictorTang", Qt::CaseInsensitive) == 0;
+        const QString username = cloudUsername.trimmed();
+        return username.compare("VictorTang", Qt::CaseInsensitive) == 0
+            || username.compare("Phillip", Qt::CaseInsensitive) == 0;
     }
 
     QString kvikocSessionStatePath() const {
@@ -1857,7 +1871,7 @@ private:
 
     bool prepareKvikocLookup(KvikocCredentials* credentialsOut, QString* workerPathOut, QString* errorOut) const {
         if (!isKvikocPageAllowed()) {
-            if (errorOut) *errorOut = "KvikOC-siden er kun tilg?ngelig for VictorTang.";
+            if (errorOut) *errorOut = "KvikOC-siden er kun tilg?ngelig for godkendte brugere.";
             return false;
         }
 
@@ -2154,6 +2168,10 @@ private:
 
     QStringList intramanagerPunchWorkerArgs(const QString& action) const {
         return {"--action", action, "--stdin-json"};
+    }
+
+    QStringList intramanagerProvisionDiagnoseWorkerArgs() const {
+        return {"--action", "provision-diagnose", "--stdin-json"};
     }
 
     IntramanagerFetchResult parseIntramanagerWorkerOutput(const QByteArray& stdoutData, const QByteArray& stderrData) const {
@@ -2719,6 +2737,132 @@ private:
         const QString fromDate = intramanagerDate(period.first.date());
         const QString toDate = intramanagerDate(period.second.date());
         fetchIntramanagerHoursAsync(fromDate, toDate, silent, afterFetch ? afterFetch : [](bool) {});
+    }
+
+    void runIntramanagerProvisionDiagnoseAsync() {
+        if (intramanagerSyncRunning || intramanagerPunchRunning) {
+            QMessageBox::information(this, "Intramanager", "Intramanager arbejder allerede. Pr?v igen om lidt.");
+            return;
+        }
+
+        QString username;
+        QString password;
+        QString workerPath;
+        QString error;
+
+        if (!prepareIntramanagerFetch(&username, &password, &workerPath, &error)) {
+            QMessageBox::warning(this, "Intramanager", error);
+            return;
+        }
+
+        const QString debugDir = QDir(appStorageDir()).filePath(
+            "intramanager_provision_diagnostics/" + QDateTime::currentDateTime().toString("yyyyMMdd_HHmmss")
+            );
+        QDir().mkpath(debugDir);
+
+        auto* progress = new QProgressDialog("Kortl?gger Intramanager provisionsside...", QString(), 0, 0, this);
+        progress->setWindowTitle("Intramanager diagnose");
+        progress->setCancelButton(nullptr);
+        progress->setWindowModality(Qt::ApplicationModal);
+        progress->setMinimumDuration(0);
+        progress->show();
+
+        if (intramanagerStatusLabel) {
+            intramanagerStatusLabel->setText("Kortl?gger Intramanager provisionsside...");
+        }
+
+        intramanagerSyncRunning = true;
+
+        auto* process = new QProcess(this);
+        auto timedOut = std::make_shared<bool>(false);
+        QJsonObject payload;
+        payload["action"] = "provision-diagnose";
+        payload["username"] = username;
+        payload["password"] = password;
+        payload["sessionState"] = intramanagerSessionStatePath();
+        payload["debugDir"] = debugDir;
+        payload["debug"] = true;
+
+        connect(process, &QProcess::started, this, [process, payload]() {
+            process->write(QJsonDocument(payload).toJson(QJsonDocument::Compact));
+            process->closeWriteChannel();
+        });
+
+        connect(process, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
+                this, [this, process, progress, debugDir, timedOut](int, QProcess::ExitStatus) {
+                    progress->close();
+                    progress->deleteLater();
+                    intramanagerSyncRunning = false;
+
+                    const QByteArray stdoutData = process->readAllStandardOutput();
+                    const QByteArray stderrData = process->readAllStandardError();
+                    process->deleteLater();
+
+                    if (*timedOut) {
+                        const QString message = "Kortl?gningen tog for lang tid. Pr?v igen fra arbejdsnetv?rket.";
+                        if (intramanagerStatusLabel) intramanagerStatusLabel->setText(message);
+                        QMessageBox::warning(this, "Intramanager diagnose", message);
+                        return;
+                    }
+
+                    QJsonParseError jsonError;
+                    const QJsonDocument doc = QJsonDocument::fromJson(stdoutData, &jsonError);
+                    const QJsonObject obj = doc.object();
+                    if (jsonError.error != QJsonParseError::NoError || !doc.isObject()) {
+                        const QString message =
+                            "Worker returnerede ikke gyldig JSON.\n\nOutput:\n"
+                            + QString::fromUtf8(stdoutData)
+                            + "\n\nFejl:\n"
+                            + QString::fromUtf8(stderrData);
+                        if (intramanagerStatusLabel) intramanagerStatusLabel->setText("Intramanager diagnose fejlede.");
+                        QMessageBox::warning(this, "Intramanager diagnose", message);
+                        return;
+                    }
+
+                    if (!obj.value("success").toBool(false)) {
+                        const QString message = obj.value("error").toString("Intramanager diagnose fejlede.");
+                        if (intramanagerStatusLabel) intramanagerStatusLabel->setText(message);
+                        QMessageBox::warning(this, "Intramanager diagnose", message);
+                        return;
+                    }
+
+                    const int pages = obj.value("pagesAnalyzed").toInt(0);
+                    const QString resultPath = obj.value("resultPath").toString(debugDir);
+                    const QString message = QString("Kortl?gning gemt. %1 sider analyseret.\n\n%2")
+                        .arg(pages)
+                        .arg(resultPath);
+                    QGuiApplication::clipboard()->setText(resultPath);
+                    if (intramanagerStatusLabel) {
+                        intramanagerStatusLabel->setText("Intramanager diagnose gemt. Stien er kopieret.");
+                    }
+                    QMessageBox::information(this, "Intramanager diagnose", message);
+                    QDesktopServices::openUrl(QUrl::fromLocalFile(debugDir));
+                });
+
+        connect(process, &QProcess::errorOccurred, this, [this, process, progress](QProcess::ProcessError error) {
+            if (error != QProcess::FailedToStart) return;
+
+            progress->close();
+            progress->deleteLater();
+            intramanagerSyncRunning = false;
+
+            const QString err = process->errorString();
+            process->deleteLater();
+            if (intramanagerStatusLabel) {
+                intramanagerStatusLabel->setText("Kunne ikke starte Intramanager-worker.");
+            }
+            QMessageBox::warning(this, "Intramanager diagnose", "Kunne ikke starte Intramanager-worker:\n" + err);
+        });
+
+        QTimer::singleShot(12 * 60 * 1000, process, [process, timedOut]() {
+            if (process->state() == QProcess::NotRunning) {
+                return;
+            }
+            *timedOut = true;
+            process->kill();
+        });
+
+        process->start(workerPath, intramanagerProvisionDiagnoseWorkerArgs());
     }
 
     void refreshCurrentPayrollHoursIfStaleAsync(int maxAgeMinutes = 60) {
@@ -4173,7 +4317,10 @@ QTableWidget::item {
         configureSettingsField(taxRateSpin);
 
         auto* saveIntramanagerBtn = new QPushButton("Gem Intramanager og l?n");
+        auto* diagnoseProvisionBtn = new QPushButton("Kortl?g provision");
         configureSettingsButton(saveIntramanagerBtn);
+        configureSettingsButton(diagnoseProvisionBtn);
+        auto* intramanagerActionRow = createSettingsButtonGrid(QVector<QPushButton*>{saveIntramanagerBtn, diagnoseProvisionBtn});
 
         intramanagerStatusLabel = new QLabel("Timer hentes automatisk, n?r rapporter har brug for dem.");
         intramanagerStatusLabel->setWordWrap(true);
@@ -4185,7 +4332,7 @@ QTableWidget::item {
         imForm->addRow("Timel?n", hourlyRateSpin);
         imForm->addRow("Skattefradrag", taxDeductionSpin);
         imForm->addRow("Tr?kprocent", taxRateSpin);
-        imForm->addRow(saveIntramanagerBtn);
+        imForm->addRow("Handlinger", intramanagerActionRow);
         imForm->addRow("Status", intramanagerStatusLabel);
 
         intramanagerCard.second->addLayout(imForm);
@@ -4351,6 +4498,10 @@ QTableWidget::item {
             refreshAll();
             setupIntramanagerAutoSync();
             refreshIntramanagerPunchStatusAsync(true);
+        });
+
+        connect(diagnoseProvisionBtn, &QPushButton::clicked, this, [this]() {
+            runIntramanagerProvisionDiagnoseAsync();
         });
 
         connect(saveSalesRegistrationBtn, &QPushButton::clicked, this, [this]() {

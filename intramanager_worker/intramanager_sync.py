@@ -3,7 +3,9 @@ import json
 import os
 import re
 import sys
+import time
 from pathlib import Path
+from urllib.parse import urljoin, urlparse
 
 BASE_URL = "https://5r.intramanager.com/"
 LOGIN_URL = BASE_URL + "reports/history/"
@@ -313,13 +315,28 @@ def kvikoc_select_seller(page, args, debug_dir):
         selected_value = page.eval_on_selector("#salesmanForm1\\:salesman", "el => el.value")
         if selected_value != option_value:
             page.select_option("#salesmanForm1\\:salesman", value=option_value)
-            kvikoc_wait(page, 5000)
+            kvikoc_wait_for_ready_state(
+                page,
+                r"""() => {
+                    const password = document.querySelector('#j_idt331\\:inputId');
+                    const cvr = document.querySelector('#accordPanel\\:0\\:searchCardForm\\:cvrNr:not([disabled])');
+                    const phone = document.querySelector('#accordPanel\\:0\\:searchCardForm\\:telNr:not([disabled])');
+                    return !!password || !!cvr || !!phone;
+                }""",
+                timeout=45000,
+                settle_ms=150,
+            )
 
         password_box = page.locator("#j_idt331\\:inputId")
         if password_box.count() > 0 and password_box.first.is_visible(timeout=2000):
             password_box.first.fill(seller_code, timeout=10000)
             page.locator("#j_idt331\\:buttontValidate").click(timeout=10000)
-            kvikoc_wait(page, 6000)
+            kvikoc_wait_for_ready_state(
+                page,
+                r"""() => !!document.querySelector('#accordPanel\\:0\\:searchCardForm\\:cvrNr:not([disabled]), #accordPanel\\:0\\:searchCardForm\\:telNr:not([disabled])')""",
+                timeout=60000,
+                settle_ms=200,
+            )
 
         try:
             page.wait_for_selector("#accordPanel\\:0\\:searchCardForm\\:cvrNr:not([disabled]), #accordPanel\\:0\\:searchCardForm\\:telNr:not([disabled])", timeout=30000)
@@ -376,6 +393,29 @@ def kvikoc_loading_active(page):
         return False
 
 
+def kvikoc_wait_for_ready_state(page, predicate, timeout=240000, settle_ms=250, arg=None):
+    ready = False
+    try:
+        if arg is None:
+            page.wait_for_function(predicate, timeout=timeout)
+        else:
+            page.wait_for_function(predicate, arg=arg, timeout=timeout)
+        ready = True
+    except Exception:
+        ready = False
+
+    if kvikoc_loading_active(page):
+        kvikoc_wait_until_idle(page, timeout=min(timeout, 60000))
+
+    if settle_ms > 0:
+        try:
+            page.wait_for_timeout(settle_ms)
+        except Exception:
+            pass
+
+    return ready or not kvikoc_loading_active(page)
+
+
 def kvikoc_wait_until_idle(page, timeout=240000):
     try:
         page.wait_for_function(
@@ -396,9 +436,9 @@ def kvikoc_wait_until_idle(page, timeout=240000):
 
 
 def kvikoc_wait_for_search_result(page):
-    try:
-        page.wait_for_function(
-            """() => {
+    kvikoc_wait_for_ready_state(
+        page,
+        """() => {
                 const body = document.body ? document.body.innerText : '';
                 const loading = Array.from(document.querySelectorAll('.ui-blockui-content'))
                     .some(el => {
@@ -416,12 +456,9 @@ def kvikoc_wait_for_search_result(page):
                     || body.includes('No records found')
                     || body.includes('Ingen poster');
             }""",
-            timeout=240000,
-        )
-    except Exception:
-        pass
-    kvikoc_wait_until_idle(page, timeout=30000)
-    kvikoc_wait(page, 1000)
+        timeout=240000,
+        settle_ms=300,
+    )
 
 
 def kvikoc_search_has_result(page):
@@ -446,8 +483,7 @@ def kvikoc_reload_if_search_stalled(page):
         return
     try:
         page.reload(wait_until="domcontentloaded", timeout=60000)
-        kvikoc_wait_until_idle(page, timeout=180000)
-        kvikoc_wait(page, 2500)
+        kvikoc_wait_for_search_result(page)
     except Exception:
         pass
 
@@ -741,6 +777,15 @@ def kvikoc_public_subscription_row(row):
     }
 
 
+def kvikoc_subscription_rows_usable(rows):
+    if not rows:
+        return False
+    return all(
+        clean_text(row.get("subscription")) or clean_text(row.get("category"))
+        for row in rows
+    )
+
+
 def kvikoc_expand_subscription_rows(page):
     for _ in range(3):
         try:
@@ -763,8 +808,12 @@ def kvikoc_expand_subscription_rows(page):
 
         if not clicked:
             break
-        kvikoc_wait_until_idle(page, timeout=60000)
-        kvikoc_wait(page, 1500)
+        if kvikoc_loading_active(page):
+            kvikoc_wait_until_idle(page, timeout=30000)
+        try:
+            page.wait_for_timeout(250)
+        except Exception:
+            pass
 
 
 def kvikoc_active_subscription_page(page):
@@ -782,9 +831,11 @@ def kvikoc_collect_subscriptions(page):
     seen_signatures = set()
 
     def append_current_page():
-        kvikoc_expand_subscription_rows(page)
         active_page = kvikoc_active_subscription_page(page)
         page_rows = kvikoc_extract_subscription_rows(page, active_page)
+        if not kvikoc_subscription_rows_usable(page_rows):
+            kvikoc_expand_subscription_rows(page)
+            page_rows = kvikoc_extract_subscription_rows(page, active_page)
         signature = active_page + "|" + "|".join(
             "?".join(map(str, kvikoc_local_subscription_key(row)))
             for row in page_rows[:20]
@@ -818,8 +869,12 @@ def kvikoc_collect_subscriptions(page):
         page_labels = []
 
     if not page_labels:
-        kvikoc_expand_subscription_rows(page)
-        return kvikoc_extract_subscription_rows(page, kvikoc_active_subscription_page(page))
+        active_page = kvikoc_active_subscription_page(page)
+        page_rows = kvikoc_extract_subscription_rows(page, active_page)
+        if not kvikoc_subscription_rows_usable(page_rows):
+            kvikoc_expand_subscription_rows(page)
+            page_rows = kvikoc_extract_subscription_rows(page, active_page)
+        return page_rows
 
     for page_label in page_labels:
         active_page = kvikoc_active_subscription_page(page)
@@ -829,7 +884,26 @@ def kvikoc_collect_subscriptions(page):
                     "div[id$='hentkunde2_paginator_bottom'] .ui-paginator-page",
                     has_text=page_label,
                 ).first.click(timeout=10000)
-                kvikoc_wait(page, 4000)
+                kvikoc_wait_for_ready_state(
+                    page,
+                    """label => {
+                        const loading = Array.from(document.querySelectorAll('.ui-blockui-content'))
+                            .some(el => {
+                                const style = window.getComputedStyle(el);
+                                const opacity = Number(style.opacity || '1');
+                                return style.display !== 'none'
+                                    && style.visibility !== 'hidden'
+                                    && opacity > 0.05
+                                    && /loading/i.test(el.innerText || el.textContent || '');
+                            });
+                        if (loading) return false;
+                        const active = document.querySelector('div[id$="hentkunde2_paginator_bottom"] .ui-paginator-page.ui-state-active');
+                        return active && (active.innerText || active.textContent || '').trim() === label;
+                    }""",
+                    timeout=30000,
+                    settle_ms=200,
+                    arg=page_label,
+                )
             except Exception:
                 pass
 
@@ -850,7 +924,20 @@ def kvikoc_collect_subscriptions(page):
             if "ui-state-disabled" in (next_button.get_attribute("class") or ""):
                 break
             next_button.click(timeout=10000)
-            kvikoc_wait(page, 4000)
+            kvikoc_wait_for_ready_state(
+                page,
+                """() => !Array.from(document.querySelectorAll('.ui-blockui-content'))
+                    .some(el => {
+                        const style = window.getComputedStyle(el);
+                        const opacity = Number(style.opacity || '1');
+                        return style.display !== 'none'
+                            && style.visibility !== 'hidden'
+                            && opacity > 0.05
+                            && /loading/i.test(el.innerText || el.textContent || '');
+                    })""",
+                timeout=30000,
+                settle_ms=200,
+            )
         except Exception:
             break
         if not append_current_page():
@@ -865,7 +952,20 @@ def kvikoc_collect_subscriptions(page):
         try:
             if last_button.count() > 0 and "ui-state-disabled" not in (last_button.get_attribute("class") or ""):
                 last_button.click(timeout=10000)
-                kvikoc_wait(page, 4000)
+                kvikoc_wait_for_ready_state(
+                    page,
+                    """() => !Array.from(document.querySelectorAll('.ui-blockui-content'))
+                        .some(el => {
+                            const style = window.getComputedStyle(el);
+                            const opacity = Number(style.opacity || '1');
+                            return style.display !== 'none'
+                                && style.visibility !== 'hidden'
+                                && opacity > 0.05
+                                && /loading/i.test(el.innerText || el.textContent || '');
+                        })""",
+                    timeout=30000,
+                    settle_ms=200,
+                )
                 append_current_page()
         except Exception:
             pass
@@ -1200,7 +1300,7 @@ def kvikoc_customer_account_summaries(page):
 
 
 def kvikoc_click_customer_account(page, account_number, debug_dir):
-    if kvikoc_all_subscriptions_visible(page):
+    if kvikoc_all_subscriptions_visible(page) and kvikoc_page_mentions_account(page, account_number):
         return {"success": True, "stage": "kvikoc_customer_open", "customerNumber": account_number}
 
     try:
@@ -1217,7 +1317,7 @@ def kvikoc_click_customer_account(page, account_number, debug_dir):
                         .find(a => (a.id || '').endsWith('bulkcvrcomman2')
                             && ((a.innerText || a.textContent || '').trim()))
                     : null;
-                const link = subscriberLink || accountLink;
+                const link = accountLink || subscriberLink;
                 link.scrollIntoView({block: 'center', inline: 'nearest'});
                 link.click();
                 return true;
@@ -1257,8 +1357,12 @@ def kvikoc_click_customer_account(page, account_number, debug_dir):
             ready = True
         except Exception:
             pass
-        kvikoc_wait_until_idle(page, timeout=60000)
-        kvikoc_wait(page, 1500)
+        if kvikoc_loading_active(page):
+            kvikoc_wait_until_idle(page, timeout=30000)
+        try:
+            page.wait_for_timeout(250)
+        except Exception:
+            pass
         if not ready and kvikoc_loading_active(page):
             return {
                 "success": False,
@@ -1279,7 +1383,7 @@ def kvikoc_click_customer_account(page, account_number, debug_dir):
 
 
 def kvikoc_click_customer_account_resilient(page, account_number, debug_dir):
-    if kvikoc_all_subscriptions_visible(page):
+    if kvikoc_all_subscriptions_visible(page) and kvikoc_page_mentions_account(page, account_number):
         return {"success": True, "stage": "kvikoc_customer_open", "customerNumber": account_number}
 
     for attempt in range(2):
@@ -1297,7 +1401,7 @@ def kvikoc_click_customer_account_resilient(page, account_number, debug_dir):
                             .find(a => (a.id || '').endsWith('bulkcvrcomman2')
                                 && ((a.innerText || a.textContent || '').trim()))
                         : null;
-                    const link = subscriberLink || accountLink;
+                    const link = accountLink || subscriberLink;
                     link.scrollIntoView({block: 'center', inline: 'nearest'});
                     link.click();
                     return true;
@@ -1338,8 +1442,12 @@ def kvikoc_click_customer_account_resilient(page, account_number, debug_dir):
             except Exception:
                 pass
 
-            kvikoc_wait_until_idle(page, timeout=60000)
-            kvikoc_wait(page, 1500)
+            if kvikoc_loading_active(page):
+                kvikoc_wait_until_idle(page, timeout=30000)
+            try:
+                page.wait_for_timeout(250)
+            except Exception:
+                pass
             if ready or kvikoc_all_subscriptions_visible(page):
                 return {"success": True, "stage": "kvikoc_customer_open", "customerNumber": account_number}
 
@@ -1349,8 +1457,7 @@ def kvikoc_click_customer_account_resilient(page, account_number, debug_dir):
             if attempt == 0:
                 try:
                     page.reload(wait_until="domcontentloaded", timeout=60000)
-                    kvikoc_wait_until_idle(page, timeout=120000)
-                    kvikoc_wait(page, 2500)
+                    kvikoc_wait_for_search_result(page)
                     kvikoc_activate_customer_account_table(page)
                 except Exception:
                     pass
@@ -1427,10 +1534,114 @@ def kvikoc_fallback_fixed_line_row(account_summary):
     }
 
 
+def kvikoc_ref_seen_in_rows(ref, rows):
+    needle = re.sub(r"\D+", "", clean_text(ref))
+    if not needle:
+        return False
+
+    for row in rows:
+        haystack = " ".join(
+            clean_text(str(row.get(key, "")))
+            for key in ("phone", "subscription", "category", "system", "customerNumber", "_sourceRow")
+        )
+        if needle in re.sub(r"\D+", "", haystack):
+            return True
+
+    return False
+
+
+def kvikoc_account_link_present(page, account_number):
+    account_number = clean_text(account_number)
+    if not account_number:
+        return False
+
+    try:
+        return bool(
+            page.evaluate(
+                """accountNumber => Array.from(document.querySelectorAll('a'))
+                    .some(a => (a.id || '').endsWith('bulkcvrcomman')
+                        && ((a.innerText || a.textContent || '').trim() === accountNumber))""",
+                account_number,
+            )
+        )
+    except Exception:
+        return False
+
+
+def kvikoc_page_mentions_account(page, account_number):
+    account_number = clean_text(account_number)
+    if not account_number:
+        return False
+
+    try:
+        return account_number in clean_text(page.locator("body").inner_text(timeout=1500))
+    except Exception:
+        return False
+
+
+def kvikoc_collect_rows_for_account(page, args, debug_dir, account_number):
+    account_number = clean_text(account_number)
+    if not account_number:
+        return []
+
+    detail_rows = []
+
+    if not kvikoc_all_subscriptions_visible(page) and kvikoc_account_link_present(page, account_number):
+        open_result = kvikoc_open_customer_account(page, debug_dir, account_number)
+        if open_result.get("success") or kvikoc_all_subscriptions_visible(page):
+            detail_rows = kvikoc_collect_subscriptions(page)
+
+    if detail_rows:
+        for row in detail_rows:
+            row["customerNumber"] = account_number
+        return detail_rows
+
+    account_search_result = kvikoc_search_account_number(page, args, debug_dir, account_number)
+    if not account_search_result.get("success"):
+        return []
+
+    if kvikoc_account_link_present(page, account_number):
+        open_result = kvikoc_open_customer_account(page, debug_dir, account_number)
+        if not open_result.get("success") and not kvikoc_all_subscriptions_visible(page):
+            return []
+    elif not (kvikoc_all_subscriptions_visible(page) and kvikoc_page_mentions_account(page, account_number)):
+        return []
+
+    detail_rows = kvikoc_collect_subscriptions(page)
+    for row in detail_rows:
+        row["customerNumber"] = account_number
+    return detail_rows
+
+
 def kvikoc_lookup(page, args, debug_dir):
+    timings = []
+    started_at = time.monotonic()
+
+    def mark(stage):
+        timings.append({
+            "stage": stage,
+            "seconds": round(time.monotonic() - started_at, 3),
+        })
+
     search_result = kvikoc_search(page, args, debug_dir)
+    mark("initial_search")
     if not search_result.get("success"):
         return search_result
+
+    if kvikoc_search_result_not_found(page):
+        for retry in range(2):
+            try:
+                ready_result = kvikoc_prepare_search_form(page, args, debug_dir)
+                if not ready_result.get("success"):
+                    return ready_result
+                search_result = kvikoc_search(page, args, debug_dir)
+                mark(f"not_found_retry_{retry + 1}")
+                if not search_result.get("success"):
+                    return search_result
+                if not kvikoc_search_result_not_found(page):
+                    break
+            except Exception:
+                break
 
     if kvikoc_search_result_not_found(page):
         return {
@@ -1441,6 +1652,7 @@ def kvikoc_lookup(page, args, debug_dir):
             "products": [],
             "subscriptions": [],
             "totalSubscriptions": 0,
+            "timings": timings,
             "debugDir": str(debug_dir),
         }
 
@@ -1449,6 +1661,7 @@ def kvikoc_lookup(page, args, debug_dir):
     for search_attempt in range(3):
         customer_accounts = kvikoc_customer_account_links(page)
         account_summaries = kvikoc_customer_account_summaries(page)
+        mark(f"account_scan_{search_attempt + 1}")
         if customer_accounts or account_summaries or kvikoc_all_subscriptions_visible(page):
             break
         if search_attempt >= 2:
@@ -1462,6 +1675,7 @@ def kvikoc_lookup(page, args, debug_dir):
             if not seller_result.get("success"):
                 return seller_result
             search_result = kvikoc_search(page, args, debug_dir)
+            mark(f"account_scan_retry_search_{search_attempt + 1}")
             if not search_result.get("success"):
                 return search_result
         except Exception:
@@ -1473,46 +1687,32 @@ def kvikoc_lookup(page, args, debug_dir):
         for summary in account_summaries:
             account_number = summary.get("accountNumber", "")
             subscriber_refs = summary.get("subscriberRefs", [])
+
             if not subscriber_refs:
                 rows.append(kvikoc_fallback_fixed_line_row(summary))
+                mark(f"account_{account_number or 'unknown'}_fallback")
                 continue
 
-            detail_rows = []
-            for subscriber_ref in subscriber_refs:
-                subscriber_search_result = kvikoc_search_subscriber_ref(page, args, debug_dir, subscriber_ref)
-                if not subscriber_search_result.get("success"):
-                    continue
+            detail_rows = kvikoc_collect_rows_for_account(page, args, debug_dir, account_number)
+            mark(f"account_{account_number or 'unknown'}")
 
-                for row in kvikoc_collect_subscriptions(page):
-                    row["customerNumber"] = account_number
-                    detail_rows.append(row)
+            if subscriber_refs and len(detail_rows) < len(subscriber_refs):
+                for subscriber_ref in subscriber_refs:
+                    if kvikoc_ref_seen_in_rows(subscriber_ref, detail_rows):
+                        continue
 
-            if not detail_rows:
-                open_result = kvikoc_open_customer_account(page, debug_dir, account_number)
-                if not open_result.get("success"):
-                    save_debug_screenshot(page, debug_dir, f"kvikoc_direct_open_failed_{account_number}.png", force=DEBUG_ENABLED)
-                    write_debug_text(debug_dir / f"kvikoc_direct_open_failed_{account_number}.html", page.content(), force=DEBUG_ENABLED)
-                    account_search_result = kvikoc_search_account_number(page, args, debug_dir, account_number)
-                    if not account_search_result.get("success"):
-                        return account_search_result
+                    subscriber_search_result = kvikoc_search_subscriber_ref(page, args, debug_dir, subscriber_ref)
+                    mark(f"subscriber_{subscriber_ref}")
+                    if not subscriber_search_result.get("success"):
+                        continue
 
-                    open_result = kvikoc_open_customer_account(page, debug_dir, account_number)
-                    if not open_result.get("success") and not kvikoc_all_subscriptions_visible(page):
-                        return open_result
+                    for row in kvikoc_collect_subscriptions(page):
+                        row["customerNumber"] = account_number
+                        detail_rows.append(row)
 
-                detail_rows = kvikoc_collect_subscriptions(page)
-
-            if not detail_rows:
-                save_debug_screenshot(page, debug_dir, f"kvikoc_direct_open_empty_{account_number}.png", force=DEBUG_ENABLED)
-                write_debug_text(debug_dir / f"kvikoc_direct_open_empty_{account_number}.html", page.content(), force=DEBUG_ENABLED)
-                account_search_result = kvikoc_search_account_number(page, args, debug_dir, account_number)
-                if not account_search_result.get("success"):
-                    return account_search_result
-                if not kvikoc_all_subscriptions_visible(page):
-                    open_result = kvikoc_open_customer_account(page, debug_dir, account_number)
-                    if not open_result.get("success") and not kvikoc_all_subscriptions_visible(page):
-                        return open_result
-                detail_rows = kvikoc_collect_subscriptions(page)
+            if not detail_rows and not subscriber_refs:
+                rows.append(kvikoc_fallback_fixed_line_row(summary))
+                continue
 
             for row in detail_rows:
                 row["customerNumber"] = account_number
@@ -1522,20 +1722,8 @@ def kvikoc_lookup(page, args, debug_dir):
                 customer_name = kvikoc_extract_customer_name(page)
     elif customer_accounts:
         for account_number in customer_accounts:
-            account_search_result = kvikoc_search_account_number(page, args, debug_dir, account_number)
-            if not account_search_result.get("success"):
-                continue
-
-            if not kvikoc_all_subscriptions_visible(page):
-                open_result = kvikoc_open_customer_account(page, debug_dir, account_number)
-                if not open_result.get("success") and not kvikoc_all_subscriptions_visible(page):
-                    continue
-
-            account_rows = kvikoc_collect_subscriptions(page)
-            if not account_rows:
-                open_result = kvikoc_open_customer_account(page, debug_dir, account_number)
-                if open_result.get("success") or kvikoc_all_subscriptions_visible(page):
-                    account_rows = kvikoc_collect_subscriptions(page)
+            account_rows = kvikoc_collect_rows_for_account(page, args, debug_dir, account_number)
+            mark(f"account_{account_number}")
 
             for row in account_rows:
                 row["customerNumber"] = account_number
@@ -1563,6 +1751,7 @@ def kvikoc_lookup(page, args, debug_dir):
             "products": [],
             "subscriptions": [],
             "totalSubscriptions": 0,
+            "timings": timings,
             "debugDir": str(debug_dir),
         }
 
@@ -1579,6 +1768,7 @@ def kvikoc_lookup(page, args, debug_dir):
         "products": products,
         "subscriptions": rows,
         "totalSubscriptions": len(rows),
+        "timings": timings,
         "debugDir": str(debug_dir),
     }
 
@@ -2192,6 +2382,266 @@ def fetch_overview(page, args, debug_dir):
     }
 
 
+def diagnose_slug(value, fallback):
+    slug = re.sub(r"[^A-Za-z0-9_.-]+", "_", clean_text(value))[:80].strip("_")
+    return slug or fallback
+
+
+def same_intramanager_url(url):
+    try:
+        parsed = urlparse(url)
+        return parsed.scheme in {"http", "https"} and parsed.netloc.lower() == "5r.intramanager.com"
+    except Exception:
+        return False
+
+
+def page_diagnostic_snapshot(page, index, label, diagnose_dir):
+    slug = diagnose_slug(label, f"page_{index:02d}")
+    html_name = f"{index:02d}_{slug}.html"
+    screenshot_name = f"{index:02d}_{slug}.png"
+
+    try:
+        html = page.content()
+    except Exception:
+        html = ""
+
+    write_debug_text(diagnose_dir / html_name, html, force=True)
+    save_debug_screenshot(page, diagnose_dir, screenshot_name, full_page=True, force=True)
+
+    try:
+        data = page.evaluate(
+            r"""() => {
+                const clean = value => String(value || '').replace(/\s+/g, ' ').trim();
+                const labelFor = element => {
+                    if (!element) return '';
+                    if (element.id) {
+                        const direct = document.querySelector(`label[for="${CSS.escape(element.id)}"]`);
+                        if (direct) return clean(direct.innerText || direct.textContent || '');
+                    }
+                    const wrapped = element.closest('label');
+                    if (wrapped) return clean(wrapped.innerText || wrapped.textContent || '');
+                    const row = element.closest('tr, .form-group, .row, .field, .control-group');
+                    if (row) {
+                        const label = row.querySelector('label, th, .control-label');
+                        if (label) return clean(label.innerText || label.textContent || '');
+                    }
+                    return '';
+                };
+                const visible = element => {
+                    if (!element) return false;
+                    const style = window.getComputedStyle(element);
+                    return style.display !== 'none'
+                        && style.visibility !== 'hidden'
+                        && Number(style.opacity || '1') > 0.05
+                        && element.offsetParent !== null;
+                };
+                const attr = (element, name) => clean(element.getAttribute(name) || '');
+                const links = Array.from(document.querySelectorAll('a[href]'))
+                    .filter(visible)
+                    .slice(0, 250)
+                    .map(a => ({
+                        text: clean(a.innerText || a.textContent || ''),
+                        href: a.href || '',
+                        id: attr(a, 'id'),
+                        classes: attr(a, 'class')
+                    }));
+                const buttons = Array.from(document.querySelectorAll('button, input[type="submit"], input[type="button"], a.btn, [role="button"]'))
+                    .filter(visible)
+                    .slice(0, 200)
+                    .map(button => ({
+                        text: clean(button.innerText || button.textContent || button.value || ''),
+                        type: clean(button.type || button.tagName || ''),
+                        id: attr(button, 'id'),
+                        name: attr(button, 'name'),
+                        classes: attr(button, 'class'),
+                        onclick: attr(button, 'onclick').slice(0, 300)
+                    }));
+                const inputs = Array.from(document.querySelectorAll('input, textarea, select'))
+                    .filter(visible)
+                    .slice(0, 250)
+                    .map(input => ({
+                        tag: input.tagName.toLowerCase(),
+                        type: clean(input.type || ''),
+                        id: attr(input, 'id'),
+                        name: attr(input, 'name'),
+                        label: labelFor(input),
+                        placeholder: attr(input, 'placeholder'),
+                        options: input.tagName.toLowerCase() === 'select'
+                            ? Array.from(input.options || []).slice(0, 80).map(option => clean(option.textContent || option.value || ''))
+                            : []
+                    }));
+                const forms = Array.from(document.querySelectorAll('form'))
+                    .slice(0, 50)
+                    .map(form => ({
+                        id: attr(form, 'id'),
+                        name: attr(form, 'name'),
+                        action: form.action || '',
+                        method: clean(form.method || ''),
+                        inputNames: Array.from(form.querySelectorAll('input, textarea, select')).slice(0, 120)
+                            .map(input => clean(input.name || input.id || labelFor(input) || input.type || input.tagName))
+                            .filter(Boolean)
+                    }));
+                const tables = Array.from(document.querySelectorAll('table'))
+                    .filter(visible)
+                    .slice(0, 50)
+                    .map(table => {
+                        const headers = Array.from(table.querySelectorAll('thead th, tr th')).slice(0, 40)
+                            .map(th => clean(th.innerText || th.textContent || ''));
+                        const rows = Array.from(table.querySelectorAll('tbody tr, tr')).slice(0, 8)
+                            .map(row => Array.from(row.querySelectorAll('th, td')).slice(0, 20)
+                                .map(cell => clean(cell.innerText || cell.textContent || '')));
+                        return {
+                            id: attr(table, 'id'),
+                            classes: attr(table, 'class'),
+                            headers,
+                            rows
+                        };
+                    });
+                return {
+                    url: location.href,
+                    title: document.title || '',
+                    bodySample: clean((document.body && document.body.innerText) || '').slice(0, 3000),
+                    links,
+                    buttons,
+                    inputs,
+                    forms,
+                    tables
+                };
+            }"""
+        )
+    except Exception as exc:
+        data = {"error": str(exc), "url": page.url, "title": ""}
+
+    data["label"] = label
+    data["htmlFile"] = html_name
+    data["screenshotFile"] = screenshot_name
+    return data
+
+
+def score_provision_page(snapshot, terms):
+    haystack = " ".join(
+        [
+            clean_text(snapshot.get("url", "")),
+            clean_text(snapshot.get("title", "")),
+            clean_text(snapshot.get("bodySample", "")),
+            " ".join(clean_text(link.get("text", "") + " " + link.get("href", "")) for link in snapshot.get("links", [])),
+            " ".join(clean_text(button.get("text", "")) for button in snapshot.get("buttons", [])),
+            " ".join(clean_text(input_item.get("label", "") + " " + input_item.get("name", "") + " " + input_item.get("id", "")) for input_item in snapshot.get("inputs", [])),
+        ]
+    ).lower()
+    return sum(1 for term in terms if term in haystack)
+
+
+def diagnose_provision_registration(page, args, debug_dir):
+    diagnose_dir = debug_dir / "provision_diagnose"
+    diagnose_dir.mkdir(parents=True, exist_ok=True)
+
+    terms = [
+        "provision",
+        "provisions",
+        "salg",
+        "salgs",
+        "ordre",
+        "ordrer",
+        "registr",
+        "bonus",
+        "commission",
+    ]
+
+    visited = set()
+    pages = []
+    queue = []
+
+    def enqueue(url, label):
+        absolute = urljoin(BASE_URL, url or "")
+        if not same_intramanager_url(absolute):
+            return
+        normalized = absolute.split("#", 1)[0]
+        if normalized in visited:
+            return
+        queue.append((normalized, label or normalized))
+
+    def add_links_from(snapshot):
+        for link in snapshot.get("links", []):
+            text = clean_text(link.get("text", ""))
+            href = clean_text(link.get("href", ""))
+            haystack = f"{text} {href}".lower()
+            if any(term in haystack for term in terms):
+                enqueue(href, text or href)
+
+    try:
+        wait_for_page_idle(page, timeout=15000)
+    except Exception:
+        pass
+
+    first = page_diagnostic_snapshot(page, 1, "efter_login", diagnose_dir)
+    visited.add((first.get("url") or page.url).split("#", 1)[0])
+    pages.append(first)
+    add_links_from(first)
+
+    for guessed in (
+        "orders/",
+        "order/",
+        "sales/",
+        "reports/",
+        "reports/sales/",
+        "reports/commission/",
+        "reports/provision/",
+    ):
+        enqueue(guessed, guessed.strip("/"))
+
+    while queue and len(pages) < 14:
+        url, label = queue.pop(0)
+        if url in visited:
+            continue
+        visited.add(url)
+
+        try:
+            page.goto(url, wait_until="domcontentloaded", timeout=45000)
+            wait_for_page_idle(page, timeout=20000)
+            snapshot = page_diagnostic_snapshot(page, len(pages) + 1, label, diagnose_dir)
+            pages.append(snapshot)
+            add_links_from(snapshot)
+        except Exception as exc:
+            pages.append({
+                "label": label,
+                "url": url,
+                "error": str(exc),
+            })
+
+    suspected_pages = []
+    for snapshot in pages:
+        score = score_provision_page(snapshot, terms)
+        has_form = bool(snapshot.get("forms") or snapshot.get("inputs") or snapshot.get("buttons"))
+        has_table = bool(snapshot.get("tables"))
+        if score > 0 or has_form or has_table:
+            suspected_pages.append({
+                "label": snapshot.get("label", ""),
+                "url": snapshot.get("url", ""),
+                "score": score,
+                "htmlFile": snapshot.get("htmlFile", ""),
+                "screenshotFile": snapshot.get("screenshotFile", ""),
+                "forms": len(snapshot.get("forms", [])),
+                "inputs": len(snapshot.get("inputs", [])),
+                "buttons": len(snapshot.get("buttons", [])),
+                "tables": len(snapshot.get("tables", [])),
+            })
+
+    result = {
+        "success": True,
+        "stage": "provision_diagnose",
+        "pagesAnalyzed": len(pages),
+        "candidateTerms": terms,
+        "suspectedPages": suspected_pages,
+        "pages": pages,
+        "debugDir": str(diagnose_dir),
+    }
+    result_path = diagnose_dir / "intramanager_provision_diagnose.json"
+    result["resultPath"] = str(result_path)
+    write_debug_text(result_path, json.dumps(result, ensure_ascii=False, indent=2), force=True)
+    return result
+
+
 def locator_text(locator):
     values = []
 
@@ -2555,7 +3005,7 @@ def toggle_punch(page, args, debug_dir):
 def main():
     parser = argparse.ArgumentParser()
 
-    parser.add_argument("--action", choices=["hours", "punch-status", "punch-toggle", "overview", "kvikoc-lookup"], default="hours")
+    parser.add_argument("--action", choices=["hours", "punch-status", "punch-toggle", "overview", "kvikoc-lookup", "provision-diagnose"], default="hours")
     parser.add_argument("--username", required=False)
     parser.add_argument("--password", required=False)
     parser.add_argument("--stdin-json", action="store_true")
@@ -2668,6 +3118,8 @@ def main():
                 result = fetch_punch_status(page, args, debug_dir)
             elif args.action == "overview":
                 result = fetch_overview(page, args, debug_dir)
+            elif args.action == "provision-diagnose":
+                result = diagnose_provision_registration(page, args, debug_dir)
             else:
                 result = toggle_punch(page, args, debug_dir)
 

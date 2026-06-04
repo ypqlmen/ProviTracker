@@ -1,8 +1,8 @@
 #define MyAppName "Provi Tracker"
 #define MyAppExeName "ProvisionTrackerV2.exe"
 #define MyAppPublisher "Victor Tang"
-#define MyAppVersion "1.5.2"
-#define MySetupBaseName "ProviBeregnerSetup-1.5.2"
+#define MyAppVersion "1.5.3"
+#define MySetupBaseName "ProviBeregnerSetup-1.5.3"
 #ifndef BuildDir
   #define BuildDir "..\build\installer_staging"
 #endif
@@ -60,6 +60,10 @@ Source: "{#BuildDir}\intramanager_worker\b\*"; DestDir: "{app}\intramanager_work
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Check: ShouldRefreshDesktopShortcut
+Name: "{autodesktop}\Provi Beregner"; Filename: "{app}\{#MyAppExeName}"; Check: ShouldRefreshLegacyDesktopShortcut('Provi Beregner')
+Name: "{autodesktop}\ProvisionTrackerV2"; Filename: "{app}\{#MyAppExeName}"; Check: ShouldRefreshLegacyDesktopShortcut('ProvisionTrackerV2')
+Name: "{userprograms}\Provi Beregner"; Filename: "{app}\{#MyAppExeName}"; Check: ShouldRefreshLegacyStartMenuShortcut('Provi Beregner')
+Name: "{userprograms}\ProvisionTrackerV2"; Filename: "{app}\{#MyAppExeName}"; Check: ShouldRefreshLegacyStartMenuShortcut('ProvisionTrackerV2')
 
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; Flags: nowait postinstall skipifsilent
@@ -71,6 +75,16 @@ const
 function ShouldRefreshDesktopShortcut: Boolean;
 begin
   Result := WizardSilent;
+end;
+
+function ShouldRefreshLegacyDesktopShortcut(Name: string): Boolean;
+begin
+  Result := WizardSilent and FileExists(ExpandConstant('{autodesktop}\' + Name + '.lnk'));
+end;
+
+function ShouldRefreshLegacyStartMenuShortcut(Name: string): Boolean;
+begin
+  Result := WizardSilent and FileExists(ExpandConstant('{userprograms}\' + Name + '.lnk'));
 end;
 
 procedure CopyFileIfMissing(Source, Target: string);
