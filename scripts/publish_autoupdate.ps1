@@ -1,7 +1,7 @@
 param(
-    [string]$Version = "1.5.3",
-    [string]$Installer = "$PSScriptRoot\..\dist\ProviBeregnerSetup-1.5.3.exe",
-    [string]$UpdateZip = "$PSScriptRoot\..\dist\ProviTrackerUpdate-1.5.3.zip",
+    [string]$Version = "1.5.4",
+    [string]$Installer = "$PSScriptRoot\..\dist\ProviBeregnerSetup-1.5.4.exe",
+    [string]$UpdateZip = "$PSScriptRoot\..\dist\ProviTrackerUpdate-1.5.4.zip",
     [string]$Repo = "ypqlmen/ProviTracker",
     [string]$Tag = "autoupdate",
     [string]$Branch = "main",
@@ -23,10 +23,10 @@ $appcastText = Get-Content $appcastPath -Raw
 
 [xml]$null = $appcastText
 if ($appcastText -notmatch [regex]::Escape($assetName)) {
-    throw "appcast.xml peger ikke p? $assetName."
+    throw "appcast.xml peger ikke på $assetName."
 }
 if ($appcastText -notmatch [regex]::Escape($zipAssetName)) {
-    throw "appcast.xml peger ikke p? $zipAssetName."
+    throw "appcast.xml peger ikke på $zipAssetName."
 }
 if ($appcastText -notmatch "sparkle:shortVersionString=`"$([regex]::Escape($Version))`"") {
     throw "appcast.xml har ikke sparkle:shortVersionString=$Version."
@@ -64,7 +64,7 @@ if ($currentAppcast -and $currentAppcast.sha) {
 }
 
 & gh @apiArgs | Out-Null
-if ($LASTEXITCODE -ne 0) { throw "Opdatering af appcast.xml p? GitHub fejlede." }
+if ($LASTEXITCODE -ne 0) { throw "Opdatering af appcast.xml på GitHub fejlede." }
 
 Write-Host "Uploadet $assetName og $zipAssetName til https://github.com/$Repo/releases/tag/$Tag"
-Write-Host "Opdateret appcast.xml p? branch '$Branch'."
+Write-Host "Opdateret appcast.xml på branch '$Branch'."

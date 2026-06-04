@@ -13,7 +13,7 @@ HISTORY_URL = BASE_URL + "reports/history/"
 PUNCH_URL = BASE_URL + "reports/punch-in/"
 KVIKOC_URL = "https://kvikoc.tdc.dk/"
 DEBUG_ENABLED = False
-OFFICE_ONLY_MESSAGE = "Man kan kun stemple ind eller ud p? kontorets internet."
+OFFICE_ONLY_MESSAGE = "Man kan kun stemple ind eller ud på kontorets internet."
 
 
 def configure_playwright_browser_path():
@@ -53,9 +53,9 @@ def looks_office_only(text):
         "ip adresse",
         "kontor",
         "kontorets",
-        "netv?rk",
+        "netværk",
         "netvaerk",
-        "adgang n?gtet",
+        "adgang nægtet",
         "adgang naegtet",
         "ikke tilladt",
         "not allowed",
@@ -188,7 +188,7 @@ def kvikoc_body_text(page):
 
 def kvikoc_logged_in(page):
     text = kvikoc_body_text(page).lower()
-    return "kvikoc" in text and ("v?lg s?lger" in text or "vaelg s?lger" in text or "ordres?gning" in text)
+    return "kvikoc" in text and ("vælg sælger" in text or "vaelg sælger" in text or "ordresøgning" in text)
 
 
 def kvikoc_login(page, args, debug_dir, navigate=True):
@@ -227,7 +227,7 @@ def kvikoc_login(page, args, debug_dir, navigate=True):
         return {
             "success": False,
             "stage": "kvikoc_login",
-            "error": "KvikOC-login lykkedes ikke, eller s?lgerlisten blev ikke fundet.",
+            "error": "KvikOC-login lykkedes ikke, eller sælgerlisten blev ikke fundet.",
             "debugDir": str(debug_dir),
         }
 
@@ -288,7 +288,7 @@ def kvikoc_select_seller(page, args, debug_dir):
         return {
             "success": False,
             "stage": "kvikoc_seller",
-            "error": "S?lgerkode mangler.",
+            "error": "Sælgerkode mangler.",
         }
 
     try:
@@ -309,7 +309,7 @@ def kvikoc_select_seller(page, args, debug_dir):
             return {
                 "success": False,
                 "stage": "kvikoc_seller",
-                "error": f"Kunne ikke finde s?lgeren '{seller_name}' i KvikOC.",
+                "error": f"Kunne ikke finde sælgeren '{seller_name}' i KvikOC.",
             }
 
         selected_value = page.eval_on_selector("#salesmanForm1\\:salesman", "el => el.value")
@@ -346,7 +346,7 @@ def kvikoc_select_seller(page, args, debug_dir):
             return {
                 "success": False,
                 "stage": "kvikoc_seller",
-                "error": "KvikOC accepterede ikke s?lgerlogin, eller s?gefelterne blev ikke aktive.",
+                "error": "KvikOC accepterede ikke sælgerlogin, eller søgefelterne blev ikke aktive.",
                 "debugDir": str(debug_dir),
             }
 
@@ -357,7 +357,7 @@ def kvikoc_select_seller(page, args, debug_dir):
         return {
             "success": False,
             "stage": "kvikoc_seller",
-            "error": f"KvikOC s?lgerlogin fejlede: {exc}",
+            "error": f"KvikOC sælgerlogin fejlede: {exc}",
             "debugDir": str(debug_dir),
         }
 
@@ -532,7 +532,7 @@ def kvikoc_search(page, args, debug_dir):
         return {
             "success": False,
             "stage": "kvikoc_search",
-            "error": f"KvikOC-s?gning fejlede: {exc}",
+            "error": f"KvikOC-søgning fejlede: {exc}",
             "debugDir": str(debug_dir),
         }
 
@@ -690,42 +690,118 @@ def kvikoc_open_customer_account(page, debug_dir):
         return {
             "success": False,
             "stage": "kvikoc_customer_open",
-            "error": f"Kunne ikke ?bne kundens abonnementer i KvikOC: {exc}",
+            "error": f"Kunne ikke åbne kundens abonnementer i KvikOC: {exc}",
             "debugDir": str(debug_dir),
         }
 
 
-def kvikoc_extract_subscription_rows(page, source_page=""):
+def kvikoc_extract_subscription_rows(page, source_page="", include_sensitive_details=False):
     rows = page.evaluate(
-        r"""() => {
+        r"""includeSensitiveDetails => {
+            const clean = value => String(value || '').replace(/\s+/g, ' ').trim();
+            const lower = value => clean(value).toLowerCase();
+            const unique = values => {
+                const seen = new Set();
+                const result = [];
+                for (const value of values) {
+                    const text = clean(value);
+                    const key = text.toLowerCase();
+                    if (!text || seen.has(key)) continue;
+                    seen.add(key);
+                    result.push(text);
+                }
+                return result;
+            };
+            const directCells = row => Array.from(row.querySelectorAll(':scope > td'))
+                .map(td => clean(td.innerText || td.textContent || ''));
+            const headerTexts = table => Array.from(table.querySelectorAll(':scope > thead th'))
+                .map(th => clean(th.innerText || th.textContent || th.getAttribute('title') || ''));
+            const headerIndex = (headers, terms, fallback) => {
+                for (let index = 0; index < headers.length; index += 1) {
+                    const text = lower(headers[index]).replace(/:$/, '');
+                    if (terms.some(term => text.includes(term))) return index;
+                }
+                return fallback;
+            };
+            const pricePattern = /\b\d+(?:[.,]\d{1,2})?\s*kr\.?\b/i;
+            const detailForRow = row => {
+                if (!includeSensitiveDetails) return {};
+                const expanded = row.nextElementSibling && row.nextElementSibling.classList.contains('ui-expanded-row-content')
+                    ? row.nextElementSibling
+                    : null;
+                if (!expanded) return {};
+
+                const detailText = clean(expanded.innerText || expanded.textContent || '');
+                const typeMatch = detailText.match(/Abonnement\s*forhold\s*:?\s*([^,;]+)/i);
+                return {
+                    subscriptionType: typeMatch ? `Abonnement forhold: ${clean(typeMatch[1])}` : '',
+                };
+            };
+
             const rows = [];
             const roots = Array.from(document.querySelectorAll('div[id$="hentkunde2"], div[id$="hentkunde"]'));
             for (const root of roots) {
-              let visibleRowIndex = 0;
-              for (const tr of Array.from(root.querySelectorAll('table tbody tr'))) {
+              const tables = Array.from(root.querySelectorAll('table'))
+                .filter(table => !table.closest('tr.ui-expanded-row-content'))
+                .filter(table => {
+                    const headers = headerTexts(table).join(' ').toLowerCase();
+                    return headers.includes('telefon') && headers.includes('abonnement');
+                });
+
+              const targetTables = tables.length ? tables : [root];
+              for (const table of targetTables) {
+                const headers = headerTexts(table);
+                const phoneIndex = headerIndex(headers, ['telefon'], 1);
+                const statusIndex = headerIndex(headers, ['status'], 2);
+                const subscriptionIndex = headerIndex(headers, ['abonnement'], 3);
+                const categoryIndex = headerIndex(headers, ['produktkategori', 'kategori'], 4);
+                const systemIndex = headerIndex(headers, ['system'], 5);
+                const dealerIndex = headerIndex(headers, ['forhandler'], 6);
+                const createdIndex = headerIndex(headers, ['oprettet'], 7);
+                const bindingIndex = headerIndex(headers, ['binding'], 8);
+                const priceIndex = headerIndex(headers, ['månedspris', 'maanedspris', 'abonnementspris', 'pris', 'price'], -1);
+                let visibleRowIndex = 0;
+                const candidateRows = table.tagName && table.tagName.toLowerCase() === 'table'
+                    ? Array.from(table.querySelectorAll(':scope > tbody > tr'))
+                    : Array.from(root.querySelectorAll('table tbody tr'));
+              for (const tr of candidateRows) {
                 if (tr.classList.contains('ui-expanded-row-content')) continue;
-                const cells = Array.from(tr.querySelectorAll(':scope > td'))
-                    .map(td => (td.innerText || td.textContent || '').trim().replace(/\s+/g, ' '));
+                if (tr.closest('tr.ui-expanded-row-content')) continue;
+                const cells = directCells(tr);
                 const sourceRow = tr.getAttribute('data-ri') || tr.getAttribute('data-rk') || String(visibleRowIndex);
                 visibleRowIndex += 1;
-                if (cells.length >= 9 && (cells[1] || cells[3] || cells[4])) {
+                const phone = cells[phoneIndex] || '';
+                const status = cells[statusIndex] || '';
+                const subscription = cells[subscriptionIndex] || '';
+                const category = cells[categoryIndex] || '';
+                const system = cells[systemIndex] || '';
+                const dealer = cells[dealerIndex] || '';
+                const created = cells[createdIndex] || '';
+                const binding = cells[bindingIndex] || '';
+                const price = priceIndex >= 0 ? (cells[priceIndex] || '') : '';
+                if (cells.length >= 5 && (phone || subscription || category)) {
+                    const detail = detailForRow(tr);
                     rows.push({
-                        phone: cells[1],
-                        status: cells[2],
-                        subscription: cells[3],
-                        category: cells[4],
-                        system: cells[5],
-                        dealer: cells[6],
-                        created: cells[7],
-                        binding: cells[8],
+                        phone,
+                        status,
+                        subscription: subscription || category || system,
+                        category,
+                        system,
+                        dealer,
+                        created,
+                        binding,
+                        price,
+                        subscriptionType: detail.subscriptionType || '',
                         _sourceRoot: root.id || '',
                         _sourceRow: sourceRow,
                     });
                 }
               }
+              }
             }
             return rows;
-        }"""
+        }""",
+        bool(include_sensitive_details),
     )
     page_label = clean_text(source_page)
     for row in rows:
@@ -769,12 +845,16 @@ def kvikoc_global_subscription_key(row):
     return (customer_number, *kvikoc_local_subscription_key(row))
 
 
-def kvikoc_public_subscription_row(row):
-    return {
-        key: value
-        for key, value in row.items()
-        if not str(key).startswith("_")
-    }
+def kvikoc_public_subscription_row(row, include_sensitive_details=False):
+    public = {}
+    sensitive_keys = {"binding", "price", "subscriptionType"}
+    for key, value in row.items():
+        if str(key).startswith("_"):
+            continue
+        if key in sensitive_keys and not include_sensitive_details:
+            continue
+        public[key] = value
+    return public
 
 
 def kvikoc_subscription_rows_usable(rows):
@@ -826,18 +906,18 @@ def kvikoc_active_subscription_page(page):
         return ""
 
 
-def kvikoc_collect_subscriptions(page):
+def kvikoc_collect_subscriptions(page, include_sensitive_details=False):
     rows = []
     seen_signatures = set()
 
     def append_current_page():
         active_page = kvikoc_active_subscription_page(page)
-        page_rows = kvikoc_extract_subscription_rows(page, active_page)
+        page_rows = kvikoc_extract_subscription_rows(page, active_page, include_sensitive_details)
         if not kvikoc_subscription_rows_usable(page_rows):
             kvikoc_expand_subscription_rows(page)
-            page_rows = kvikoc_extract_subscription_rows(page, active_page)
+            page_rows = kvikoc_extract_subscription_rows(page, active_page, include_sensitive_details)
         signature = active_page + "|" + "|".join(
-            "?".join(map(str, kvikoc_local_subscription_key(row)))
+            "¦".join(map(str, kvikoc_local_subscription_key(row)))
             for row in page_rows[:20]
         )
         if signature in seen_signatures:
@@ -870,10 +950,10 @@ def kvikoc_collect_subscriptions(page):
 
     if not page_labels:
         active_page = kvikoc_active_subscription_page(page)
-        page_rows = kvikoc_extract_subscription_rows(page, active_page)
+        page_rows = kvikoc_extract_subscription_rows(page, active_page, include_sensitive_details)
         if not kvikoc_subscription_rows_usable(page_rows):
             kvikoc_expand_subscription_rows(page)
-            page_rows = kvikoc_extract_subscription_rows(page, active_page)
+            page_rows = kvikoc_extract_subscription_rows(page, active_page, include_sensitive_details)
         return page_rows
 
     for page_label in page_labels:
@@ -1330,7 +1410,7 @@ def kvikoc_click_customer_account(page, account_number, debug_dir):
             return {
                 "success": False,
                 "stage": "kvikoc_customer_open",
-                "error": f"Kunne ikke ?bne kundenummer {account_number} i KvikOC.",
+                "error": f"Kunne ikke åbne kundenummer {account_number} i KvikOC.",
                 "debugDir": str(debug_dir),
             }
 
@@ -1377,7 +1457,7 @@ def kvikoc_click_customer_account(page, account_number, debug_dir):
         return {
             "success": False,
             "stage": "kvikoc_customer_open",
-            "error": f"Kunne ikke ?bne kundens abonnementer i KvikOC: {exc}",
+            "error": f"Kunne ikke åbne kundens abonnementer i KvikOC: {exc}",
             "debugDir": str(debug_dir),
         }
 
@@ -1414,7 +1494,7 @@ def kvikoc_click_customer_account_resilient(page, account_number, debug_dir):
                 return {
                     "success": False,
                     "stage": "kvikoc_customer_open",
-                    "error": f"Kunne ikke ?bne kundenummer {account_number} i KvikOC.",
+                    "error": f"Kunne ikke åbne kundenummer {account_number} i KvikOC.",
                     "debugDir": str(debug_dir),
                 }
 
@@ -1467,7 +1547,7 @@ def kvikoc_click_customer_account_resilient(page, account_number, debug_dir):
             return {
                 "success": False,
                 "stage": "kvikoc_customer_open",
-            "error": f"Kunne ikke ?bne kundens abonnementer i KvikOC: {exc}",
+            "error": f"Kunne ikke åbne kundens abonnementer i KvikOC: {exc}",
                 "debugDir": str(debug_dir),
             }
 
@@ -1493,7 +1573,11 @@ def kvikoc_open_customer_account(page, debug_dir, account_number=""):
     return {"success": True, "stage": "kvikoc_customer_open"}
 
 
-def kvikoc_dedupe_subscription_rows(rows):
+def kvikoc_include_sensitive_details(args):
+    return bool(getattr(args, "include_sensitive_details", False))
+
+
+def kvikoc_dedupe_subscription_rows(rows, include_sensitive_details=False):
     unique = []
     seen = set()
     for row in rows:
@@ -1501,7 +1585,7 @@ def kvikoc_dedupe_subscription_rows(rows):
         if key in seen:
             continue
         seen.add(key)
-        unique.append(kvikoc_public_subscription_row(row))
+        unique.append(kvikoc_public_subscription_row(row, include_sensitive_details))
     return unique
 
 
@@ -1584,12 +1668,13 @@ def kvikoc_collect_rows_for_account(page, args, debug_dir, account_number):
     if not account_number:
         return []
 
+    include_sensitive_details = kvikoc_include_sensitive_details(args)
     detail_rows = []
 
     if not kvikoc_all_subscriptions_visible(page) and kvikoc_account_link_present(page, account_number):
         open_result = kvikoc_open_customer_account(page, debug_dir, account_number)
         if open_result.get("success") or kvikoc_all_subscriptions_visible(page):
-            detail_rows = kvikoc_collect_subscriptions(page)
+            detail_rows = kvikoc_collect_subscriptions(page, include_sensitive_details)
 
     if detail_rows:
         for row in detail_rows:
@@ -1607,7 +1692,7 @@ def kvikoc_collect_rows_for_account(page, args, debug_dir, account_number):
     elif not (kvikoc_all_subscriptions_visible(page) and kvikoc_page_mentions_account(page, account_number)):
         return []
 
-    detail_rows = kvikoc_collect_subscriptions(page)
+    detail_rows = kvikoc_collect_subscriptions(page, include_sensitive_details)
     for row in detail_rows:
         row["customerNumber"] = account_number
     return detail_rows
@@ -1616,6 +1701,7 @@ def kvikoc_collect_rows_for_account(page, args, debug_dir, account_number):
 def kvikoc_lookup(page, args, debug_dir):
     timings = []
     started_at = time.monotonic()
+    include_sensitive_details = kvikoc_include_sensitive_details(args)
 
     def mark(stage):
         timings.append({
@@ -1706,7 +1792,7 @@ def kvikoc_lookup(page, args, debug_dir):
                     if not subscriber_search_result.get("success"):
                         continue
 
-                    for row in kvikoc_collect_subscriptions(page):
+                    for row in kvikoc_collect_subscriptions(page, include_sensitive_details):
                         row["customerNumber"] = account_number
                         detail_rows.append(row)
 
@@ -1736,10 +1822,10 @@ def kvikoc_lookup(page, args, debug_dir):
         if not open_result.get("success"):
             return open_result
 
-        rows = kvikoc_collect_subscriptions(page)
+        rows = kvikoc_collect_subscriptions(page, include_sensitive_details)
         customer_name = kvikoc_extract_customer_name(page)
 
-    rows = kvikoc_dedupe_subscription_rows(rows)
+    rows = kvikoc_dedupe_subscription_rows(rows, include_sensitive_details)
     products = kvikoc_build_product_counts(rows)
 
     if not rows and not customer_accounts and not clean_text(customer_name):
@@ -2105,7 +2191,7 @@ def fetch_hours(page, args, debug_dir):
         return {
             "success": False,
             "stage": "parse_hours",
-            "error": "Kunne ikke finde total l?ntimer i resultattabellen.",
+            "error": "Kunne ikke finde total løntimer i resultattabellen.",
             "periodFrom": args.from_date,
             "periodTo": args.to_date,
             "debugDir": str(debug_dir)
@@ -2181,7 +2267,7 @@ def read_punch_state_from_history(page, target_date, debug_dir, prefix):
             "statusKnown": True,
             "clockedIn": False,
             "statusText": "Stemplet ud",
-            "detail": "Der er ikke fundet en ?ben stempling for i dag.",
+            "detail": "Der er ikke fundet en åben stempling for i dag.",
             "lastStart": "",
             "lastStop": ""
         }
@@ -2290,13 +2376,13 @@ def read_punch_state_from_punch_page(page, debug_dir, prefix):
             "statusKnown": False,
             "clockedIn": False,
             "statusText": "Status ukendt",
-            "detail": "Intramanager-stempelsiden blev hentet, men status kunne ikke afl?ses.",
+            "detail": "Intramanager-stempelsiden blev hentet, men status kunne ikke aflæses.",
             "lastStart": "",
             "lastStop": "",
         }
 
     status_text = "Stemplet ind" if clocked_in else "Stemplet ud"
-    detail = "Status afl?st fra Intramanager-stempelsiden."
+    detail = "Status aflæst fra Intramanager-stempelsiden."
 
     return {
         "success": True,
@@ -2793,7 +2879,7 @@ def click_punch_dialog_confirmation(page, wants_out):
         if wants_out
         else ["stempel ind", "stempl ind", "check ind", "start"]
     )
-    confirmation_terms = action_terms + ["bekr?ft", "bekraeft", "gem", "ja", "ok", "forts?t", "fortsaet"]
+    confirmation_terms = action_terms + ["bekræft", "bekraeft", "gem", "ja", "ok", "fortsæt", "fortsaet"]
 
     dialog_scopes = [
         ".punch-in-dialog",
@@ -3023,6 +3109,7 @@ def main():
     parser.add_argument("--seller-code", required=False)
     parser.add_argument("--cvr", required=False)
     parser.add_argument("--phone", required=False)
+    parser.add_argument("--include-sensitive-details", action="store_true")
 
     args = parser.parse_args()
 
@@ -3044,6 +3131,7 @@ def main():
         args.seller_code = payload.get("sellerCode", args.seller_code)
         args.cvr = payload.get("cvr", args.cvr)
         args.phone = payload.get("phone", args.phone)
+        args.include_sensitive_details = bool(payload.get("includeSensitiveDetails", args.include_sensitive_details))
 
     global DEBUG_ENABLED
     DEBUG_ENABLED = bool(args.debug)
