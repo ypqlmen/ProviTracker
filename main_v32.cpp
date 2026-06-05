@@ -21,8 +21,8 @@
 #include "commission.h"
 #include "report_service.h"
 
-static constexpr const char* APP_VERSION = "1.5.5";
-static constexpr int APP_BUILD_VERSION = 10508;
+static constexpr const char* APP_VERSION = "1.5.6";
+static constexpr int APP_BUILD_VERSION = 10509;
 static constexpr const char* UPDATE_APPCAST_URL = "https://raw.githubusercontent.com/ypqlmen/ProviTracker/main/appcast.xml";
 
 static QString psSingleQuoted(QString value) {
@@ -1742,15 +1742,7 @@ private:
     QLineEdit* defaultSellerInitialsEdit = nullptr;
     QLineEdit* salesRegistrationRecipientEdit = nullptr;
     QCheckBox* salesRegistrationEnabledCheck = nullptr;
-    QCheckBox* salesRegistrationOAuthCheck = nullptr;
-    QLineEdit* microsoftTenantIdEdit = nullptr;
-    QLineEdit* microsoftClientIdEdit = nullptr;
-    QLineEdit* microsoftScopeEdit = nullptr;
     QLabel* salesRegistrationStatusLabel = nullptr;
-    QString microsoftAccessToken;
-    QDateTime microsoftAccessTokenExpiresAt;
-    bool microsoftOAuthRunning = false;
-    QTcpServer* microsoftOAuthServer = nullptr;
 
     QLineEdit* kvikocUsernameEdit = nullptr;
     QLineEdit* kvikocPasswordEdit = nullptr;
@@ -3216,17 +3208,6 @@ private:
         return storeEncryptedCloudSecret("intramanagerLogin", secret);
     }
 
-    bool storeMicrosoftRefreshTokenSecret(const QString& accountHint, const QString& refreshToken) {
-        if (refreshToken.isEmpty()) {
-            return false;
-        }
-
-        QJsonObject secret;
-        secret["accountHint"] = accountHint.trimmed();
-        secret["refreshToken"] = refreshToken;
-        return storeEncryptedCloudSecret("microsoftRefreshToken", secret);
-    }
-
     bool storeKvikocSecret(const KvikocCredentials& credentials) {
         if (credentials.username.trimmed().isEmpty()
             || credentials.password.isEmpty()
@@ -3255,16 +3236,6 @@ private:
         const QString imPassword = intramanagerSecret.value("password").toString();
         if (!imUsername.trimmed().isEmpty() && !imPassword.isEmpty()) {
             saveIntramanagerPassword(imUsername, imPassword);
-        }
-
-        const QJsonObject microsoftSecret = decryptCloudSecretJson(
-            repo.cloudSecrets.value("microsoftRefreshToken").toObject(),
-            cloudSecretKey
-            );
-        const QString accountHint = microsoftSecret.value("accountHint").toString();
-        const QString refreshToken = microsoftSecret.value("refreshToken").toString();
-        if (!refreshToken.isEmpty()) {
-            saveMicrosoftRefreshToken(accountHint, refreshToken);
         }
 
         const QJsonObject kvikocSecret = decryptCloudSecretJson(
@@ -3302,14 +3273,6 @@ private:
                     username = repo.settings.intramanagerUsername;
                 }
                 changed = storeIntramanagerSecret(username, password) || changed;
-            }
-        }
-
-        if (!hasCloudSecret("microsoftRefreshToken")) {
-            QString accountHint;
-            QString refreshToken;
-            if (loadMicrosoftRefreshToken(&accountHint, &refreshToken) && !refreshToken.isEmpty()) {
-                changed = storeMicrosoftRefreshTokenSecret(accountHint, refreshToken) || changed;
             }
         }
 
@@ -4445,41 +4408,17 @@ QTableWidget::item {
         salesRegistrationEnabledCheck = new QCheckBox("Send salgs-reg automatisk ved ny ordre");
         salesRegistrationEnabledCheck->setFocusPolicy(Qt::NoFocus);
 
-        salesRegistrationOAuthCheck = new QCheckBox("Brug Microsoft-login til mailflow");
-        salesRegistrationOAuthCheck->setFocusPolicy(Qt::NoFocus);
-        salesRegistrationOAuthCheck->setChecked(true);
-
-        microsoftTenantIdEdit = new QLineEdit;
-        microsoftTenantIdEdit->setPlaceholderText("organizations eller tenant-id");
-        configureSettingsField(microsoftTenantIdEdit);
-
-        microsoftClientIdEdit = new QLineEdit;
-        microsoftClientIdEdit->setPlaceholderText("Client ID fra Entra app registration");
-        configureSettingsField(microsoftClientIdEdit);
-
-        microsoftScopeEdit = new QLineEdit;
-        microsoftScopeEdit->setPlaceholderText("https://graph.microsoft.com/Mail.Send");
-        configureSettingsField(microsoftScopeEdit);
-
         auto* saveSalesRegistrationBtn = new QPushButton("Gem salgsregistrering");
         auto* testSalesRegistrationBtn = new QPushButton("Send testmail");
-        auto* microsoftLoginBtn = new QPushButton("Log ind");
-        auto* microsoftLogoutBtn = new QPushButton("Log ud");
-        auto* microsoftButtonRow = createSettingsButtonGrid(QVector<QPushButton*>{microsoftLoginBtn, microsoftLogoutBtn});
         auto* salesActionRow = createSettingsButtonGrid(QVector<QPushButton*>{saveSalesRegistrationBtn, testSalesRegistrationBtn});
 
-        salesRegistrationStatusLabel = new QLabel("Sender salgs-reg som Microsoft-mail med JSON til mailflow.");
+        salesRegistrationStatusLabel = new QLabel("Sender salgs-reg via Outlook-mail med JSON til mailflow.");
         salesRegistrationStatusLabel->setWordWrap(true);
         salesRegistrationStatusLabel->setTextInteractionFlags(Qt::NoTextInteraction);
 
         salesRegForm->addRow("Sælger initialer", defaultSellerInitialsEdit);
         salesRegForm->addRow("Flow-mail", salesRegistrationRecipientEdit);
         salesRegForm->addRow(salesRegistrationEnabledCheck);
-        salesRegForm->addRow(salesRegistrationOAuthCheck);
-        salesRegForm->addRow("Microsoft tenant", microsoftTenantIdEdit);
-        salesRegForm->addRow("Microsoft client ID", microsoftClientIdEdit);
-        salesRegForm->addRow("OAuth scope", microsoftScopeEdit);
-        salesRegForm->addRow("Microsoft-login", microsoftButtonRow);
         salesRegForm->addRow("Handlinger", salesActionRow);
         salesRegForm->addRow("Status", salesRegistrationStatusLabel);
 
@@ -4604,26 +4543,6 @@ QTableWidget::item {
         connect(testSalesRegistrationBtn, &QPushButton::clicked, this, [this]() {
             saveSalesRegistrationSettingsFromUi();
             testSalesRegistrationMailflowAsync();
-        });
-
-        connect(microsoftLoginBtn, &QPushButton::clicked, this, [this]() {
-            saveSalesRegistrationSettingsFromUi();
-            acquireMicrosoftAccessTokenAsync(true, true, [this](bool ok, const QString&, const QString& error) {
-                if (salesRegistrationStatusLabel) {
-                    salesRegistrationStatusLabel->setText(ok ? "Microsoft-login er klar til salgsregistrering." : error);
-                }
-            });
-        });
-
-        connect(microsoftLogoutBtn, &QPushButton::clicked, this, [this]() {
-            microsoftAccessToken.clear();
-            microsoftAccessTokenExpiresAt = QDateTime();
-            deleteMicrosoftRefreshToken();
-            repo.cloudSecrets.remove("microsoftRefreshToken");
-            scheduleCloudSave();
-            if (salesRegistrationStatusLabel) {
-                salesRegistrationStatusLabel->setText("Microsoft-login er fjernet fra denne computer.");
-            }
         });
 
         connect(logoutCloudBtn, &QPushButton::clicked, this, [this]() {
@@ -5329,99 +5248,6 @@ QTableWidget::item {
         }
     }
 
-    QString defaultMicrosoftTenantId() const {
-        return "organizations";
-    }
-
-    QString defaultMicrosoftScope() const {
-        return "https://graph.microsoft.com/Mail.Send";
-    }
-
-    QString microsoftTenantId() const {
-        const QString tenant = repo.settings.microsoftTenantId.trimmed();
-        return tenant.isEmpty() ? defaultMicrosoftTenantId() : tenant;
-    }
-
-    QString microsoftClientId() const {
-        return repo.settings.microsoftClientId.trimmed();
-    }
-
-    QString microsoftScope() const {
-        const QString scope = repo.settings.microsoftScope.trimmed();
-        if (scope.contains("service.flow.microsoft.com", Qt::CaseInsensitive)) {
-            return defaultMicrosoftScope();
-        }
-        return scope.isEmpty() ? defaultMicrosoftScope() : scope;
-    }
-
-    QString microsoftAuthScopes() const {
-        QStringList scopes = microsoftScope().split(' ', Qt::SkipEmptyParts);
-        const QStringList requiredScopes = {"offline_access", "openid", "profile"};
-        for (const QString& scope : requiredScopes) {
-            bool exists = false;
-            for (const QString& existing : scopes) {
-                if (existing.compare(scope, Qt::CaseInsensitive) == 0) {
-                    exists = true;
-                    break;
-                }
-            }
-            if (!exists) {
-                scopes << scope;
-            }
-        }
-        return scopes.join(' ');
-    }
-
-    QByteArray base64Url(const QByteArray& bytes) const {
-        return bytes.toBase64(QByteArray::Base64UrlEncoding | QByteArray::OmitTrailingEquals);
-    }
-
-    QString randomOAuthValue(int byteCount = 32) const {
-        QByteArray bytes;
-        bytes.resize(byteCount);
-        for (int i = 0; i < byteCount; ++i) {
-            bytes[i] = static_cast<char>(QRandomGenerator::global()->generate() & 0xFF);
-        }
-        return QString::fromLatin1(base64Url(bytes));
-    }
-
-    QString microsoftTokenAccountHint(const QJsonObject& tokenObject) const {
-        const QString idToken = tokenObject.value("id_token").toString();
-        const QStringList parts = idToken.split('.');
-        if (parts.size() < 2) {
-            return repo.settings.microsoftAccountHint;
-        }
-
-        QByteArray payload = parts[1].toUtf8();
-        while (payload.size() % 4 != 0) {
-            payload.append('=');
-        }
-
-        const QByteArray decoded = QByteArray::fromBase64(payload, QByteArray::Base64UrlEncoding);
-        QJsonParseError parseError;
-        const QJsonDocument doc = QJsonDocument::fromJson(decoded, &parseError);
-        if (parseError.error != QJsonParseError::NoError || !doc.isObject()) {
-            return repo.settings.microsoftAccountHint;
-        }
-
-        const QJsonObject claims = doc.object();
-        QString hint = claims.value("preferred_username").toString();
-        if (hint.isEmpty()) hint = claims.value("email").toString();
-        if (hint.isEmpty()) hint = claims.value("upn").toString();
-        if (hint.isEmpty()) hint = claims.value("name").toString();
-        return hint.isEmpty() ? repo.settings.microsoftAccountHint : hint;
-    }
-
-    QString microsoftTokenEndpoint() const {
-        const QString tenant = QString::fromLatin1(QUrl::toPercentEncoding(microsoftTenantId()));
-        return "https://login.microsoftonline.com/" + tenant + "/oauth2/v2.0/token";
-    }
-
-    QString microsoftAuthorizeEndpoint() const {
-        const QString tenant = QString::fromLatin1(QUrl::toPercentEncoding(microsoftTenantId()));
-        return "https://login.microsoftonline.com/" + tenant + "/oauth2/v2.0/authorize";
-    }
-
     void saveSalesRegistrationSettingsFromUi() {
         if (defaultSellerInitialsEdit) {
             repo.settings.defaultSellerInitials = defaultSellerInitialsEdit->text().trimmed();
@@ -5432,259 +5258,7 @@ QTableWidget::item {
         if (salesRegistrationEnabledCheck) {
             repo.settings.salesRegistrationEnabled = salesRegistrationEnabledCheck->isChecked();
         }
-        if (salesRegistrationOAuthCheck) {
-            repo.settings.salesRegistrationOAuthEnabled = salesRegistrationOAuthCheck->isChecked();
-        } else {
-            repo.settings.salesRegistrationOAuthEnabled = true;
-        }
-        if (microsoftTenantIdEdit) {
-            repo.settings.microsoftTenantId = microsoftTenantIdEdit->text().trimmed();
-        }
-        if (microsoftClientIdEdit) {
-            repo.settings.microsoftClientId = microsoftClientIdEdit->text().trimmed();
-        }
-        if (microsoftScopeEdit) {
-            repo.settings.microsoftScope = microsoftScopeEdit->text().trimmed();
-        }
         repo.saveSettings();
-    }
-
-    void finishMicrosoftOAuthServer() {
-        if (microsoftOAuthServer) {
-            microsoftOAuthServer->close();
-            microsoftOAuthServer->deleteLater();
-            microsoftOAuthServer = nullptr;
-        }
-        microsoftOAuthRunning = false;
-    }
-
-    void requestMicrosoftTokenAsync(
-        const QUrlQuery& form,
-        std::function<void(bool, const QString&, const QString&)> done
-        ) {
-        auto* manager = new QNetworkAccessManager(this);
-        QNetworkRequest request{QUrl(microsoftTokenEndpoint())};
-        request.setHeader(QNetworkRequest::ContentTypeHeader, "application/x-www-form-urlencoded");
-        request.setTransferTimeout(60000);
-
-        QNetworkReply* reply = manager->post(request, form.toString(QUrl::FullyEncoded).toUtf8());
-        connect(reply, &QNetworkReply::finished, this, [this, manager, reply, done]() {
-            const int statusCode = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
-            const QByteArray responseBody = reply->readAll();
-            const QString networkError = reply->errorString();
-            const bool networkOk = reply->error() == QNetworkReply::NoError && statusCode >= 200 && statusCode < 300;
-
-            reply->deleteLater();
-            manager->deleteLater();
-
-            QJsonParseError parseError;
-            const QJsonDocument doc = QJsonDocument::fromJson(responseBody, &parseError);
-            const QJsonObject object = doc.object();
-            const QString errorDescription = object.value("error_description").toString();
-
-            if (!networkOk || parseError.error != QJsonParseError::NoError || !doc.isObject()) {
-                const QString details = !errorDescription.isEmpty()
-                    ? errorDescription
-                    : (statusCode > 0 ? QString("Microsoft-login fejlede (%1).").arg(statusCode) : networkError);
-                if (done) done(false, QString(), details);
-                return;
-            }
-
-            const QString token = object.value("access_token").toString();
-            if (token.isEmpty()) {
-                if (done) done(false, QString(), "Microsoft svarede uden access token.");
-                return;
-            }
-
-            microsoftAccessToken = token;
-            const int expiresIn = qMax(60, object.value("expires_in").toInt(3600));
-            microsoftAccessTokenExpiresAt = QDateTime::currentDateTimeUtc().addSecs(expiresIn);
-
-            const QString refreshToken = object.value("refresh_token").toString();
-            if (!refreshToken.isEmpty()) {
-                const QString accountHint = microsoftTokenAccountHint(object);
-                repo.settings.microsoftAccountHint = accountHint;
-                repo.saveSettings();
-                saveMicrosoftRefreshToken(accountHint, refreshToken);
-                if (storeMicrosoftRefreshTokenSecret(accountHint, refreshToken)) {
-                    scheduleCloudSave();
-                }
-            }
-
-            if (done) done(true, microsoftAccessToken, QString());
-        });
-    }
-
-    void startMicrosoftInteractiveLogin(std::function<void(bool, const QString&, const QString&)> done) {
-        if (microsoftOAuthRunning) {
-            if (done) done(false, QString(), "Microsoft-login er allerede i gang.");
-            return;
-        }
-
-        const QString clientId = microsoftClientId();
-        if (clientId.isEmpty()) {
-            if (done) done(false, QString(), "Microsoft client ID mangler i Indstillinger.");
-            return;
-        }
-
-        auto* server = new QTcpServer(this);
-        if (!server->listen(QHostAddress::LocalHost, 0)) {
-            server->deleteLater();
-            if (done) done(false, QString(), "Kunne ikke starte lokal login-modtager til Microsoft.");
-            return;
-        }
-
-        microsoftOAuthRunning = true;
-        microsoftOAuthServer = server;
-
-        const QUrl redirectUri(QString("http://localhost:%1/").arg(server->serverPort()));
-        const QString state = randomOAuthValue(24);
-        const QString codeVerifier = randomOAuthValue(64);
-        const QByteArray challengeBytes = QCryptographicHash::hash(codeVerifier.toUtf8(), QCryptographicHash::Sha256);
-        const QString codeChallenge = QString::fromLatin1(base64Url(challengeBytes));
-
-        QUrl authorizeUrl(microsoftAuthorizeEndpoint());
-        QUrlQuery query;
-        query.addQueryItem("client_id", clientId);
-        query.addQueryItem("response_type", "code");
-        query.addQueryItem("redirect_uri", redirectUri.toString());
-        query.addQueryItem("response_mode", "query");
-        query.addQueryItem("scope", microsoftAuthScopes());
-        query.addQueryItem("state", state);
-        query.addQueryItem("code_challenge", codeChallenge);
-        query.addQueryItem("code_challenge_method", "S256");
-        query.addQueryItem("prompt", "select_account");
-        authorizeUrl.setQuery(query);
-
-        connect(server, &QTcpServer::newConnection, this, [this, server, redirectUri, state, codeVerifier, done]() {
-            QTcpSocket* socket = server->nextPendingConnection();
-            if (!socket) {
-                return;
-            }
-
-            connect(socket, &QTcpSocket::readyRead, this, [this, socket, redirectUri, state, codeVerifier, done]() {
-                const QByteArray requestData = socket->readAll();
-                const QList<QByteArray> lines = requestData.split('\n');
-                const QList<QByteArray> firstLineParts = lines.value(0).trimmed().split(' ');
-                const QString target = QString::fromUtf8(firstLineParts.value(1));
-
-                QUrl callbackUrl("http://localhost" + target);
-                QUrlQuery callbackQuery(callbackUrl);
-                const QString returnedState = callbackQuery.queryItemValue("state");
-                const QString code = callbackQuery.queryItemValue("code");
-                const QString error = callbackQuery.queryItemValue("error_description");
-
-                const bool ok = !code.isEmpty() && returnedState == state;
-                const QByteArray html = ok
-                    ? QByteArray("<!doctype html><html><body style=\"font-family:Segoe UI,Arial,sans-serif;\"><h2>Microsoft-login er klar</h2><p>Du kan lukke dette vindue og vende tilbage til Provi Tracker.</p></body></html>")
-                    : QByteArray("<!doctype html><html><body style=\"font-family:Segoe UI,Arial,sans-serif;\"><h2>Microsoft-login fejlede</h2><p>Du kan lukke dette vindue og prøve igen i Provi Tracker.</p></body></html>");
-                const QByteArray response = "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: "
-                    + QByteArray::number(html.size()) + "\r\nConnection: close\r\n\r\n" + html;
-                socket->write(response);
-                socket->flush();
-                socket->disconnectFromHost();
-                socket->deleteLater();
-
-                finishMicrosoftOAuthServer();
-
-                if (!ok) {
-                    const QString message = !error.isEmpty() ? error : "Microsoft-login blev afvist eller afbrudt.";
-                    if (done) done(false, QString(), message);
-                    return;
-                }
-
-                QUrlQuery form;
-                form.addQueryItem("client_id", microsoftClientId());
-                form.addQueryItem("grant_type", "authorization_code");
-                form.addQueryItem("code", code);
-                form.addQueryItem("redirect_uri", redirectUri.toString());
-                form.addQueryItem("code_verifier", codeVerifier);
-                form.addQueryItem("scope", microsoftAuthScopes());
-                requestMicrosoftTokenAsync(form, done);
-            });
-        });
-
-        QTimer::singleShot(300000, this, [this, server, done]() {
-            if (microsoftOAuthServer != server) {
-                return;
-            }
-            finishMicrosoftOAuthServer();
-            if (done) done(false, QString(), "Microsoft-login udløb. Prøv igen.");
-        });
-
-        if (salesRegistrationStatusLabel) {
-            salesRegistrationStatusLabel->setText("Microsoft-login åbner i browseren...");
-        }
-
-        if (!QDesktopServices::openUrl(authorizeUrl)) {
-            finishMicrosoftOAuthServer();
-            if (done) done(false, QString(), "Kunne ikke åbne browseren til Microsoft-login.");
-        }
-    }
-
-    void acquireMicrosoftAccessTokenAsync(
-        bool interactive,
-        bool showWarnings,
-        std::function<void(bool, const QString&, const QString&)> done
-        ) {
-        Q_UNUSED(showWarnings);
-
-        if (!repo.settings.salesRegistrationOAuthEnabled) {
-            if (done) done(true, QString(), QString());
-            return;
-        }
-
-        if (!microsoftAccessToken.isEmpty()
-            && microsoftAccessTokenExpiresAt > QDateTime::currentDateTimeUtc().addSecs(60)) {
-            if (done) done(true, microsoftAccessToken, QString());
-            return;
-        }
-
-        if (microsoftClientId().isEmpty()) {
-            if (done) done(false, QString(), "Microsoft client ID mangler i Indstillinger.");
-            return;
-        }
-
-        QString storedAccount;
-        QString refreshToken;
-        if (loadMicrosoftRefreshToken(&storedAccount, &refreshToken) && !refreshToken.isEmpty()) {
-            if (salesRegistrationStatusLabel) {
-                salesRegistrationStatusLabel->setText("Fornyer Microsoft-login...");
-            }
-
-            QUrlQuery form;
-            form.addQueryItem("client_id", microsoftClientId());
-            form.addQueryItem("grant_type", "refresh_token");
-            form.addQueryItem("refresh_token", refreshToken);
-            form.addQueryItem("scope", microsoftAuthScopes());
-
-            requestMicrosoftTokenAsync(form, [this, interactive, done](bool ok, const QString& token, const QString& error) {
-                if (ok) {
-                    if (done) done(true, token, QString());
-                    return;
-                }
-
-                deleteMicrosoftRefreshToken();
-                microsoftAccessToken.clear();
-                microsoftAccessTokenExpiresAt = QDateTime();
-
-                if (interactive) {
-                    startMicrosoftInteractiveLogin(done);
-                } else if (done) {
-                    done(false, QString(), "Microsoft-login skal fornyes i Indstillinger. " + error);
-                }
-            });
-            return;
-        }
-
-        if (interactive) {
-            startMicrosoftInteractiveLogin(done);
-            return;
-        }
-
-        if (done) {
-            done(false, QString(), "Log ind med Microsoft i Indstillinger for at sende salgs-reg.");
-        }
     }
 
     void refreshSettingsUi() {
@@ -5744,33 +5318,8 @@ QTableWidget::item {
         if (salesRegistrationEnabledCheck) {
             salesRegistrationEnabledCheck->setChecked(repo.settings.salesRegistrationEnabled);
         }
-        if (salesRegistrationOAuthCheck) {
-            salesRegistrationOAuthCheck->setChecked(true);
-        }
-        if (!repo.settings.salesRegistrationOAuthEnabled) {
-            repo.settings.salesRegistrationOAuthEnabled = true;
-        }
-        if (microsoftTenantIdEdit) {
-            microsoftTenantIdEdit->setText(repo.settings.microsoftTenantId);
-        }
-        if (microsoftClientIdEdit) {
-            microsoftClientIdEdit->setText(repo.settings.microsoftClientId);
-        }
-        if (microsoftScopeEdit) {
-            microsoftScopeEdit->setText(microsoftScope());
-        }
         if (salesRegistrationStatusLabel) {
-            QString storedAccount;
-            QString storedRefreshToken;
-            const bool hasMicrosoftLogin = loadMicrosoftRefreshToken(&storedAccount, &storedRefreshToken)
-                && !storedRefreshToken.isEmpty();
-            if (repo.settings.salesRegistrationOAuthEnabled) {
-                salesRegistrationStatusLabel->setText(hasMicrosoftLogin
-                    ? "Microsoft-login er gemt og bruges til mailflow."
-                    : "Log ind med Microsoft for at sende salgs-reg mails.");
-            } else {
-                salesRegistrationStatusLabel->setText("Microsoft-login skal være aktivt for mailflow.");
-            }
+            salesRegistrationStatusLabel->setText("Outlook desktop bruges til at sende salgs-reg mails til mailflow.");
         }
 
         refreshPunchCardUi();
@@ -5903,17 +5452,141 @@ QTableWidget::item {
             return false;
         }
 
-        if (microsoftClientId().isEmpty()) {
-            if (errorOut) {
-                *errorOut = "Microsoft client ID mangler i Indstillinger.";
-            }
-            return false;
-        }
-
         if (recipientOut) {
             *recipientOut = recipient;
         }
         return true;
+    }
+
+    void cleanupSalesRegistrationTempDirLater(const QString& tempDir) {
+        QTimer::singleShot(180000, this, [tempDir]() {
+            if (!tempDir.isEmpty()) {
+                QDir(tempDir).removeRecursively();
+            }
+        });
+    }
+
+    bool writeSalesRegistrationFile(const QString& path, const QByteArray& content, QString* errorOut) const {
+        QFile file(path);
+        if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+            if (errorOut) {
+                *errorOut = "Kunne ikke oprette midlertidig salgs-reg fil: " + file.errorString();
+            }
+            return false;
+        }
+        file.write(content);
+        return true;
+    }
+
+    void sendSalesRegistrationViaOutlookAsync(
+        const QJsonObject& payload,
+        const QString& recipient,
+        const QString& defaultSuccessText,
+        bool showWarnings
+        ) {
+        const QString tempRoot = QDir(QStandardPaths::writableLocation(QStandardPaths::TempLocation))
+            .filePath("ProviTrackerSalesReg/" + QString::number(QDateTime::currentMSecsSinceEpoch()));
+        QDir().mkpath(tempRoot);
+
+        const QString jsonPath = QDir(tempRoot).filePath("sales-registration.json");
+        const QString htmlPath = QDir(tempRoot).filePath("sales-registration.html");
+        const QString scriptPath = QDir(tempRoot).filePath("send-sales-registration.ps1");
+
+        const QByteArray payloadJson = QJsonDocument(payload).toJson(QJsonDocument::Indented);
+        const QString htmlBody =
+            "<p>Salgsregistrering fra Provi Tracker.</p>"
+            + payload.value("mailHtml").toString()
+            + "<p>JSON-data er vedhæftet til Power Automate-mailflowet.</p>";
+
+        QString fileError;
+        if (!writeSalesRegistrationFile(jsonPath, payloadJson, &fileError)
+            || !writeSalesRegistrationFile(htmlPath, htmlBody.toUtf8(), &fileError)) {
+            if (salesRegistrationStatusLabel) salesRegistrationStatusLabel->setText(fileError);
+            if (showWarnings) QMessageBox::warning(this, "Salgsregistrering", fileError);
+            cleanupSalesRegistrationTempDirLater(tempRoot);
+            return;
+        }
+
+        const QByteArray script = R"ps1(
+param(
+  [Parameter(Mandatory=$true)][string]$Recipient,
+  [Parameter(Mandatory=$true)][string]$Subject,
+  [Parameter(Mandatory=$true)][string]$HtmlPath,
+  [Parameter(Mandatory=$true)][string]$AttachmentPath
+)
+$ErrorActionPreference = 'Stop'
+$outlookType = [Type]::GetTypeFromProgID('Outlook.Application')
+if (-not $outlookType) {
+  throw 'Outlook desktop blev ikke fundet. Installer eller åbn klassisk Outlook på computeren og prøv igen.'
+}
+if (-not (Test-Path -LiteralPath $HtmlPath)) {
+  throw 'HTML-filen til salgs-reg blev ikke fundet.'
+}
+if (-not (Test-Path -LiteralPath $AttachmentPath)) {
+  throw 'JSON-vedhæftningen til salgs-reg blev ikke fundet.'
+}
+$outlook = [Activator]::CreateInstance($outlookType)
+$mail = $outlook.CreateItem(0)
+$mail.To = $Recipient
+$mail.Subject = $Subject
+$mail.HTMLBody = [System.IO.File]::ReadAllText($HtmlPath, [System.Text.Encoding]::UTF8)
+[void]$mail.Attachments.Add($AttachmentPath)
+$mail.Send()
+)ps1";
+
+        if (!writeSalesRegistrationFile(scriptPath, script, &fileError)) {
+            if (salesRegistrationStatusLabel) salesRegistrationStatusLabel->setText(fileError);
+            if (showWarnings) QMessageBox::warning(this, "Salgsregistrering", fileError);
+            cleanupSalesRegistrationTempDirLater(tempRoot);
+            return;
+        }
+
+        auto* process = new QProcess(this);
+        process->setProgram("powershell.exe");
+        process->setArguments({
+            "-NoProfile",
+            "-ExecutionPolicy", "Bypass",
+            "-WindowStyle", "Hidden",
+            "-File", scriptPath,
+            "-Recipient", recipient,
+            "-Subject", payload.value("mailSubject").toString("Salgs reg - Provi Tracker"),
+            "-HtmlPath", htmlPath,
+            "-AttachmentPath", jsonPath
+        });
+
+        connect(process, &QProcess::finished, this, [this, process, tempRoot, defaultSuccessText, showWarnings](int exitCode, QProcess::ExitStatus status) {
+            const QString output = QString::fromUtf8(process->readAllStandardOutput()).trimmed();
+            const QString error = QString::fromUtf8(process->readAllStandardError()).trimmed();
+            const bool ok = status == QProcess::NormalExit && exitCode == 0;
+            process->deleteLater();
+            cleanupSalesRegistrationTempDirLater(tempRoot);
+
+            if (!ok) {
+                QString message = "Salgs-reg kunne ikke sendes via Outlook.";
+                const QString details = !error.isEmpty() ? error : output;
+                if (!details.isEmpty()) {
+                    message += "\n\n" + details;
+                }
+                if (salesRegistrationStatusLabel) salesRegistrationStatusLabel->setText("Salgs-reg kunne ikke sendes via Outlook.");
+                if (showWarnings) QMessageBox::warning(this, "Salgsregistrering", message);
+                return;
+            }
+
+            if (salesRegistrationStatusLabel) salesRegistrationStatusLabel->setText(defaultSuccessText);
+        });
+
+        connect(process, &QProcess::errorOccurred, this, [this, process, tempRoot, showWarnings](QProcess::ProcessError error) {
+            if (error != QProcess::FailedToStart) {
+                return;
+            }
+            process->deleteLater();
+            cleanupSalesRegistrationTempDirLater(tempRoot);
+            const QString message = "PowerShell kunne ikke startes, så Outlook-mailen kunne ikke sendes.";
+            if (salesRegistrationStatusLabel) salesRegistrationStatusLabel->setText(message);
+            if (showWarnings) QMessageBox::warning(this, "Salgsregistrering", message);
+        });
+
+        process->start();
     }
 
     void postSalesRegistrationPayloadAsync(
@@ -5938,87 +5611,9 @@ QTableWidget::item {
             salesRegistrationStatusLabel->setText(sendingText);
         }
 
-        repo.settings.salesRegistrationOAuthEnabled = true;
-        if (salesRegistrationOAuthCheck) {
-            salesRegistrationOAuthCheck->setChecked(true);
-        }
         repo.saveSettings();
 
-        auto sendPayload = [this, recipient, payload, defaultSuccessText, showWarnings](const QString& bearerToken) {
-            auto* manager = new QNetworkAccessManager(this);
-            QNetworkRequest request(QUrl("https://graph.microsoft.com/v1.0/me/sendMail"));
-            request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json; charset=utf-8");
-            request.setTransferTimeout(60000);
-            request.setRawHeader("Authorization", "Bearer " + bearerToken.toUtf8());
-
-            const QByteArray payloadJson = QJsonDocument(payload).toJson(QJsonDocument::Indented);
-
-            QJsonObject emailAddress;
-            emailAddress["address"] = recipient;
-
-            QJsonObject toRecipient;
-            toRecipient["emailAddress"] = emailAddress;
-
-            QJsonObject body;
-            body["contentType"] = "HTML";
-            body["content"] =
-                "<p>Salgsregistrering fra Provi Tracker.</p>"
-                + payload.value("mailHtml").toString()
-                + "<p>JSON-data er vedhæftet til Power Automate-mailflowet.</p>";
-
-            QJsonObject attachment;
-            attachment["@odata.type"] = "#microsoft.graph.fileAttachment";
-            attachment["name"] = QString("provi-sales-reg-%1.json")
-                .arg(payload.value("orderNumber").toString("test"));
-            attachment["contentType"] = "application/json";
-            attachment["contentBytes"] = QString::fromLatin1(payloadJson.toBase64());
-
-            QJsonObject message;
-            message["subject"] = payload.value("mailSubject").toString("Salgs reg - Provi Tracker");
-            message["body"] = body;
-            message["toRecipients"] = QJsonArray{toRecipient};
-            message["attachments"] = QJsonArray{attachment};
-
-            QJsonObject requestBody;
-            requestBody["message"] = message;
-            requestBody["saveToSentItems"] = true;
-
-            QNetworkReply* reply = manager->post(request, QJsonDocument(requestBody).toJson(QJsonDocument::Compact));
-
-            connect(reply, &QNetworkReply::finished, this, [this, manager, reply, defaultSuccessText, showWarnings]() {
-                const int statusCode = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
-                const QByteArray responseBody = reply->readAll();
-                const QString networkError = reply->errorString();
-                const bool ok = reply->error() == QNetworkReply::NoError && statusCode >= 200 && statusCode < 300;
-
-                reply->deleteLater();
-                manager->deleteLater();
-
-                if (!ok) {
-                    const QString message = QString("Salgs-reg kunne ikke sendes via Microsoft-mail (%1).").arg(statusCode > 0 ? QString::number(statusCode) : networkError);
-                    if (salesRegistrationStatusLabel) salesRegistrationStatusLabel->setText(message);
-                    if (showWarnings) {
-                        QMessageBox::warning(this, "Salgsregistrering", message + "\n\n" + QString::fromUtf8(responseBody));
-                    }
-                    return;
-                }
-
-                if (salesRegistrationStatusLabel) salesRegistrationStatusLabel->setText(defaultSuccessText);
-            });
-        };
-
-        acquireMicrosoftAccessTokenAsync(showWarnings, showWarnings, [this, sendPayload, showWarnings](bool ok, const QString& token, const QString& error) {
-            if (!ok) {
-                const QString message = error.isEmpty() ? "Microsoft-login er ikke klar til salgsregistrering." : error;
-                if (salesRegistrationStatusLabel) salesRegistrationStatusLabel->setText(message);
-                if (showWarnings) {
-                    QMessageBox::warning(this, "Salgsregistrering", message);
-                }
-                return;
-            }
-
-            sendPayload(token);
-        });
+        sendSalesRegistrationViaOutlookAsync(payload, recipient, defaultSuccessText, showWarnings);
     }
 
     void submitSalesRegistrationAsync(const Order& order) {
@@ -6028,7 +5623,7 @@ QTableWidget::item {
 
         postSalesRegistrationPayloadAsync(
             salesRegistrationPayload(order),
-            "Salgs-reg sendes som Microsoft-mail...",
+            "Salgs-reg sendes via Outlook...",
             "Salgs-reg sendt som mail.",
             true
             );

@@ -39,7 +39,7 @@ static QString countModeBadge(CountMode mode) {
 }
 
 static bool isAddOnCategory(const QString& category) {
-    return category.trimmed().compare("Till?g", Qt::CaseInsensitive) == 0;
+    return category.trimmed().compare("Tillæg", Qt::CaseInsensitive) == 0;
 }
 
 struct Product {
@@ -133,11 +133,6 @@ struct AppSettings {
     QString salesRegistrationWebhookUrl;
     QString salesRegistrationRecipient;
     bool salesRegistrationEnabled = false;
-    bool salesRegistrationOAuthEnabled = false;
-    QString microsoftTenantId;
-    QString microsoftClientId;
-    QString microsoftScope;
-    QString microsoftAccountHint;
 
     double lastIntramanagerHours = 0.0;
     QString lastIntramanagerPeriodFrom;
@@ -359,11 +354,6 @@ static QJsonObject toJson(const AppSettings& s) {
         {"salesRegistrationWebhookUrl", s.salesRegistrationWebhookUrl},
         {"salesRegistrationRecipient", s.salesRegistrationRecipient},
         {"salesRegistrationEnabled", s.salesRegistrationEnabled},
-        {"salesRegistrationOAuthEnabled", s.salesRegistrationOAuthEnabled},
-        {"microsoftTenantId", s.microsoftTenantId},
-        {"microsoftClientId", s.microsoftClientId},
-        {"microsoftScope", s.microsoftScope},
-        {"microsoftAccountHint", s.microsoftAccountHint},
         {"lastIntramanagerHours", s.lastIntramanagerHours},
         {"lastIntramanagerPeriodFrom", s.lastIntramanagerPeriodFrom},
         {"lastIntramanagerPeriodTo", s.lastIntramanagerPeriodTo},
@@ -391,11 +381,6 @@ static AppSettings fromSettingsJson(const QJsonObject& o) {
     }
     s.salesRegistrationRecipient = o.value("salesRegistrationRecipient").toString();
     s.salesRegistrationEnabled = o.value("salesRegistrationEnabled").toBool(false);
-    s.salesRegistrationOAuthEnabled = o.value("salesRegistrationOAuthEnabled").toBool(false);
-    s.microsoftTenantId = o.value("microsoftTenantId").toString();
-    s.microsoftClientId = o.value("microsoftClientId").toString();
-    s.microsoftScope = o.value("microsoftScope").toString();
-    s.microsoftAccountHint = o.value("microsoftAccountHint").toString();
     s.lastIntramanagerHours = o.value("lastIntramanagerHours").toDouble(0.0);
     s.lastIntramanagerPeriodFrom = o.value("lastIntramanagerPeriodFrom").toString();
     s.lastIntramanagerPeriodTo = o.value("lastIntramanagerPeriodTo").toString();

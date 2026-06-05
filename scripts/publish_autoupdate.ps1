@@ -1,7 +1,7 @@
 param(
-    [string]$Version = "1.5.5",
-    [string]$Installer = "$PSScriptRoot\..\dist\ProviBeregnerSetup-1.5.5.exe",
-    [string]$UpdateZip = "$PSScriptRoot\..\dist\ProviTrackerUpdate-1.5.5.zip",
+    [string]$Version = "1.5.6",
+    [string]$Installer = "$PSScriptRoot\..\dist\ProviBeregnerSetup-1.5.6.exe",
+    [string]$UpdateZip = "$PSScriptRoot\..\dist\ProviTrackerUpdate-1.5.6.zip",
     [string]$Repo = "ypqlmen/ProviTracker",
     [string]$Tag = "autoupdate",
     [string]$Branch = "main",

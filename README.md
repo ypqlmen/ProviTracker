@@ -6,7 +6,7 @@ Qt Widgets desktop-app i C++ med Supabase cloud-login, per-user installation og 
 
 - Brugernavn/kodeord-login via Supabase
 - Automatisk migration af gamle lokale data ved første cloud-login
-- Én aktiv sælger pr. bruger, hvor sælgernavnet følger brugernavnet
+- En aktiv sælger pr. bruger, hvor sælgernavnet følger brugernavnet
 - Ordrer med flere produkter i samme ordre
 - Redigering og sletning af ordrer
 - Dashboard med KPI'er, mål og provisionsstatus
@@ -15,13 +15,13 @@ Qt Widgets desktop-app i C++ med Supabase cloud-login, per-user installation og 
 - Automatisk månedsluk for tidligere måneder med snapshots + PDF
 - Provisionsmotor med 5-trinslåsning for SIMO og 10-trinslåsning for VOICE
 - Intramanager-timer caches pr. rapportperiode
-- Mailbaseret salgsregistrering til Excel Online/Outlook via Microsoft Graph og Power Automate
+- Mailbaseret salgsregistrering til Excel Online via Outlook desktop og Power Automate
 
 ## Salgsregistrering via mailflow
 
-Programmet bruger ikke lokal Excel eller Outlook. Når salgsregistrering er slået til i Indstillinger, sender appen en Microsoft Graph-mail til den flow-mailboks, der er gemt i indstillingerne.
+Programmet bruger ikke lokal Excel og kræver ikke Azure/Entra-adgang for brugerne. Når salgsregistrering er slået til i Indstillinger, opretter appen en Outlook-mail fra brugerens klassiske Outlook desktop og sender den til den flow-mailboks, der er gemt i indstillingerne.
 
-Programmet åbner Microsoft-login i browseren, så MFA håndteres af Microsoft, og gemmer kun refresh-token i Windows Credential Manager. Programmet gemmer ikke Outlook-adgangskoder.
+Programmet gemmer ikke Outlook-adgangskoder og opretter ikke Microsoft Graph tokens. Outlook skal bare være installeret og konfigureret på brugerens Windows-profil.
 
 Payloaden indeholder bl.a.:
 
@@ -42,8 +42,8 @@ Cloud-data pr. bruger:
 - `settings`
 - `orders`
 - `products`
-- én `salesperson`, normaliseret til brugerens brugernavn
-- `secrets` med Intramanager-adgangskode og Microsoft refresh-token krypteret client-side
+- en `salesperson`, normaliseret til brugerens brugernavn
+- `secrets` med Intramanager-adgangskode krypteret client-side
 
 Ved første login med en tom cloud-profil uploader appen automatisk de gamle lokale JSON-data. Derefter er Supabase source of truth for indstillinger, ordrer, produkter, sælgeren og krypterede adgangsoplysninger. Secrets krypteres med AES-256-GCM før upload med en nøgle afledt af brugerens Provi-login. Den lokale computer gemmer kun en DPAPI-krypteret cloud-session og en DPAPI-krypteret kopi af krypteringsnøglen, så automatisk login kan åbne de krypterede secrets igen.
 
@@ -73,7 +73,7 @@ Eksempler:
 - `main_v32.cpp` indeholder app-start, cloud-login, hovedvindue, UI-opbygning og brugerflows.
 - `storage_paths.h` indeholder AppData-stier og migration fra gamle installationer.
 - `domain.h` indeholder modeller, settings og JSON-serialisering.
-- `credentials.h` indeholder krypteret Intramanager-login og Microsoft Credential Manager-hjælpere.
+- `credentials.h` indeholder krypteret Intramanager-login og cloud secret-hjælpere.
 - `repository.h` indeholder lokal migrationslæsning, cloud-payloads og produktkatalog-migration.
 - `commission.h` indeholder provisions-, lønperiode- og datoberegninger.
 - `report_service.h` indeholder HTML/PDF-rapportgenerering og månedsluk.
@@ -123,12 +123,12 @@ Appen læser appcast fra:
 
 GitHub Release-tagget til auto-update er `autoupdate`. Auto-update i appen henter zip-assetet, pakker det ud i brugerens tempmappe, starter installeren og rydder op bagefter.
 
-Aktuelle assets for version 1.5.5:
+Aktuelle assets for version 1.5.6:
 
-- `ProviTrackerUpdate-1.5.5.zip`
-- `ProviBeregnerSetup-1.5.5.exe`
+- `ProviTrackerUpdate-1.5.6.zip`
+- `ProviBeregnerSetup-1.5.6.exe`
 
-Bemærk: den oprindelige 1.1-build indeholdt WinSparkle DLL'en, men ikke en appcast-URL i selve programmet eller installeren. Brugere på 1.1 skal derfor installere en nyere version manuelt én gang; derefter kan auto-update hente fremtidige versioner.
+Bemærk: den oprindelige 1.1-build indeholdt WinSparkle DLL'en, men ikke en appcast-URL i selve programmet eller installeren. Brugere på 1.1 skal derfor installere en nyere version manuelt en gang; derefter kan auto-update hente fremtidige versioner.
 
 Version 1.3.24 og nyere bruger appens egen zip-baserede updater i stedet for WinSparkle.
 

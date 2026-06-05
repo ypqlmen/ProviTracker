@@ -19,9 +19,9 @@ type SalesRegistrationPayload = {
 function normalize(value: string | number | boolean | undefined): string {
   return String(value ?? "")
     .toLowerCase()
-    .replaceAll("?", "ae")
-    .replaceAll("?", "oe")
-    .replaceAll("?", "aa")
+    .replaceAll("æ", "ae")
+    .replaceAll("ø", "oe")
+    .replaceAll("å", "aa")
     .replace(/[^a-z0-9]+/g, "");
 }
 
@@ -137,6 +137,6 @@ function main(workbook: ExcelScript.Workbook, payloadJson: string): string {
     success: true,
     row: nextRow + 1,
     unmatchedProducts,
-    message: `Salgs-reg sendt og tilf?jet p? r?kke ${nextRow + 1}.`,
+    message: `Salgs-reg sendt og tilføjet på række ${nextRow + 1}.`,
   });
 }
