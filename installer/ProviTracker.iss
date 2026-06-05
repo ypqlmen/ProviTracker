@@ -1,8 +1,9 @@
 #define MyAppName "Provi Tracker"
 #define MyAppExeName "ProvisionTrackerV2.exe"
 #define MyAppPublisher "Victor Tang"
-#define MyAppVersion "1.5.4"
-#define MySetupBaseName "ProviBeregnerSetup-1.5.4"
+#define MyAppVersion "1.5.5"
+#define MySetupBaseName "ProviBeregnerSetup-1.5.5"
+#define UserInstallDir "{localappdata}\Programs\Provi Tracker"
 #ifndef BuildDir
   #define BuildDir "..\build\installer_staging"
 #endif
@@ -12,9 +13,10 @@ AppId={{6B532F89-64F6-44F3-A68B-24E00D8F1E8B}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppPublisher={#MyAppPublisher}
-DefaultDirName={localappdata}\Programs\Provi Tracker
+DefaultDirName={#UserInstallDir}
 DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
+CreateAppDir=no
 OutputDir=..\dist
 OutputBaseFilename={#MySetupBaseName}
 Compression=lzma2
@@ -23,7 +25,8 @@ WizardStyle=modern
 PrivilegesRequired=lowest
 ArchitecturesAllowed=x64compatible
 UninstallDisplayName={#MyAppName}
-UninstallDisplayIcon={app}\{#MyAppExeName}
+UninstallDisplayIcon={#UserInstallDir}\{#MyAppExeName}
+UninstallFilesDir={#UserInstallDir}
 CloseApplications=yes
 RestartApplications=no
 VersionInfoVersion={#MyAppVersion}
@@ -39,38 +42,42 @@ Name: "danish"; MessagesFile: "compiler:Languages\Danish.isl"
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
 
 [Files]
-Source: "{#BuildDir}\ProvisionTrackerV2.exe"; DestDir: "{app}"; Flags: ignoreversion
-Source: "{#BuildDir}\*.dll"; DestDir: "{app}"; Flags: ignoreversion
-Source: "{#BuildDir}\opengl32sw.dll"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
-Source: "{#BuildDir}\D3Dcompiler_47.dll"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
-Source: "{#BuildDir}\platforms\*"; DestDir: "{app}\platforms"; Flags: ignoreversion recursesubdirs createallsubdirs
-Source: "{#BuildDir}\styles\*"; DestDir: "{app}\styles"; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
-Source: "{#BuildDir}\iconengines\*"; DestDir: "{app}\iconengines"; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
-Source: "{#BuildDir}\imageformats\*"; DestDir: "{app}\imageformats"; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
-Source: "{#BuildDir}\networkinformation\*"; DestDir: "{app}\networkinformation"; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
-Source: "{#BuildDir}\generic\*"; DestDir: "{app}\generic"; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
-Source: "{#BuildDir}\tls\*"; DestDir: "{app}\tls"; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
-Source: "{#BuildDir}\translations\qt_da.qm"; DestDir: "{app}\translations"; Flags: ignoreversion skipifsourcedoesntexist
-Source: "{#BuildDir}\translations\qt_en.qm"; DestDir: "{app}\translations"; Flags: ignoreversion skipifsourcedoesntexist
-Source: "{#BuildDir}\intramanager_worker\intramanager_sync.exe"; DestDir: "{app}\intramanager_worker"; Flags: ignoreversion
-Source: "{#BuildDir}\intramanager_worker\_internal\*"; DestDir: "{app}\intramanager_worker\_internal"; Flags: ignoreversion recursesubdirs createallsubdirs
-Source: "{#BuildDir}\intramanager_worker\b\*"; DestDir: "{app}\intramanager_worker\b"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#BuildDir}\ProvisionTrackerV2.exe"; DestDir: "{#UserInstallDir}"; Flags: ignoreversion
+Source: "{#BuildDir}\*.dll"; DestDir: "{#UserInstallDir}"; Flags: ignoreversion
+Source: "{#BuildDir}\opengl32sw.dll"; DestDir: "{#UserInstallDir}"; Flags: ignoreversion skipifsourcedoesntexist
+Source: "{#BuildDir}\D3Dcompiler_47.dll"; DestDir: "{#UserInstallDir}"; Flags: ignoreversion skipifsourcedoesntexist
+Source: "{#BuildDir}\platforms\*"; DestDir: "{#UserInstallDir}\platforms"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#BuildDir}\styles\*"; DestDir: "{#UserInstallDir}\styles"; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
+Source: "{#BuildDir}\iconengines\*"; DestDir: "{#UserInstallDir}\iconengines"; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
+Source: "{#BuildDir}\imageformats\*"; DestDir: "{#UserInstallDir}\imageformats"; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
+Source: "{#BuildDir}\networkinformation\*"; DestDir: "{#UserInstallDir}\networkinformation"; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
+Source: "{#BuildDir}\generic\*"; DestDir: "{#UserInstallDir}\generic"; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
+Source: "{#BuildDir}\tls\*"; DestDir: "{#UserInstallDir}\tls"; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
+Source: "{#BuildDir}\translations\qt_da.qm"; DestDir: "{#UserInstallDir}\translations"; Flags: ignoreversion skipifsourcedoesntexist
+Source: "{#BuildDir}\translations\qt_en.qm"; DestDir: "{#UserInstallDir}\translations"; Flags: ignoreversion skipifsourcedoesntexist
+Source: "{#BuildDir}\intramanager_worker\intramanager_sync.exe"; DestDir: "{#UserInstallDir}\intramanager_worker"; Flags: ignoreversion
+Source: "{#BuildDir}\intramanager_worker\_internal\*"; DestDir: "{#UserInstallDir}\intramanager_worker\_internal"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#BuildDir}\intramanager_worker\b\*"; DestDir: "{#UserInstallDir}\intramanager_worker\b"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
-Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
-Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
-Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Check: ShouldRefreshDesktopShortcut
-Name: "{autodesktop}\Provi Beregner"; Filename: "{app}\{#MyAppExeName}"; Check: ShouldRefreshLegacyDesktopShortcut('Provi Beregner')
-Name: "{autodesktop}\ProvisionTrackerV2"; Filename: "{app}\{#MyAppExeName}"; Check: ShouldRefreshLegacyDesktopShortcut('ProvisionTrackerV2')
-Name: "{userprograms}\Provi Beregner"; Filename: "{app}\{#MyAppExeName}"; Check: ShouldRefreshLegacyStartMenuShortcut('Provi Beregner')
-Name: "{userprograms}\ProvisionTrackerV2"; Filename: "{app}\{#MyAppExeName}"; Check: ShouldRefreshLegacyStartMenuShortcut('ProvisionTrackerV2')
+Name: "{group}\{#MyAppName}"; Filename: "{#UserInstallDir}\{#MyAppExeName}"
+Name: "{autodesktop}\{#MyAppName}"; Filename: "{#UserInstallDir}\{#MyAppExeName}"; Tasks: desktopicon
+Name: "{autodesktop}\{#MyAppName}"; Filename: "{#UserInstallDir}\{#MyAppExeName}"; Check: ShouldRefreshDesktopShortcut
+Name: "{autodesktop}\Provi Beregner"; Filename: "{#UserInstallDir}\{#MyAppExeName}"; Check: ShouldRefreshLegacyDesktopShortcut('Provi Beregner')
+Name: "{autodesktop}\ProvisionTrackerV2"; Filename: "{#UserInstallDir}\{#MyAppExeName}"; Check: ShouldRefreshLegacyDesktopShortcut('ProvisionTrackerV2')
+Name: "{userprograms}\Provi Beregner"; Filename: "{#UserInstallDir}\{#MyAppExeName}"; Check: ShouldRefreshLegacyStartMenuShortcut('Provi Beregner')
+Name: "{userprograms}\ProvisionTrackerV2"; Filename: "{#UserInstallDir}\{#MyAppExeName}"; Check: ShouldRefreshLegacyStartMenuShortcut('ProvisionTrackerV2')
 
 [Run]
-Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; Flags: nowait postinstall skipifsilent
+Filename: "{#UserInstallDir}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; Flags: nowait postinstall skipifsilent
+Filename: "{#UserInstallDir}\{#MyAppExeName}"; Flags: nowait; Check: ShouldLaunchRedirectedSilent
 
 [Code]
 const
   Legacy11UninstallKey = 'Software\Microsoft\Windows\CurrentVersion\Uninstall\{CBA2670F-F574-46E0-8913-FBEF7822C1B7}_is1';
+
+var
+  RedirectedAutoUpdate: Boolean;
 
 function ShouldRefreshDesktopShortcut: Boolean;
 begin
@@ -154,13 +161,37 @@ begin
   Result := CompareText(RemoveBackslashUnlessRoot(Left), RemoveBackslashUnlessRoot(Right)) = 0;
 end;
 
+function UserInstallDirValue: string;
+begin
+  Result := ExpandConstant('{#UserInstallDir}');
+end;
+
+function InitializeSetup: Boolean;
+begin
+  RedirectedAutoUpdate := WizardSilent and not SameDir(ExpandConstant('{app}'), UserInstallDirValue);
+  Result := True;
+end;
+
+function ShouldLaunchRedirectedSilent: Boolean;
+begin
+  Result := RedirectedAutoUpdate;
+end;
+
+function GetCustomSetupExitCode: Integer;
+begin
+  if RedirectedAutoUpdate then
+    Result := 42
+  else
+    Result := 0;
+end;
+
 procedure UninstallLegacy11IfSeparate(LegacyDir: string);
 var
   UninstallString: string;
   Uninstaller: string;
   ResultCode: Integer;
 begin
-  if (LegacyDir = '') or SameDir(LegacyDir, ExpandConstant('{app}')) then
+  if (LegacyDir = '') or SameDir(LegacyDir, UserInstallDirValue) then
     exit;
 
   if RegQueryStringValue(HKCU, Legacy11UninstallKey, 'UninstallString', UninstallString) then begin

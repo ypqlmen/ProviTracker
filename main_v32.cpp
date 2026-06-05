@@ -21,8 +21,8 @@
 #include "commission.h"
 #include "report_service.h"
 
-static constexpr const char* APP_VERSION = "1.5.4";
-static constexpr int APP_BUILD_VERSION = 10507;
+static constexpr const char* APP_VERSION = "1.5.5";
+static constexpr int APP_BUILD_VERSION = 10508;
 static constexpr const char* UPDATE_APPCAST_URL = "https://raw.githubusercontent.com/ypqlmen/ProviTracker/main/appcast.xml";
 
 static QString psSingleQuoted(QString value) {
@@ -154,6 +154,14 @@ private:
         const QString dir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + "/updates";
         QDir().mkpath(dir);
         return QDir(dir).filePath(QString("attempt_%1.txt").arg(buildVersion));
+    }
+
+    QString perUserInstallDir() const {
+        QString localAppData = qEnvironmentVariable("LOCALAPPDATA").trimmed();
+        if (localAppData.isEmpty()) {
+            localAppData = QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation);
+        }
+        return QDir(localAppData).filePath("Programs/Provi Tracker");
     }
 
     bool updateAttemptRecently(int buildVersion) const {
@@ -317,7 +325,8 @@ private:
             return;
         }
 
-        const QString targetDir = QDir::toNativeSeparators(QCoreApplication::applicationDirPath());
+        const QString targetDir = QDir::toNativeSeparators(perUserInstallDir());
+        const QString targetApp = QDir::toNativeSeparators(QDir(targetDir).filePath("ProvisionTrackerV2.exe"));
         const QString currentApp = QDir::toNativeSeparators(QCoreApplication::applicationFilePath());
         const QString markerPath = QDir::toNativeSeparators(updateAttemptMarkerPath(update.buildVersion));
         const QString logDir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + "/updates";
@@ -331,6 +340,7 @@ private:
         ts << "$arguments = @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/CLOSEAPPLICATIONS', '/FORCECLOSEAPPLICATIONS')\n";
         ts << "$targetDir = " << psSingleQuoted(targetDir) << "\n";
         ts << "$arguments += ('/DIR=\"' + $targetDir + '\"')\n";
+        ts << "$targetApp = " << psSingleQuoted(targetApp) << "\n";
         ts << "$currentApp = " << psSingleQuoted(currentApp) << "\n";
         ts << "$markerPath = " << psSingleQuoted(markerPath) << "\n";
         ts << "$logPath = " << psSingleQuoted(logPath) << "\n";
@@ -338,6 +348,7 @@ private:
         ts << "$scriptPath = $PSCommandPath\n";
         ts << "$cleanupRoot = Split-Path -Parent $workDir\n";
         ts << "$parentPid = " << QString::number(QCoreApplication::applicationPid()) << "\n";
+        ts << "$successCodes = @(0, 42)\n";
         ts << "New-Item -ItemType Directory -Force -Path (Split-Path -Parent $logPath) | Out-Null\n";
         ts << "Set-Content -LiteralPath $logPath -Value ('Starter update ' + (Get-Date).ToString('s') + ' til ' + $targetDir)\n";
         ts << "$parent = Get-Process -Id $parentPid -ErrorAction SilentlyContinue\n";
@@ -346,15 +357,15 @@ private:
         ts << "$proc = Start-Process -FilePath $installer -ArgumentList $arguments -PassThru -Wait\n";
         ts << "if ($proc) { $exitCode = $proc.ExitCode }\n";
         ts << "Add-Content -LiteralPath $logPath -Value ('Installer exit code: ' + $exitCode)\n";
-        ts << "if ($exitCode -eq 0) { Set-Content -LiteralPath $markerPath -Value ('success ' + (Get-Date).ToString('s') + ' ' + $currentApp + ' -> ' + $targetDir) }\n";
+        ts << "$installSucceeded = $successCodes -contains $exitCode\n";
+        ts << "if ($installSucceeded) { Set-Content -LiteralPath $markerPath -Value ('success ' + (Get-Date).ToString('s') + ' ' + $currentApp + ' -> ' + $targetDir + ' exit=' + $exitCode) }\n";
         ts << "Start-Sleep -Seconds 2\n";
         ts << "Set-Location -LiteralPath $env:TEMP\n";
         ts << "Remove-Item -LiteralPath $workDir -Recurse -Force\n";
         ts << "if ((Test-Path $cleanupRoot) -and -not (Get-ChildItem -LiteralPath $cleanupRoot -Force | Select-Object -First 1)) { Remove-Item -LiteralPath $cleanupRoot -Force }\n";
-        ts << "$app = Join-Path $env:LOCALAPPDATA 'Programs\\Provi Tracker\\ProvisionTrackerV2.exe'\n";
-        ts << "if ($exitCode -ne 0) { Remove-Item -LiteralPath $markerPath -Force }\n";
-        ts << "if (($exitCode -eq 0) -and (Test-Path $currentApp)) { Start-Process -FilePath $currentApp -WorkingDirectory (Split-Path -Parent $currentApp) }\n";
-        ts << "elseif (($exitCode -eq 0) -and (Test-Path $app)) { Start-Process -FilePath $app -WorkingDirectory (Split-Path -Parent $app) }\n";
+        ts << "if (-not $installSucceeded) { Remove-Item -LiteralPath $markerPath -Force }\n";
+        ts << "if ($installSucceeded -and (Test-Path $targetApp)) { Start-Process -FilePath $targetApp -WorkingDirectory (Split-Path -Parent $targetApp) }\n";
+        ts << "elseif ($installSucceeded -and (Test-Path $currentApp)) { Start-Process -FilePath $currentApp -WorkingDirectory (Split-Path -Parent $currentApp) }\n";
         ts << "Remove-Item -LiteralPath $scriptPath -Force\n";
         script.close();
 
