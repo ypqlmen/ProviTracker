@@ -70,14 +70,11 @@ Name: "{userprograms}\ProvisionTrackerV2"; Filename: "{#UserInstallDir}\{#MyAppE
 
 [Run]
 Filename: "{#UserInstallDir}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; Flags: nowait postinstall skipifsilent
-Filename: "{#UserInstallDir}\{#MyAppExeName}"; Flags: nowait; Check: ShouldLaunchRedirectedSilent
+Filename: "{win}\explorer.exe"; Parameters: """{#UserInstallDir}\{#MyAppExeName}"""; Flags: nowait; Check: ShouldLaunchRedirectedSilent
 
 [Code]
 const
   Legacy11UninstallKey = 'Software\Microsoft\Windows\CurrentVersion\Uninstall\{CBA2670F-F574-46E0-8913-FBEF7822C1B7}_is1';
-
-var
-  RedirectedAutoUpdate: Boolean;
 
 function ShouldRefreshDesktopShortcut: Boolean;
 begin
@@ -166,20 +163,37 @@ begin
   Result := ExpandConstant('{#UserInstallDir}');
 end;
 
-function InitializeSetup: Boolean;
+function CommandLineDirValue: string;
+var
+  I: Integer;
+  Value: string;
 begin
-  RedirectedAutoUpdate := WizardSilent and not SameDir(ExpandConstant('{app}'), UserInstallDirValue);
-  Result := True;
+  Result := '';
+  for I := 1 to ParamCount do begin
+    Value := ParamStr(I);
+    if CompareText(Copy(Value, 1, 5), '/DIR=') = 0 then begin
+      Result := RemoveQuotes(Copy(Value, 6, Length(Value)));
+      exit;
+    end;
+  end;
+end;
+
+function IsRedirectedAutoUpdate: Boolean;
+var
+  RequestedDir: string;
+begin
+  RequestedDir := CommandLineDirValue;
+  Result := WizardSilent and (RequestedDir <> '') and not SameDir(RequestedDir, UserInstallDirValue);
 end;
 
 function ShouldLaunchRedirectedSilent: Boolean;
 begin
-  Result := RedirectedAutoUpdate;
+  Result := IsRedirectedAutoUpdate;
 end;
 
 function GetCustomSetupExitCode: Integer;
 begin
-  if RedirectedAutoUpdate then
+  if IsRedirectedAutoUpdate then
     Result := 42
   else
     Result := 0;
