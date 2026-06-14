@@ -112,6 +112,8 @@ struct IntramanagerHoursEntry {
     QString toDate;
     double hours = 0.0;
     double phoneHours = 0.0;
+    double sickHours = 0.0;
+    double sickPay = 0.0;
     QString syncedAt;
 };
 
@@ -326,6 +328,8 @@ static QJsonObject toJson(const IntramanagerHoursEntry& e) {
         {"toDate", e.toDate},
         {"hours", e.hours},
         {"phoneHours", e.phoneHours},
+        {"sickHours", e.sickHours},
+        {"sickPay", e.sickPay},
         {"syncedAt", e.syncedAt}
     };
 }
@@ -336,6 +340,8 @@ static IntramanagerHoursEntry fromIntramanagerHoursJson(const QJsonObject& o) {
     e.toDate = o.value("toDate").toString();
     e.hours = o.value("hours").toDouble(0.0);
     e.phoneHours = o.value("phoneHours").toDouble(0.0);
+    e.sickHours = o.value("sickHours").toDouble(0.0);
+    e.sickPay = o.value("sickPay").toDouble(0.0);
     e.syncedAt = o.value("syncedAt").toString();
     return e;
 }

@@ -21,8 +21,8 @@
 #include "commission.h"
 #include "report_service.h"
 
-static constexpr const char* APP_VERSION = "1.5.8";
-static constexpr int APP_BUILD_VERSION = 10511;
+static constexpr const char* APP_VERSION = "1.5.9";
+static constexpr int APP_BUILD_VERSION = 10512;
 static constexpr const char* UPDATE_APPCAST_URL = "https://raw.githubusercontent.com/ypqlmen/ProviTracker/main/appcast.xml";
 
 static QString psSingleQuoted(QString value) {
@@ -1909,6 +1909,8 @@ private:
         bool success = false;
         double hours = 0.0;
         double phoneHours = 0.0;
+        double sickHours = 0.0;
+        double sickPay = 0.0;
         QString error;
     };
 
@@ -1929,6 +1931,8 @@ private:
         bool punchSuccess = false;
         double hours = 0.0;
         double phoneHours = 0.0;
+        double sickHours = 0.0;
+        double sickPay = 0.0;
         IntramanagerPunchResult punch;
         QString hoursError;
         QString punchError;
@@ -2401,6 +2405,8 @@ private:
         result.success = true;
         result.hours = obj.value("hours").toDouble(0.0);
         result.phoneHours = obj.value("phoneHours").toDouble(0.0);
+        result.sickHours = obj.value("sickHours").toDouble(0.0);
+        result.sickPay = obj.value("sickPay").toDouble(0.0);
         return result;
     }
 
@@ -2455,6 +2461,8 @@ private:
         result.punchSuccess = obj.value("punchSuccess").toBool(false);
         result.hours = obj.value("hours").toDouble(0.0);
         result.phoneHours = obj.value("phoneHours").toDouble(0.0);
+        result.sickHours = obj.value("sickHours").toDouble(0.0);
+        result.sickPay = obj.value("sickPay").toDouble(0.0);
         result.hoursError = obj.value("hoursError").toString();
         result.punchError = obj.value("punchError").toString();
 
@@ -2488,7 +2496,14 @@ private:
         return text.isEmpty() ? "Ukendt fejl ved stempelstatus." : text;
     }
 
-    void rememberIntramanagerHours(const QString& fromDate, const QString& toDate, double hours, double phoneHours) {
+    void rememberIntramanagerHours(
+        const QString& fromDate,
+        const QString& toDate,
+        double hours,
+        double phoneHours,
+        double sickHours,
+        double sickPay
+        ) {
         const QString syncedAt = QDateTime::currentDateTime().toString(Qt::ISODate);
 
         repo.settings.lastIntramanagerHours = hours;
@@ -2501,6 +2516,8 @@ private:
         entry.toDate = toDate;
         entry.hours = hours;
         entry.phoneHours = phoneHours;
+        entry.sickHours = sickHours;
+        entry.sickPay = sickPay;
         entry.syncedAt = syncedAt;
 
         repo.settings.intramanagerHoursCache[intramanagerPeriodKey(fromDate, toDate)] = entry;
@@ -2682,7 +2699,7 @@ private:
                         return;
                     }
 
-                    rememberIntramanagerHours(fromDate, toDate, result.hours, result.phoneHours);
+                    rememberIntramanagerHours(fromDate, toDate, result.hours, result.phoneHours, result.sickHours, result.sickPay);
                     repo.saveSettings();
                     refreshAll();
 
@@ -2770,7 +2787,7 @@ private:
                     const IntramanagerOverviewResult result = parseIntramanagerOverviewWorkerOutput(stdoutData, stderrData);
 
                     if (result.hoursSuccess) {
-                        rememberIntramanagerHours(fromDate, toDate, result.hours, result.phoneHours);
+                        rememberIntramanagerHours(fromDate, toDate, result.hours, result.phoneHours, result.sickHours, result.sickPay);
                     }
 
                     if (result.punchSuccess) {
@@ -5177,9 +5194,14 @@ QTableWidget::item {
         auto cachedHoursForRange = [this](const QPair<QDateTime, QDateTime>& range) {
             const QString from = intramanagerDate(range.first.date());
             const QString to = intramanagerDate(range.second.date());
-            return cachedIntramanagerHours(from, to)
-                .value_or(IntramanagerHoursEntry{from, to, 0.0, 0.0, QString()})
-                .hours;
+            const auto cached = cachedIntramanagerHours(from, to);
+            return cached.has_value() ? cached->hours : 0.0;
+        };
+        auto cachedSickPayForRange = [this](const QPair<QDateTime, QDateTime>& range) {
+            const QString from = intramanagerDate(range.first.date());
+            const QString to = intramanagerDate(range.second.date());
+            const auto cached = cachedIntramanagerHours(from, to);
+            return cached.has_value() ? cached->sickPay : 0.0;
         };
         auto delayedBonus = [](const Metrics& metrics) {
             return metrics.monthlyBonus + metrics.simoBonus + metrics.voiceBonus;
@@ -5226,14 +5248,18 @@ QTableWidget::item {
         if (kpiTodayPointsLabel) kpiTodayPointsLabel->setText(money(mDay.totalPoints));
 
         const double currentPayPeriodBaseSalary = cachedHoursForRange(currentPayPeriod) * repo.settings.hourlyRate;
-        const double currentPayPeriodSickPay = sickPayForRange(s->id, currentPayPeriod.first, currentPayPeriod.second);
+        const double currentPayPeriodSickPay =
+            cachedSickPayForRange(currentPayPeriod)
+            + sickPayForRange(s->id, currentPayPeriod.first, currentPayPeriod.second);
         const double currentPayPeriodBonus = currentPayPeriodMetrics.dayBonus;
         const double backpaidBonusThisMonth = delayedBonus(previousMonthMetrics);
         const double actualSalaryThisMonth =
             currentPayPeriodBaseSalary + currentPayPeriodSickPay + currentPayPeriodBonus + backpaidBonusThisMonth;
 
         const double nextPayPeriodBaseSalary = cachedHoursForRange(nextPayPeriod) * repo.settings.hourlyRate;
-        const double nextPayPeriodSickPay = sickPayForRange(s->id, nextPayPeriod.first, nextPayPeriod.second);
+        const double nextPayPeriodSickPay =
+            cachedSickPayForRange(nextPayPeriod)
+            + sickPayForRange(s->id, nextPayPeriod.first, nextPayPeriod.second);
         const double nextPayPeriodBonus = nextPayPeriodMetrics.dayBonus;
         const double backpaidBonusNextMonth = delayedBonus(currentCalendarMetrics);
         const double salaryEarnedForNextMonth =
@@ -6013,7 +6039,9 @@ QTableWidget::item {
 
         salary.usesPaymentMonthRules = true;
         salary.baseSalary = hoursEntry.hours * repo.settings.hourlyRate;
-        salary.sickPay = sickPayForRange(salesperson.id, payrollRange.first, payrollRange.second);
+        salary.sickPay =
+            hoursEntry.sickPay
+            + sickPayForRange(salesperson.id, payrollRange.first, payrollRange.second);
         salary.periodProvision = payrollMetrics.dayBonus;
         salary.delayedProvision =
             previousMonthMetrics.monthlyBonus + previousMonthMetrics.simoBonus + previousMonthMetrics.voiceBonus;

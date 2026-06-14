@@ -87,8 +87,38 @@ def parse_hours(text):
     return round(hours + minutes / 60.0, 2)
 
 
+def parse_money(text):
+    value = clean_text(text)
+    match = re.search(r"-?\d[\d\.\s]*(?:,\d+)?|-?\d+(?:\.\d+)?", value)
+
+    if not match:
+        return None
+
+    normalized = match.group(0).replace(" ", "")
+    if "," in normalized:
+        normalized = normalized.replace(".", "").replace(",", ".")
+
+    try:
+        return round(float(normalized), 2)
+    except ValueError:
+        return None
+
+
 def clean_text(value):
     return re.sub(r"\s+", " ", value or "").strip()
+
+
+def fold_danish_letters(value):
+    return (value or "").lower() \
+        .replace("\u00e6", "ae") \
+        .replace("\u00f8", "oe") \
+        .replace("\u00e5", "aa") \
+        .replace("\u00c6", "ae") \
+        .replace("\u00d8", "oe") \
+        .replace("\u00c5", "aa") \
+        .replace("\u00c3\u00a6", "ae") \
+        .replace("\u00c3\u00b8", "oe") \
+        .replace("\u00c3\u00a5", "aa")
 
 
 def text_lines(value):
@@ -2177,9 +2207,46 @@ def result_says_no_rows(page):
     return "intet blev fundet" in main_text.lower()
 
 
-def sum_hours_from_result_rows(page):
+def is_absence_pay_project(project):
+    lower = fold_danish_letters(clean_text(project))
+    markers = [
+        "syg",
+        "sygdom",
+        "sygeløn",
+        "sygeloen",
+        "fravær",
+        "fravaer",
+        "ferie",
+        "omsorg",
+        "orlov",
+        "garantiløn",
+        "garantiloen",
+    ]
+    return any(marker in lower for marker in markers)
+
+
+def payroll_money_from_cells(cells):
+    total = 0.0
+    found_any = False
+
+    # Timeseddelshistorik columns: Grundløn, Bonus, Provision.
+    for index in (5, 6, 7):
+        if len(cells) <= index:
+            continue
+        amount = parse_money(cells[index])
+        if amount is None:
+            continue
+        total += amount
+        found_any = True
+
+    return round(total, 2) if found_any else 0.0
+
+
+def payroll_summary_from_result_rows(page):
     paid_hours = 0.0
     phone_hours = 0.0
+    absence_hours = 0.0
+    absence_pay = 0.0
     found_any = False
 
     try:
@@ -2190,6 +2257,7 @@ def sum_hours_from_result_rows(page):
             if len(cells) < 3:
                 continue
 
+            project = clean_text(cells[0])
             hour_lines = text_lines(cells[2])
             if not hour_lines:
                 continue
@@ -2199,17 +2267,26 @@ def sum_hours_from_result_rows(page):
                 continue
 
             phone = parse_hours(hour_lines[1]) if len(hour_lines) >= 2 else 0.0
-            paid_hours += paid
-            phone_hours += phone or 0.0
+            if is_absence_pay_project(project):
+                absence_hours += paid
+                absence_pay += payroll_money_from_cells(cells)
+            else:
+                paid_hours += paid
+                phone_hours += phone or 0.0
             found_any = True
 
     except Exception:
-        return None, None
+        return None
 
     if not found_any:
-        return None, None
+        return None
 
-    return round(paid_hours, 2), round(phone_hours, 2)
+    return {
+        "hours": round(paid_hours, 2),
+        "phoneHours": round(phone_hours, 2),
+        "sickHours": round(absence_hours, 2),
+        "sickPay": round(absence_pay, 2),
+    }
 
 
 def fetch_hours(page, args, debug_dir):
@@ -2217,32 +2294,39 @@ def fetch_hours(page, args, debug_dir):
 
     paid_hours = None
     phone_hours = None
+    sick_hours = 0.0
+    sick_pay = 0.0
+    row_summary = payroll_summary_from_result_rows(page)
 
-    try:
-        footer_cells = (
-            page
-            .locator("tfoot tr")
-            .first
-            .locator("td")
-            .all_inner_texts()
-        )
+    if row_summary is not None:
+        paid_hours = row_summary.get("hours", 0.0)
+        phone_hours = row_summary.get("phoneHours", 0.0)
+        sick_hours = row_summary.get("sickHours", 0.0)
+        sick_pay = row_summary.get("sickPay", 0.0)
 
-        if len(footer_cells) >= 3:
+    if row_summary is None:
+        try:
+            footer_cells = (
+                page
+                .locator("tfoot tr")
+                .first
+                .locator("td")
+                .all_inner_texts()
+            )
 
-            hour_lines = footer_cells[2].splitlines()
+            if len(footer_cells) >= 3:
 
-            if len(hour_lines) >= 1:
-                paid_hours = parse_hours(hour_lines[0])
+                hour_lines = footer_cells[2].splitlines()
 
-            if len(hour_lines) >= 2:
-                phone_hours = parse_hours(hour_lines[1])
+                if len(hour_lines) >= 1:
+                    paid_hours = parse_hours(hour_lines[0])
 
-    except Exception:
-        paid_hours = None
-        phone_hours = None
+                if len(hour_lines) >= 2:
+                    phone_hours = parse_hours(hour_lines[1])
 
-    if paid_hours is None:
-        paid_hours, phone_hours = sum_hours_from_result_rows(page)
+        except Exception:
+            paid_hours = None
+            phone_hours = None
 
     if paid_hours is None and result_says_no_rows(page):
         return {
@@ -2253,6 +2337,8 @@ def fetch_hours(page, args, debug_dir):
             "periodTo": args.to_date,
             "hours": 0.0,
             "phoneHours": 0.0,
+            "sickHours": 0.0,
+            "sickPay": 0.0,
             "debugDir": str(debug_dir)
         }
 
@@ -2274,6 +2360,8 @@ def fetch_hours(page, args, debug_dir):
         "periodTo": args.to_date,
         "hours": paid_hours,
         "phoneHours": phone_hours,
+        "sickHours": sick_hours,
+        "sickPay": sick_pay,
         "debugDir": str(debug_dir)
     }
 
@@ -2534,6 +2622,8 @@ def fetch_overview(page, args, debug_dir):
         "periodTo": hours.get("periodTo", args.to_date),
         "hours": hours.get("hours", 0.0),
         "phoneHours": hours.get("phoneHours", 0.0),
+        "sickHours": hours.get("sickHours", 0.0),
+        "sickPay": hours.get("sickPay", 0.0),
         "statusKnown": punch.get("statusKnown", False),
         "clockedIn": punch.get("clockedIn", False),
         "statusText": punch.get("statusText", ""),
