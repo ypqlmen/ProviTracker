@@ -15,13 +15,14 @@ Qt Widgets desktop-app i C++ med Supabase cloud-login, per-user installation og 
 - Automatisk månedsluk for tidligere måneder med snapshots + PDF
 - Provisionsmotor med 5-trinslåsning for SIMO og 10-trinslåsning for VOICE
 - Intramanager-timer caches pr. rapportperiode
-- Mailbaseret salgsregistrering til Excel Online via Outlook desktop og Power Automate
+- Sygelønsposter indgår i dashboardets lønkort og rapporter
+- Online salgsregistrering til Excel Online via Supabase cloud, mailflow og Power Automate
 
 ## Salgsregistrering via mailflow
 
-Programmet bruger ikke lokal Excel og kræver ikke Azure/Entra-adgang for brugerne. Når salgsregistrering er slået til i Indstillinger, opretter appen en Outlook-mail fra brugerens klassiske Outlook desktop og sender den til den flow-mailboks, der er gemt i indstillingerne.
+Programmet bruger ikke lokal Excel, lokal Outlook eller Azure/Entra-adgang for brugerne. Når salgsregistrering er slået til i Indstillinger, sender appen payloaden til Provi Tracker cloud. Supabase Edge Function `sales-registration-submit` lægger registreringen i en online kø og kan sende mailen videre til den flow-mailboks, der er gemt i indstillingerne.
 
-Programmet gemmer ikke Outlook-adgangskoder og opretter ikke Microsoft Graph tokens. Outlook skal bare være installeret og konfigureret på brugerens Windows-profil.
+Cloud-maileren kræver en central mailprovider-konfiguration i Supabase Function secrets, fx `RESEND_API_KEY` og `SALES_REGISTRATION_FROM`. Almindelige brugere skal ikke installere eller konfigurere Outlook.
 
 Payloaden indeholder bl.a.:
 
@@ -41,6 +42,7 @@ Cloud-data pr. bruger:
 
 - `settings`
 - `orders`
+- `sickPayEntries`
 - `products`
 - en `salesperson`, normaliseret til brugerens brugernavn
 - `secrets` med Intramanager-adgangskode krypteret client-side
@@ -99,6 +101,7 @@ Version 1.4.0 bruger Supabase som primær lagring, så almindelige brugere ikke 
 - `salespeople.json`
 - `products.json`
 - `orders.json`
+- `sick_pay.json`
 - `settings.json`
 - `intramanager_login.json` med brugerbundet DPAPI-krypteret Intramanager-adgangskode
 - `cloud_session.json` med brugerbundet DPAPI-krypteret Supabase-session
@@ -123,10 +126,10 @@ Appen læser appcast fra:
 
 GitHub Release-tagget til auto-update er `autoupdate`. Auto-update i appen henter zip-assetet, pakker det ud i brugerens tempmappe, starter installeren og rydder op bagefter.
 
-Aktuelle assets for version 1.5.6:
+Aktuelle assets for version 1.5.7:
 
-- `ProviTrackerUpdate-1.5.6.zip`
-- `ProviBeregnerSetup-1.5.6.exe`
+- `ProviTrackerUpdate-1.5.7.zip`
+- `ProviBeregnerSetup-1.5.7.exe`
 
 Bemærk: den oprindelige 1.1-build indeholdt WinSparkle DLL'en, men ikke en appcast-URL i selve programmet eller installeren. Brugere på 1.1 skal derfor installere en nyere version manuelt en gang; derefter kan auto-update hente fremtidige versioner.
 

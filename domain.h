@@ -68,6 +68,14 @@ struct Order {
     QString note;
 };
 
+struct SickPayEntry {
+    QString id;
+    QString salespersonId;
+    QDate date;
+    double amount = 0.0;
+    QString note;
+};
+
 struct Salesperson {
     QString id;
     QString name;
@@ -230,6 +238,29 @@ static Order fromOrderJson(const QJsonObject& o) {
     for (const auto& v : o["items"].toArray()) order.items.push_back(fromOrderItemJson(v.toObject()));
     order.note = o["note"].toString();
     return order;
+}
+
+static QJsonObject toJson(const SickPayEntry& e) {
+    return {
+        {"id", e.id},
+        {"salespersonId", e.salespersonId},
+        {"date", e.date.toString(Qt::ISODate)},
+        {"amount", e.amount},
+        {"note", e.note}
+    };
+}
+
+static SickPayEntry fromSickPayEntryJson(const QJsonObject& o) {
+    SickPayEntry entry;
+    entry.id = o.value("id").toString();
+    entry.salespersonId = o.value("salespersonId").toString();
+    entry.date = QDate::fromString(o.value("date").toString(), Qt::ISODate);
+    entry.amount = o.value("amount").toDouble(0.0);
+    entry.note = o.value("note").toString();
+    if (!entry.date.isValid()) {
+        entry.date = QDate::currentDate();
+    }
+    return entry;
 }
 
 static QJsonObject toJson(const Salesperson& s) {

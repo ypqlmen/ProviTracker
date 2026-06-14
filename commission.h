@@ -303,6 +303,7 @@ static QString nextMonthlyTierHint(double points, const BonusSettings& b) {
 struct ReportSalaryBreakdown {
     bool usesPaymentMonthRules = false;
     double baseSalary = 0.0;
+    double sickPay = 0.0;
     double periodProvision = 0.0;
     double delayedProvision = 0.0;
     double totalProvision = 0.0;

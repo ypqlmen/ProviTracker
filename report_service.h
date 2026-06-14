@@ -29,7 +29,7 @@ public:
         if (!salary.usesPaymentMonthRules) {
             salary.baseSalary = workedHours * hourlyRate;
             salary.totalProvision = m.totalCommission;
-            salary.totalSalary = salary.baseSalary + salary.totalProvision;
+            salary.totalSalary = salary.baseSalary + salary.sickPay + salary.totalProvision;
         }
         salary.taxConfigured = repo.settings.taxRatePercent > 0.0;
         salary.taxDeduction = repo.settings.taxDeduction;
@@ -87,6 +87,7 @@ public:
         addCard("Løntimer", money(workedHours) + " timer");
         addCard("Timeløn", money(hourlyRate) + " kr/t");
         addCard("Timer", money(salary.baseSalary) + " kr");
+        addCard("Sygeløn", money(salary.sickPay) + " kr");
         addCard("Provision", money(salary.totalProvision) + " kr");
         addCard("Løn", money(salary.totalSalary) + " kr");
         addCard("Udbetalt", salary.taxConfigured ? money(salary.netSalary) + " kr" : QString("Indstil skat"));
@@ -116,6 +117,7 @@ public:
         ts << "<tr><td>Løntimer</td><td>" << money(workedHours) << " timer</td></tr>";
         ts << "<tr><td>Timeløn</td><td>" << money(hourlyRate) << " kr/t</td></tr>";
         ts << "<tr><td>Timer</td><td>" << money(salary.baseSalary) << " kr</td></tr>";
+        ts << "<tr><td>Sygeløn</td><td>" << money(salary.sickPay) << " kr</td></tr>";
         ts << "<tr><td>Provision</td><td>" << money(salary.totalProvision) << " kr</td></tr>";
         if (salary.usesPaymentMonthRules) {
             ts << "<tr><td>Provision i lønperioden</td><td>" << money(salary.periodProvision) << " kr";

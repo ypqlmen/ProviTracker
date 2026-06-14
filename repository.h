@@ -14,6 +14,7 @@ public:
     QVector<Salesperson> salespeople;
     QVector<Product> products;
     QVector<Order> orders;
+    QVector<SickPayEntry> sickPayEntries;
     AppSettings settings;
     QJsonObject cloudSecrets;
     bool localPersistenceEnabled = true;
@@ -41,6 +42,7 @@ public:
         salespeople = loadVector<Salesperson>(baseDir() + "/salespeople.json", [](const QJsonObject& o){ return fromSalespersonJson(o); });
         products = loadVector<Product>(baseDir() + "/products.json", [](const QJsonObject& o){ return fromProductJson(o); });
         orders = loadVector<Order>(baseDir() + "/orders.json", [](const QJsonObject& o){ return fromOrderJson(o); });
+        sickPayEntries = loadVector<SickPayEntry>(baseDir() + "/sick_pay.json", [](const QJsonObject& o){ return fromSickPayEntryJson(o); });
 
         QFile f(baseDir() + "/settings.json");
         if (f.exists() && f.open(QIODevice::ReadOnly)) {
@@ -64,6 +66,7 @@ public:
         saveSalespeople();
         saveProducts();
         saveOrders();
+        saveSickPayEntries();
         saveSettings();
     }
 
@@ -82,6 +85,12 @@ public:
     void saveOrders() const {
         if (localPersistenceEnabled) {
             saveVector(baseDir() + "/orders.json", orders, [](const Order& o){ return toJson(o); });
+        }
+        requestCloudSave();
+    }
+    void saveSickPayEntries() const {
+        if (localPersistenceEnabled) {
+            saveVector(baseDir() + "/sick_pay.json", sickPayEntries, [](const SickPayEntry& e){ return toJson(e); });
         }
         requestCloudSave();
     }
@@ -109,9 +118,15 @@ public:
             ordersJson.append(toJson(o));
         }
 
+        QJsonArray sickPayJson;
+        for (const auto& e : sickPayEntries) {
+            sickPayJson.append(toJson(e));
+        }
+
         QJsonObject payload;
         payload["settings"] = toJson(settings);
         payload["orders"] = ordersJson;
+        payload["sickPayEntries"] = sickPayJson;
         payload["products"] = productsJson;
         payload["salesperson"] = salespeopleJson.isEmpty() ? QJsonObject() : salespeopleJson.at(0).toObject();
         payload["secrets"] = cloudSecrets;
@@ -125,6 +140,11 @@ public:
         orders.clear();
         for (const auto& v : payload.value("orders").toArray()) {
             orders.push_back(fromOrderJson(v.toObject()));
+        }
+
+        sickPayEntries.clear();
+        for (const auto& v : payload.value("sickPayEntries").toArray()) {
+            sickPayEntries.push_back(fromSickPayEntryJson(v.toObject()));
         }
 
         products.clear();
@@ -167,6 +187,10 @@ public:
 
         for (auto& order : orders) {
             order.salespersonId = sellerId;
+        }
+
+        for (auto& entry : sickPayEntries) {
+            entry.salespersonId = sellerId;
         }
     }
 

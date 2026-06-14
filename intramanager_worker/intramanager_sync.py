@@ -1581,6 +1581,7 @@ def kvikoc_dedupe_subscription_rows(rows, include_sensitive_details=False):
     unique = []
     seen = set()
     for row in rows:
+        row = kvikoc_normalize_subscription_row(row)
         key = kvikoc_global_subscription_key(row)
         if key in seen:
             continue
@@ -1595,11 +1596,30 @@ def kvikoc_product_name(row):
     phone = clean_text(row.get("phone")).upper()
 
     if subscription.lower() == "fastnet":
-        if re.fullmatch(r"(EM|EF)\d+", phone):
-            return "Fiber/internetforbindelse"
-        return "Fastnet"
+        return "Fastnet" if kvikoc_is_real_fixed_line_number(phone) else "Fiber/internetforbindelse"
 
     return subscription or category or "Ukendt"
+
+
+def kvikoc_is_real_fixed_line_number(value):
+    text = clean_text(value).upper()
+    if re.fullmatch(r"(EM|EF)\d+", text):
+        return False
+
+    digits = re.sub(r"\D+", "", text)
+    if len(digits) == 10 and digits.startswith("45"):
+        digits = digits[2:]
+
+    return bool(re.fullmatch(r"\d{8}", digits))
+
+
+def kvikoc_normalize_subscription_row(row):
+    normalized = dict(row)
+    if clean_text(normalized.get("subscription")).lower() == "fastnet" and not kvikoc_is_real_fixed_line_number(normalized.get("phone")):
+        normalized["_originalSubscription"] = normalized.get("subscription", "")
+        normalized["subscription"] = "Fiber/internetforbindelse"
+        normalized["category"] = "Fiber/internet"
+    return normalized
 
 
 def kvikoc_fallback_fixed_line_row(account_summary):
@@ -1607,8 +1627,8 @@ def kvikoc_fallback_fixed_line_row(account_summary):
     return {
         "phone": "",
         "status": clean_text(account_summary.get("status")) or "Aktivt",
-        "subscription": "Fastnet",
-        "category": "Fastnet",
+        "subscription": "Fiber/internetforbindelse",
+        "category": "Fiber/internet",
         "system": clean_text(account_summary.get("system")),
         "dealer": "",
         "created": "",
@@ -2425,6 +2445,12 @@ def fetch_punch_status(page, args, debug_dir):
         }
 
     if page_state.get("statusKnown"):
+        history_state = read_punch_state_from_history(page, today, debug_dir, "punch_status_history")
+        if history_state.get("lastStart") or history_state.get("lastStop"):
+            if history_state.get("clockedIn") == page_state.get("clockedIn"):
+                page_state["detail"] = history_state.get("detail", page_state.get("detail", ""))
+            page_state["lastStart"] = history_state.get("lastStart", page_state.get("lastStart", ""))
+            page_state["lastStop"] = history_state.get("lastStop", page_state.get("lastStop", ""))
         return {
             "success": True,
             "stage": "punch_status",
@@ -2481,7 +2507,7 @@ def same_intramanager_url(url):
         return False
 
 
-def page_diagnostic_snapshot(page, index, label, diagnose_dir):
+def page_diagnostic_snapshot(page, index, label, diagnose_dir, network_events=None):
     slug = diagnose_slug(label, f"page_{index:02d}")
     html_name = f"{index:02d}_{slug}.html"
     screenshot_name = f"{index:02d}_{slug}.png"
@@ -2583,15 +2609,61 @@ def page_diagnostic_snapshot(page, index, label, diagnose_dir):
                             rows
                         };
                     });
+                const headings = Array.from(document.querySelectorAll('h1,h2,h3,h4,.page-title,.title,.panel-title'))
+                    .filter(visible)
+                    .slice(0, 80)
+                    .map(element => clean(element.innerText || element.textContent || ''));
+                const navigation = Array.from(document.querySelectorAll('nav a, aside a, .sidebar a, #menu a, #mainmenu a, .navbar a, .dropdown-menu a'))
+                    .filter(visible)
+                    .slice(0, 250)
+                    .map(a => ({
+                        text: clean(a.innerText || a.textContent || ''),
+                        href: a.href || '',
+                        id: attr(a, 'id'),
+                        classes: attr(a, 'class')
+                    }));
+                const hiddenInputs = Array.from(document.querySelectorAll('input[type="hidden"]'))
+                    .slice(0, 250)
+                    .map(input => ({
+                        id: attr(input, 'id'),
+                        name: attr(input, 'name'),
+                        valueLength: String(input.value || '').length,
+                        valuePreview: clean(input.value || '').slice(0, 32)
+                    }));
+                const actionCandidates = Array.from(document.querySelectorAll('a, button, input[type="submit"], input[type="button"], [onclick]'))
+                    .filter(visible)
+                    .slice(0, 350)
+                    .map(element => ({
+                        tag: element.tagName.toLowerCase(),
+                        text: clean(element.innerText || element.textContent || element.value || ''),
+                        href: element.href || '',
+                        id: attr(element, 'id'),
+                        name: attr(element, 'name'),
+                        classes: attr(element, 'class'),
+                        onclick: attr(element, 'onclick').slice(0, 500)
+                    }));
+                const storage = {};
+                try {
+                    storage.localStorageKeys = Object.keys(localStorage || {}).slice(0, 120);
+                    storage.sessionStorageKeys = Object.keys(sessionStorage || {}).slice(0, 120);
+                } catch (error) {
+                    storage.error = String(error);
+                }
                 return {
                     url: location.href,
                     title: document.title || '',
                     bodySample: clean((document.body && document.body.innerText) || '').slice(0, 3000),
+                    bodyLength: clean((document.body && document.body.innerText) || '').length,
+                    headings,
+                    navigation,
                     links,
                     buttons,
                     inputs,
+                    hiddenInputs,
                     forms,
-                    tables
+                    tables,
+                    actionCandidates,
+                    storage
                 };
             }"""
         )
@@ -2601,6 +2673,12 @@ def page_diagnostic_snapshot(page, index, label, diagnose_dir):
     data["label"] = label
     data["htmlFile"] = html_name
     data["screenshotFile"] = screenshot_name
+    if network_events:
+        current_url = (data.get("url") or page.url or "").split("#", 1)[0]
+        data["networkEvents"] = [
+            event for event in network_events[-200:]
+            if clean_text(event.get("pageUrl")) == current_url or clean_text(event.get("url", "")).startswith(current_url)
+        ][:80]
     return data
 
 
@@ -2610,9 +2688,12 @@ def score_provision_page(snapshot, terms):
             clean_text(snapshot.get("url", "")),
             clean_text(snapshot.get("title", "")),
             clean_text(snapshot.get("bodySample", "")),
+            " ".join(clean_text(item) for item in snapshot.get("headings", [])),
+            " ".join(clean_text(link.get("text", "") + " " + link.get("href", "")) for link in snapshot.get("navigation", [])),
             " ".join(clean_text(link.get("text", "") + " " + link.get("href", "")) for link in snapshot.get("links", [])),
             " ".join(clean_text(button.get("text", "")) for button in snapshot.get("buttons", [])),
             " ".join(clean_text(input_item.get("label", "") + " " + input_item.get("name", "") + " " + input_item.get("id", "")) for input_item in snapshot.get("inputs", [])),
+            " ".join(clean_text(action.get("text", "") + " " + action.get("href", "") + " " + action.get("onclick", "")) for action in snapshot.get("actionCandidates", [])),
         ]
     ).lower()
     return sum(1 for term in terms if term in haystack)
@@ -2637,6 +2718,41 @@ def diagnose_provision_registration(page, args, debug_dir):
     visited = set()
     pages = []
     queue = []
+    network_events = []
+
+    def record_request(request):
+        try:
+            url = request.url
+            if not same_intramanager_url(url):
+                return
+            network_events.append({
+                "kind": "request",
+                "pageUrl": (page.url or "").split("#", 1)[0],
+                "method": request.method,
+                "url": url,
+                "resourceType": request.resource_type,
+                "postData": clean_text(request.post_data or "")[:1200],
+            })
+        except Exception:
+            pass
+
+    def record_response(response):
+        try:
+            url = response.url
+            if not same_intramanager_url(url):
+                return
+            network_events.append({
+                "kind": "response",
+                "pageUrl": (page.url or "").split("#", 1)[0],
+                "status": response.status,
+                "url": url,
+                "contentType": clean_text(response.headers.get("content-type", "")),
+            })
+        except Exception:
+            pass
+
+    page.on("request", record_request)
+    page.on("response", record_response)
 
     def enqueue(url, label):
         absolute = urljoin(BASE_URL, url or "")
@@ -2660,7 +2776,7 @@ def diagnose_provision_registration(page, args, debug_dir):
     except Exception:
         pass
 
-    first = page_diagnostic_snapshot(page, 1, "efter_login", diagnose_dir)
+    first = page_diagnostic_snapshot(page, 1, "efter_login", diagnose_dir, network_events)
     visited.add((first.get("url") or page.url).split("#", 1)[0])
     pages.append(first)
     add_links_from(first)
@@ -2673,6 +2789,17 @@ def diagnose_provision_registration(page, args, debug_dir):
         "reports/sales/",
         "reports/commission/",
         "reports/provision/",
+        "provision/",
+        "provisions/",
+        "provision/registration/",
+        "provision/register/",
+        "commission/",
+        "bonus/",
+        "bonuses/",
+        "salg/",
+        "salgsregistrering/",
+        "orders/create/",
+        "sales/register/",
     ):
         enqueue(guessed, guessed.strip("/"))
 
@@ -2685,7 +2812,7 @@ def diagnose_provision_registration(page, args, debug_dir):
         try:
             page.goto(url, wait_until="domcontentloaded", timeout=45000)
             wait_for_page_idle(page, timeout=20000)
-            snapshot = page_diagnostic_snapshot(page, len(pages) + 1, label, diagnose_dir)
+            snapshot = page_diagnostic_snapshot(page, len(pages) + 1, label, diagnose_dir, network_events)
             pages.append(snapshot)
             add_links_from(snapshot)
         except Exception as exc:
@@ -2719,6 +2846,7 @@ def diagnose_provision_registration(page, args, debug_dir):
         "pagesAnalyzed": len(pages),
         "candidateTerms": terms,
         "suspectedPages": suspected_pages,
+        "networkEvents": network_events[-500:],
         "pages": pages,
         "debugDir": str(diagnose_dir),
     }

@@ -21,8 +21,8 @@
 #include "commission.h"
 #include "report_service.h"
 
-static constexpr const char* APP_VERSION = "1.5.6";
-static constexpr int APP_BUILD_VERSION = 10509;
+static constexpr const char* APP_VERSION = "1.5.7";
+static constexpr int APP_BUILD_VERSION = 10510;
 static constexpr const char* UPDATE_APPCAST_URL = "https://raw.githubusercontent.com/ypqlmen/ProviTracker/main/appcast.xml";
 
 static QString psSingleQuoted(QString value) {
@@ -490,6 +490,23 @@ public:
             );
     }
 
+    void submitSalesRegistrationAsync(
+        const QString& username,
+        const QString& token,
+        const QJsonObject& payload,
+        std::function<void(Result)> callback
+        ) {
+        callFunctionAsync(
+            "sales-registration-submit",
+            {
+                {"username", username.trimmed()},
+                {"token", token},
+                {"payload", payload}
+            },
+            std::move(callback)
+            );
+    }
+
     void logoutAsync(const QString& username, const QString& token) {
         callRpcAsync(
             "provi_logout",
@@ -513,6 +530,18 @@ private:
         request.setRawHeader("Authorization", QByteArray("Bearer ") + SUPABASE_PUBLISHABLE_KEY);
         request.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::NoLessSafeRedirectPolicy);
         request.setTransferTimeout(30000);
+        return request;
+    }
+
+    QNetworkRequest requestForFunction(const QString& functionName) const {
+        QNetworkRequest request(QUrl(QString("%1/functions/v1/%2")
+            .arg(QString::fromLatin1(SUPABASE_PROJECT_URL), functionName)));
+        request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
+        request.setRawHeader("Accept", "application/json");
+        request.setRawHeader("apikey", SUPABASE_PUBLISHABLE_KEY);
+        request.setRawHeader("Authorization", QByteArray("Bearer ") + SUPABASE_PUBLISHABLE_KEY);
+        request.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::NoLessSafeRedirectPolicy);
+        request.setTransferTimeout(45000);
         return request;
     }
 
@@ -582,6 +611,16 @@ private:
 
     void callRpcAsync(const QString& functionName, const QJsonObject& args, std::function<void(Result)> callback) {
         QNetworkReply* reply = network.post(requestForRpc(functionName), QJsonDocument(args).toJson(QJsonDocument::Compact));
+        connect(reply, &QNetworkReply::finished, this, [this, reply, callback = std::move(callback)]() mutable {
+            const QByteArray body = reply->readAll();
+            Result result = parseReply(reply, body);
+            reply->deleteLater();
+            callback(result);
+        });
+    }
+
+    void callFunctionAsync(const QString& functionName, const QJsonObject& args, std::function<void(Result)> callback) {
+        QNetworkReply* reply = network.post(requestForFunction(functionName), QJsonDocument(args).toJson(QJsonDocument::Compact));
         connect(reply, &QNetworkReply::finished, this, [this, reply, callback = std::move(callback)]() mutable {
             const QByteArray body = reply->readAll();
             Result result = parseReply(reply, body);
@@ -1585,6 +1624,84 @@ QSpinBox::down-button {
     }
 };
 
+class SickPayDialog : public QDialog {
+public:
+    SickPayDialog(const QString& salespersonId, std::optional<SickPayEntry> existing = std::nullopt, QWidget* parent = nullptr)
+        : QDialog(parent), salespersonId(salespersonId) {
+        setWindowTitle(existing.has_value() ? "Ret sygeløn" : "Registrer sygeløn");
+        resize(430, 240);
+
+        if (existing.has_value()) {
+            entry = *existing;
+        } else {
+            entry.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+            entry.salespersonId = this->salespersonId;
+            entry.date = QDate::currentDate();
+        }
+
+        auto* layout = new QVBoxLayout(this);
+        layout->setContentsMargins(18, 18, 18, 18);
+        layout->setSpacing(12);
+
+        auto* form = new QFormLayout;
+        form->setLabelAlignment(Qt::AlignLeft);
+        form->setFormAlignment(Qt::AlignTop);
+        form->setHorizontalSpacing(14);
+        form->setVerticalSpacing(10);
+
+        dateEdit = new QDateEdit(entry.date);
+        dateEdit->setCalendarPopup(true);
+        dateEdit->setDisplayFormat("dd-MM-yyyy");
+        dateEdit->setLocale(QLocale(QLocale::Danish, QLocale::Denmark));
+
+        amountSpin = new QDoubleSpinBox;
+        amountSpin->setRange(0.0, 1000000.0);
+        amountSpin->setDecimals(2);
+        amountSpin->setSuffix(" kr");
+        amountSpin->setSingleStep(100.0);
+        amountSpin->setValue(entry.amount);
+
+        noteEdit = new QLineEdit(entry.note);
+        noteEdit->setPlaceholderText("Valgfri note, fx sygedag eller refusion");
+
+        form->addRow("Dato", dateEdit);
+        form->addRow("Beløb", amountSpin);
+        form->addRow("Note", noteEdit);
+        layout->addLayout(form);
+
+        auto* buttons = new QHBoxLayout;
+        buttons->addStretch();
+        auto* cancelBtn = new QPushButton("Annuller");
+        auto* saveBtn = new QPushButton("Gem");
+        buttons->addWidget(cancelBtn);
+        buttons->addWidget(saveBtn);
+        layout->addLayout(buttons);
+
+        connect(cancelBtn, &QPushButton::clicked, this, &QDialog::reject);
+        connect(saveBtn, &QPushButton::clicked, this, [this]() {
+            if (amountSpin->value() <= 0.0) {
+                QMessageBox::warning(this, "Manglende beløb", "Sygeløn skal have et beløb over 0 kr.");
+                return;
+            }
+
+            entry.salespersonId = this->salespersonId;
+            entry.date = dateEdit->date();
+            entry.amount = amountSpin->value();
+            entry.note = noteEdit->text().trimmed();
+            accept();
+        });
+    }
+
+    SickPayEntry getEntry() const { return entry; }
+
+private:
+    QString salespersonId;
+    SickPayEntry entry;
+    QDateEdit* dateEdit = nullptr;
+    QDoubleSpinBox* amountSpin = nullptr;
+    QLineEdit* noteEdit = nullptr;
+};
+
 // ============================================================
 // Main window
 // ============================================================
@@ -1712,6 +1829,7 @@ private:
     QLabel* voiceProgressHintLabel = nullptr;
 
     QTableWidget* ordersTable = nullptr;
+    QTableWidget* sickPayTable = nullptr;
     QTextEdit* reportText = nullptr;
     QComboBox* reportPresetCombo = nullptr;
     QDateEdit* reportMonthEdit = nullptr;
@@ -2424,8 +2542,12 @@ private:
         }
 
         QStringList parts;
-        if (!punch.detail.isEmpty()) parts << cleanPunchText(punch.detail);
-        if (!punch.lastStart.isEmpty()) parts << "Seneste ind: " + cleanPunchText(punch.lastStart);
+        if (punch.clockedIn && !punch.lastStart.isEmpty()) {
+            parts << "Stemplet ind siden: " + cleanPunchText(punch.lastStart);
+        } else if (!punch.detail.isEmpty()) {
+            parts << cleanPunchText(punch.detail);
+        }
+        if (!punch.clockedIn && !punch.lastStart.isEmpty()) parts << "Seneste ind: " + cleanPunchText(punch.lastStart);
         if (!punch.lastStop.isEmpty()) parts << "Seneste ud: " + cleanPunchText(punch.lastStop);
         parts << shortPunchSyncText();
         return parts.join("\n");
@@ -3498,6 +3620,13 @@ private:
         }
     }
 
+    void saveSickPayAndSyncCloud() {
+        repo.saveSickPayEntries();
+        if (repo.cloudPersistenceEnabled) {
+            flushCloudSaveSync("Sygeløn er gemt i programmet, men kunne ikke gemmes i skyen lige nu. Programmet prøver igen automatisk.");
+        }
+    }
+
     void updateCloudAccountStatus() {
         if (cloudAccountStatusLabel) {
             if (cloudUsername.trimmed().isEmpty()) {
@@ -3978,11 +4107,13 @@ QTableWidget::item {
         auto* addBtn = new QPushButton("Ny ordre");
         auto* editBtn = new QPushButton("Ret ordre");
         auto* deleteBtn = new QPushButton("Slet ordre");
+        auto* addSickPayBtn = new QPushButton("Registrer sygeløn");
 
         actionsRow->addWidget(refreshBtn);
         actionsRow->addWidget(addBtn);
         actionsRow->addWidget(editBtn);
         actionsRow->addWidget(deleteBtn);
+        actionsRow->addWidget(addSickPayBtn);
         actionsRow->addStretch();
 
         actionsCard.second->addLayout(actionsRow);
@@ -4016,9 +4147,41 @@ QTableWidget::item {
         tableCard.second->addWidget(ordersTable, 1);
         layout->addWidget(tableCard.first, 1);
 
-        // 🔌 CONNECTS (HER SKAL DE STÅ)
+        auto sickPayCard = createCard("Sygeløn");
+        auto* sickPayActions = new QHBoxLayout;
+        sickPayActions->setSpacing(10);
+        sickPayActions->setContentsMargins(0, 0, 0, 0);
+        auto* editSickPayBtn = new QPushButton("Ret sygeløn");
+        auto* deleteSickPayBtn = new QPushButton("Slet sygeløn");
+        sickPayActions->addWidget(editSickPayBtn);
+        sickPayActions->addWidget(deleteSickPayBtn);
+        sickPayActions->addStretch();
+        sickPayCard.second->addLayout(sickPayActions);
+
+        sickPayTable = new ClearableTableWidget(0, 3);
+        sickPayTable->setHorizontalHeader(new CleanTableHeaderView(Qt::Horizontal, sickPayTable));
+        sickPayTable->setHorizontalHeaderLabels({"Dato", "Beløb", "Note"});
+        sickPayTable->horizontalHeader()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
+        sickPayTable->horizontalHeader()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
+        sickPayTable->horizontalHeader()->setSectionResizeMode(2, QHeaderView::Stretch);
+        sickPayTable->setAlternatingRowColors(true);
+        sickPayTable->setSelectionBehavior(QAbstractItemView::SelectRows);
+        sickPayTable->setSelectionMode(QAbstractItemView::SingleSelection);
+        sickPayTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
+        sickPayTable->verticalHeader()->setVisible(false);
+        sickPayTable->verticalHeader()->setDefaultSectionSize(38);
+        sickPayTable->setWordWrap(true);
+        sickPayTable->setTextElideMode(Qt::ElideNone);
+        sickPayTable->setShowGrid(false);
+        sickPayTable->setMinimumHeight(160);
+        sickPayTable->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+        styleDataTable(sickPayTable, true);
+        sickPayCard.second->addWidget(sickPayTable);
+        layout->addWidget(sickPayCard.first);
+
         connect(refreshBtn, &QPushButton::clicked, this, [this]() {
             refreshOrdersTable();
+            refreshSickPayTable();
         });
 
         connect(addBtn, &QPushButton::clicked, this, [this]() {
@@ -4031,6 +4194,18 @@ QTableWidget::item {
 
         connect(deleteBtn, &QPushButton::clicked, this, [this]() {
             deleteSelectedOrder();
+        });
+
+        connect(addSickPayBtn, &QPushButton::clicked, this, [this]() {
+            createSickPayEntry();
+        });
+
+        connect(editSickPayBtn, &QPushButton::clicked, this, [this]() {
+            editSelectedSickPayEntry();
+        });
+
+        connect(deleteSickPayBtn, &QPushButton::clicked, this, [this]() {
+            deleteSelectedSickPayEntry();
         });
 
         return w;
@@ -4409,10 +4584,10 @@ QTableWidget::item {
         salesRegistrationEnabledCheck->setFocusPolicy(Qt::NoFocus);
 
         auto* saveSalesRegistrationBtn = new QPushButton("Gem salgsregistrering");
-        auto* testSalesRegistrationBtn = new QPushButton("Send testmail");
+        auto* testSalesRegistrationBtn = new QPushButton("Send test");
         auto* salesActionRow = createSettingsButtonGrid(QVector<QPushButton*>{saveSalesRegistrationBtn, testSalesRegistrationBtn});
 
-        salesRegistrationStatusLabel = new QLabel("Sender salgs-reg via Outlook-mail med JSON til mailflow.");
+        salesRegistrationStatusLabel = new QLabel("Sender salgs-reg online via Provi Tracker cloud til mailflow.");
         salesRegistrationStatusLabel->setWordWrap(true);
         salesRegistrationStatusLabel->setTextInteractionFlags(Qt::NoTextInteraction);
 
@@ -4612,9 +4787,13 @@ QTableWidget::item {
             QJsonArray ordersJson;
             for (const auto& o : repo.orders) ordersJson.append(toJson(o));
 
+            QJsonArray sickPayJson;
+            for (const auto& e : repo.sickPayEntries) sickPayJson.append(toJson(e));
+
             root["salespeople"] = salespeopleJson;
             root["products"] = productsJson;
             root["orders"] = ordersJson;
+            root["sickPayEntries"] = sickPayJson;
             root["settings"] = toJson(repo.settings);
 
             QFile f(path);
@@ -4665,11 +4844,17 @@ QTableWidget::item {
                 importedOrders.push_back(fromOrderJson(v.toObject()));
             }
 
+            QVector<SickPayEntry> importedSickPay;
+            for (const auto& v : rootObj["sickPayEntries"].toArray()) {
+                importedSickPay.push_back(fromSickPayEntryJson(v.toObject()));
+            }
+
             AppSettings importedSettings = fromSettingsJson(rootObj["settings"].toObject());
 
             repo.salespeople = importedSalespeople;
             repo.products = importedProducts;
             repo.orders = importedOrders;
+            repo.sickPayEntries = importedSickPay;
             repo.settings = importedSettings;
             if (repo.cloudPersistenceEnabled) {
                 repo.normalizeForCloudUser(cloudUsername);
@@ -4694,12 +4879,15 @@ QTableWidget::item {
         for (const auto& p : repo.products) productsArray.append(toJson(p));
         QJsonArray ordersArray;
         for (const auto& o : repo.orders) ordersArray.append(toJson(o));
+        QJsonArray sickPayArray;
+        for (const auto& e : repo.sickPayEntries) sickPayArray.append(toJson(e));
 
         QJsonObject root{
             {"exportedAt", QDateTime::currentDateTime().toString(Qt::ISODate)},
             {"salespeople", salespeopleArray},
             {"products", productsArray},
             {"orders", ordersArray},
+            {"sickPayEntries", sickPayArray},
             {"settings", toJson(repo.settings)}
         };
 
@@ -4746,6 +4934,8 @@ QTableWidget::item {
         for (const auto& v : root["products"].toArray()) importedProducts.push_back(fromProductJson(v.toObject()));
         QVector<Order> importedOrders;
         for (const auto& v : root["orders"].toArray()) importedOrders.push_back(fromOrderJson(v.toObject()));
+        QVector<SickPayEntry> importedSickPay;
+        for (const auto& v : root["sickPayEntries"].toArray()) importedSickPay.push_back(fromSickPayEntryJson(v.toObject()));
         const auto importedSettings = fromSettingsJson(root["settings"].toObject());
 
         if (importedSalespeople.isEmpty()) {
@@ -4756,6 +4946,7 @@ QTableWidget::item {
         repo.salespeople = importedSalespeople;
         repo.products = importedProducts;
         repo.orders = importedOrders;
+        repo.sickPayEntries = importedSickPay;
         repo.settings = importedSettings;
         if (repo.cloudPersistenceEnabled) {
             repo.normalizeForCloudUser(cloudUsername);
@@ -4788,12 +4979,15 @@ QTableWidget::item {
         for (const auto& p : repo.products) productsArray.append(toJson(p));
         QJsonArray ordersArray;
         for (const auto& o : repo.orders) ordersArray.append(toJson(o));
+        QJsonArray sickPayArray;
+        for (const auto& e : repo.sickPayEntries) sickPayArray.append(toJson(e));
 
         QJsonObject root{
             {"exportedAt", QDateTime::currentDateTime().toString(Qt::ISODate)},
             {"salespeople", salespeopleArray},
             {"products", productsArray},
             {"orders", ordersArray},
+            {"sickPayEntries", sickPayArray},
             {"settings", toJson(repo.settings)}
         };
 
@@ -4823,6 +5017,34 @@ QTableWidget::item {
             return repo.orders[a].createdAt > repo.orders[b].createdAt;
         });
         return out;
+    }
+
+    QVector<int> activeSickPayIndicesSorted() const {
+        QVector<int> out;
+        const auto* s = activeSalesperson();
+        if (!s) return out;
+        for (int i = 0; i < repo.sickPayEntries.size(); ++i) {
+            if (repo.sickPayEntries[i].salespersonId == s->id) out.push_back(i);
+        }
+        std::sort(out.begin(), out.end(), [&](int a, int b) {
+            return repo.sickPayEntries[a].date > repo.sickPayEntries[b].date;
+        });
+        return out;
+    }
+
+    double sickPayForRange(
+        const QString& salespersonId,
+        const QDateTime& from,
+        const QDateTime& to
+        ) const {
+        double total = 0.0;
+        for (const auto& entry : repo.sickPayEntries) {
+            if (entry.salespersonId != salespersonId) continue;
+            const QDateTime entryTime(entry.date, QTime(12, 0, 0));
+            if (entryTime < from || entryTime > to) continue;
+            total += entry.amount;
+        }
+        return total;
     }
 
     QString orderProductsSummary(const Order& order, double* totalPoints = nullptr) const {
@@ -4868,7 +5090,7 @@ QTableWidget::item {
         return QString("<span style=\"color:%1;font-weight:700;\">%2</span>").arg(color).arg(value);
     }
 
-    QString salaryKpiText(double totalSalary, double baseSalary, double provision, const QDate& payoutMonth) const {
+    QString salaryKpiText(double totalSalary, double baseSalary, double sickPay, double provision, const QDate& payoutMonth) const {
         const bool taxConfigured = repo.settings.taxRatePercent > 0.0;
         const double netSalary = estimatedNetSalary(
             totalSalary,
@@ -4882,12 +5104,14 @@ QTableWidget::item {
             "<span style=\"font-size:13px;font-weight:900;color:#34D399;\">Udbetalt: %2</span><br>"
             "<span style=\"font-size:12px;font-weight:900;color:#D8F5FF;\">Udbetales: %3</span><br>"
             "<span style=\"font-size:12px;font-weight:800;color:#BFD7EE;\">Timer: %4 kr</span><br>"
-            "<span style=\"font-size:12px;font-weight:800;color:#BFD7EE;\">Provision: %5 kr</span>"
+            "<span style=\"font-size:12px;font-weight:800;color:#BFD7EE;\">Sygeløn: %5 kr</span><br>"
+            "<span style=\"font-size:12px;font-weight:800;color:#BFD7EE;\">Provision: %6 kr</span>"
             )
             .arg(money(totalSalary))
             .arg(netText.toHtmlEscaped())
             .arg(payoutDateLabel(payoutMonth).toHtmlEscaped())
             .arg(money(baseSalary))
+            .arg(money(sickPay))
             .arg(money(provision));
     }
 
@@ -4900,6 +5124,7 @@ QTableWidget::item {
         activeSalespersonLabel->setText(s ? QString("Du arbejder som <b>%1</b>").arg(s->name) : "Ingen aktiv sælger");
         refreshDashboard();
         refreshOrdersTable();
+        refreshSickPayTable();
         refreshSalespeopleUi();
         refreshSettingsUi();
         generateReport();
@@ -5001,21 +5226,24 @@ QTableWidget::item {
         if (kpiTodayPointsLabel) kpiTodayPointsLabel->setText(money(mDay.totalPoints));
 
         const double currentPayPeriodBaseSalary = cachedHoursForRange(currentPayPeriod) * repo.settings.hourlyRate;
+        const double currentPayPeriodSickPay = sickPayForRange(s->id, currentPayPeriod.first, currentPayPeriod.second);
         const double currentPayPeriodBonus = currentPayPeriodMetrics.dayBonus;
         const double backpaidBonusThisMonth = delayedBonus(previousMonthMetrics);
         const double actualSalaryThisMonth =
-            currentPayPeriodBaseSalary + currentPayPeriodBonus + backpaidBonusThisMonth;
+            currentPayPeriodBaseSalary + currentPayPeriodSickPay + currentPayPeriodBonus + backpaidBonusThisMonth;
 
         const double nextPayPeriodBaseSalary = cachedHoursForRange(nextPayPeriod) * repo.settings.hourlyRate;
+        const double nextPayPeriodSickPay = sickPayForRange(s->id, nextPayPeriod.first, nextPayPeriod.second);
         const double nextPayPeriodBonus = nextPayPeriodMetrics.dayBonus;
         const double backpaidBonusNextMonth = delayedBonus(currentCalendarMetrics);
         const double salaryEarnedForNextMonth =
-            nextPayPeriodBaseSalary + nextPayPeriodBonus + backpaidBonusNextMonth;
+            nextPayPeriodBaseSalary + nextPayPeriodSickPay + nextPayPeriodBonus + backpaidBonusNextMonth;
 
         if (kpiMonthCommissionLabel) {
             kpiMonthCommissionLabel->setText(salaryKpiText(
                 actualSalaryThisMonth,
                 currentPayPeriodBaseSalary,
+                currentPayPeriodSickPay,
                 currentPayPeriodBonus + backpaidBonusThisMonth,
                 now
                 ));
@@ -5024,6 +5252,7 @@ QTableWidget::item {
             kpiNextMonthPayLabel->setText(salaryKpiText(
                 salaryEarnedForNextMonth,
                 nextPayPeriodBaseSalary,
+                nextPayPeriodSickPay,
                 nextPayPeriodBonus + backpaidBonusNextMonth,
                 now.addMonths(1)
                 ));
@@ -5211,6 +5440,7 @@ QTableWidget::item {
     }
 
     void refreshOrdersTable() {
+        if (!ordersTable) return;
         const auto indices = activeOrderIndicesSorted();
         ordersTable->setRowCount(indices.size());
         auto makeOrderItem = [](const QString& text) {
@@ -5235,6 +5465,30 @@ QTableWidget::item {
         ordersTable->resizeColumnToContents(0);
         ordersTable->resizeColumnToContents(1);
         ordersTable->horizontalHeader()->setMinimumSectionSize(80);
+    }
+
+    void refreshSickPayTable() {
+        if (!sickPayTable) return;
+        const auto indices = activeSickPayIndicesSorted();
+        sickPayTable->setRowCount(indices.size());
+
+        auto makeItem = [](const QString& text) {
+            auto* item = new QTableWidgetItem(text);
+            item->setForeground(QBrush(QColor("#EAF4FF")));
+            return item;
+        };
+
+        for (int row = 0; row < static_cast<int>(indices.size()); ++row) {
+            const auto& entry = repo.sickPayEntries[indices[row]];
+            sickPayTable->setItem(row, 0, makeItem(entry.date.toString("dd-MM-yyyy")));
+            sickPayTable->setItem(row, 1, makeItem(money(entry.amount) + " kr"));
+            sickPayTable->setItem(row, 2, makeItem(entry.note));
+            sickPayTable->item(row, 2)->setToolTip(entry.note);
+        }
+
+        sickPayTable->resizeRowsToContents();
+        sickPayTable->resizeColumnToContents(0);
+        sickPayTable->resizeColumnToContents(1);
     }
 
     void refreshSalespeopleUi() {
@@ -5319,7 +5573,7 @@ QTableWidget::item {
             salesRegistrationEnabledCheck->setChecked(repo.settings.salesRegistrationEnabled);
         }
         if (salesRegistrationStatusLabel) {
-            salesRegistrationStatusLabel->setText("Outlook desktop bruges til at sende salgs-reg mails til mailflow.");
+            salesRegistrationStatusLabel->setText("Salgs-reg sendes online via Provi Tracker cloud. Lokal Outlook og lokal Excel bruges ikke.");
         }
 
         refreshPunchCardUi();
@@ -5458,137 +5712,6 @@ QTableWidget::item {
         return true;
     }
 
-    void cleanupSalesRegistrationTempDirLater(const QString& tempDir) {
-        QTimer::singleShot(180000, this, [tempDir]() {
-            if (!tempDir.isEmpty()) {
-                QDir(tempDir).removeRecursively();
-            }
-        });
-    }
-
-    bool writeSalesRegistrationFile(const QString& path, const QByteArray& content, QString* errorOut) const {
-        QFile file(path);
-        if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-            if (errorOut) {
-                *errorOut = "Kunne ikke oprette midlertidig salgs-reg fil: " + file.errorString();
-            }
-            return false;
-        }
-        file.write(content);
-        return true;
-    }
-
-    void sendSalesRegistrationViaOutlookAsync(
-        const QJsonObject& payload,
-        const QString& recipient,
-        const QString& defaultSuccessText,
-        bool showWarnings
-        ) {
-        const QString tempRoot = QDir(QStandardPaths::writableLocation(QStandardPaths::TempLocation))
-            .filePath("ProviTrackerSalesReg/" + QString::number(QDateTime::currentMSecsSinceEpoch()));
-        QDir().mkpath(tempRoot);
-
-        const QString jsonPath = QDir(tempRoot).filePath("sales-registration.json");
-        const QString htmlPath = QDir(tempRoot).filePath("sales-registration.html");
-        const QString scriptPath = QDir(tempRoot).filePath("send-sales-registration.ps1");
-
-        const QByteArray payloadJson = QJsonDocument(payload).toJson(QJsonDocument::Indented);
-        const QString htmlBody =
-            "<p>Salgsregistrering fra Provi Tracker.</p>"
-            + payload.value("mailHtml").toString()
-            + "<p>JSON-data er vedhæftet til Power Automate-mailflowet.</p>";
-
-        QString fileError;
-        if (!writeSalesRegistrationFile(jsonPath, payloadJson, &fileError)
-            || !writeSalesRegistrationFile(htmlPath, htmlBody.toUtf8(), &fileError)) {
-            if (salesRegistrationStatusLabel) salesRegistrationStatusLabel->setText(fileError);
-            if (showWarnings) QMessageBox::warning(this, "Salgsregistrering", fileError);
-            cleanupSalesRegistrationTempDirLater(tempRoot);
-            return;
-        }
-
-        const QByteArray script = R"ps1(
-param(
-  [Parameter(Mandatory=$true)][string]$Recipient,
-  [Parameter(Mandatory=$true)][string]$Subject,
-  [Parameter(Mandatory=$true)][string]$HtmlPath,
-  [Parameter(Mandatory=$true)][string]$AttachmentPath
-)
-$ErrorActionPreference = 'Stop'
-$outlookType = [Type]::GetTypeFromProgID('Outlook.Application')
-if (-not $outlookType) {
-  throw 'Outlook desktop blev ikke fundet. Installer eller åbn klassisk Outlook på computeren og prøv igen.'
-}
-if (-not (Test-Path -LiteralPath $HtmlPath)) {
-  throw 'HTML-filen til salgs-reg blev ikke fundet.'
-}
-if (-not (Test-Path -LiteralPath $AttachmentPath)) {
-  throw 'JSON-vedhæftningen til salgs-reg blev ikke fundet.'
-}
-$outlook = [Activator]::CreateInstance($outlookType)
-$mail = $outlook.CreateItem(0)
-$mail.To = $Recipient
-$mail.Subject = $Subject
-$mail.HTMLBody = [System.IO.File]::ReadAllText($HtmlPath, [System.Text.Encoding]::UTF8)
-[void]$mail.Attachments.Add($AttachmentPath)
-$mail.Send()
-)ps1";
-
-        if (!writeSalesRegistrationFile(scriptPath, script, &fileError)) {
-            if (salesRegistrationStatusLabel) salesRegistrationStatusLabel->setText(fileError);
-            if (showWarnings) QMessageBox::warning(this, "Salgsregistrering", fileError);
-            cleanupSalesRegistrationTempDirLater(tempRoot);
-            return;
-        }
-
-        auto* process = new QProcess(this);
-        process->setProgram("powershell.exe");
-        process->setArguments({
-            "-NoProfile",
-            "-ExecutionPolicy", "Bypass",
-            "-WindowStyle", "Hidden",
-            "-File", scriptPath,
-            "-Recipient", recipient,
-            "-Subject", payload.value("mailSubject").toString("Salgs reg - Provi Tracker"),
-            "-HtmlPath", htmlPath,
-            "-AttachmentPath", jsonPath
-        });
-
-        connect(process, &QProcess::finished, this, [this, process, tempRoot, defaultSuccessText, showWarnings](int exitCode, QProcess::ExitStatus status) {
-            const QString output = QString::fromUtf8(process->readAllStandardOutput()).trimmed();
-            const QString error = QString::fromUtf8(process->readAllStandardError()).trimmed();
-            const bool ok = status == QProcess::NormalExit && exitCode == 0;
-            process->deleteLater();
-            cleanupSalesRegistrationTempDirLater(tempRoot);
-
-            if (!ok) {
-                QString message = "Salgs-reg kunne ikke sendes via Outlook.";
-                const QString details = !error.isEmpty() ? error : output;
-                if (!details.isEmpty()) {
-                    message += "\n\n" + details;
-                }
-                if (salesRegistrationStatusLabel) salesRegistrationStatusLabel->setText("Salgs-reg kunne ikke sendes via Outlook.");
-                if (showWarnings) QMessageBox::warning(this, "Salgsregistrering", message);
-                return;
-            }
-
-            if (salesRegistrationStatusLabel) salesRegistrationStatusLabel->setText(defaultSuccessText);
-        });
-
-        connect(process, &QProcess::errorOccurred, this, [this, process, tempRoot, showWarnings](QProcess::ProcessError error) {
-            if (error != QProcess::FailedToStart) {
-                return;
-            }
-            process->deleteLater();
-            cleanupSalesRegistrationTempDirLater(tempRoot);
-            const QString message = "PowerShell kunne ikke startes, så Outlook-mailen kunne ikke sendes.";
-            if (salesRegistrationStatusLabel) salesRegistrationStatusLabel->setText(message);
-            if (showWarnings) QMessageBox::warning(this, "Salgsregistrering", message);
-        });
-
-        process->start();
-    }
-
     void postSalesRegistrationPayloadAsync(
         const QJsonObject& payload,
         const QString& sendingText,
@@ -5613,7 +5736,50 @@ $mail.Send()
 
         repo.saveSettings();
 
-        sendSalesRegistrationViaOutlookAsync(payload, recipient, defaultSuccessText, showWarnings);
+        if (cloudUsername.trimmed().isEmpty() || cloudToken.isEmpty()) {
+            const QString message = "Log ind i Provi Tracker cloud for at sende salgs-reg online.";
+            if (salesRegistrationStatusLabel) {
+                salesRegistrationStatusLabel->setText(message);
+            }
+            if (showWarnings) {
+                QMessageBox::warning(this, "Salgsregistrering", message);
+            }
+            return;
+        }
+
+        QJsonObject onlinePayload = payload;
+        onlinePayload["recipient"] = recipient;
+
+        cloudClient.submitSalesRegistrationAsync(
+            cloudUsername,
+            cloudToken,
+            onlinePayload,
+            [this, defaultSuccessText, showWarnings](ProviCloudClient::Result result) {
+                QString message = defaultSuccessText;
+                const QString responseMessage = result.data.value("message").toString();
+                const bool mailerConfigured = result.data.value("mailerConfigured").toBool(false);
+
+                if (!result.ok) {
+                    message = result.error.isEmpty()
+                        ? "Salgs-reg kunne ikke sendes online."
+                        : result.error;
+                    if (salesRegistrationStatusLabel) salesRegistrationStatusLabel->setText(message);
+                    if (showWarnings) QMessageBox::warning(this, "Salgsregistrering", message);
+                    return;
+                }
+
+                if (!responseMessage.isEmpty()) {
+                    message = responseMessage;
+                } else if (!mailerConfigured) {
+                    message = "Salgs-reg er lagt i online kø. Mailer er ikke konfigureret endnu.";
+                }
+
+                if (salesRegistrationStatusLabel) salesRegistrationStatusLabel->setText(message);
+                if (showWarnings && !mailerConfigured) {
+                    QMessageBox::information(this, "Salgsregistrering", message);
+                }
+            }
+            );
     }
 
     void submitSalesRegistrationAsync(const Order& order) {
@@ -5623,8 +5789,8 @@ $mail.Send()
 
         postSalesRegistrationPayloadAsync(
             salesRegistrationPayload(order),
-            "Salgs-reg sendes via Outlook...",
-            "Salgs-reg sendt som mail.",
+            "Salgs-reg sendes online...",
+            "Salgs-reg sendt online.",
             true
             );
     }
@@ -5649,8 +5815,8 @@ $mail.Send()
 
         postSalesRegistrationPayloadAsync(
             payload,
-            "Sender testmail...",
-            "Mailflow test sendt.",
+            "Sender online test...",
+            "Salgs-reg test sendt online.",
             true
             );
     }
@@ -5694,6 +5860,48 @@ $mail.Send()
         if (confirmQuestion(this, "Slet ordre", "Er du sikker på, at du vil slette den valgte ordre?")) {
             repo.orders.removeAt(repoIndex);
             saveOrdersAndSyncCloud();
+            refreshAll();
+        }
+    }
+
+    int selectedSickPayRepoIndex() const {
+        if (!sickPayTable) return -1;
+        const int selectedRow = sickPayTable->currentRow();
+        const auto indices = activeSickPayIndicesSorted();
+        if (selectedRow < 0 || selectedRow >= static_cast<int>(indices.size())) return -1;
+        return indices[selectedRow];
+    }
+
+    void createSickPayEntry() {
+        const auto* s = activeSalesperson();
+        if (!s) return;
+        SickPayDialog dlg(s->id, std::nullopt, this);
+        if (dlg.exec() == QDialog::Accepted) {
+            repo.sickPayEntries.push_back(dlg.getEntry());
+            saveSickPayAndSyncCloud();
+            refreshAll();
+        }
+    }
+
+    void editSelectedSickPayEntry() {
+        const int repoIndex = selectedSickPayRepoIndex();
+        if (repoIndex < 0) return;
+        const auto* s = activeSalesperson();
+        if (!s) return;
+        SickPayDialog dlg(s->id, repo.sickPayEntries[repoIndex], this);
+        if (dlg.exec() == QDialog::Accepted) {
+            repo.sickPayEntries[repoIndex] = dlg.getEntry();
+            saveSickPayAndSyncCloud();
+            refreshAll();
+        }
+    }
+
+    void deleteSelectedSickPayEntry() {
+        const int repoIndex = selectedSickPayRepoIndex();
+        if (repoIndex < 0) return;
+        if (confirmQuestion(this, "Slet sygeløn", "Er du sikker på, at du vil slette den valgte sygelønspost?")) {
+            repo.sickPayEntries.removeAt(repoIndex);
+            saveSickPayAndSyncCloud();
             refreshAll();
         }
     }
@@ -5780,6 +5988,7 @@ $mail.Send()
         ) const {
         ReportSalaryBreakdown salary;
         if (!range.paymentMonth.isValid()) {
+            salary.sickPay = sickPayForRange(salesperson.id, range.from, range.to);
             return salary;
         }
 
@@ -5804,11 +6013,12 @@ $mail.Send()
 
         salary.usesPaymentMonthRules = true;
         salary.baseSalary = hoursEntry.hours * repo.settings.hourlyRate;
+        salary.sickPay = sickPayForRange(salesperson.id, payrollRange.first, payrollRange.second);
         salary.periodProvision = payrollMetrics.dayBonus;
         salary.delayedProvision =
             previousMonthMetrics.monthlyBonus + previousMonthMetrics.simoBonus + previousMonthMetrics.voiceBonus;
         salary.totalProvision = salary.periodProvision + salary.delayedProvision;
-        salary.totalSalary = salary.baseSalary + salary.totalProvision;
+        salary.totalSalary = salary.baseSalary + salary.sickPay + salary.totalProvision;
         salary.taxConfigured = repo.settings.taxRatePercent > 0.0;
         salary.taxDeduction = repo.settings.taxDeduction;
         salary.taxRatePercent = repo.settings.taxRatePercent;

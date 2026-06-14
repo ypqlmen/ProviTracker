@@ -1,5 +1,5 @@
 -- Provi Tracker cloud schema for Supabase.
--- The desktop app uses RPC functions only; anon/authenticated roles have no direct table access.
+-- The desktop app uses RPC/Edge Functions only; anon/authenticated roles have no direct table access.
 
 create extension if not exists pgcrypto;
 
@@ -31,16 +31,32 @@ create table if not exists public.provi_sessions (
     expires_at timestamptz not null default now() + interval '30 days'
 );
 
+create table if not exists public.provi_sales_registration_queue (
+    id uuid primary key default gen_random_uuid(),
+    user_id uuid not null references public.provi_users(id) on delete cascade,
+    recipient text not null,
+    payload jsonb not null,
+    status text not null default 'queued',
+    attempts integer not null default 0,
+    created_at timestamptz not null default now(),
+    sent_at timestamptz,
+    last_error text
+);
+
 create index if not exists provi_sessions_user_id_idx on public.provi_sessions(user_id);
 create index if not exists provi_sessions_expires_at_idx on public.provi_sessions(expires_at);
+create index if not exists provi_sales_registration_queue_user_id_idx on public.provi_sales_registration_queue(user_id);
+create index if not exists provi_sales_registration_queue_status_idx on public.provi_sales_registration_queue(status, created_at);
 
 alter table public.provi_users enable row level security;
 alter table public.provi_user_data enable row level security;
 alter table public.provi_sessions enable row level security;
+alter table public.provi_sales_registration_queue enable row level security;
 
 revoke all on table public.provi_users from anon, authenticated;
 revoke all on table public.provi_user_data from anon, authenticated;
 revoke all on table public.provi_sessions from anon, authenticated;
+revoke all on table public.provi_sales_registration_queue from anon, authenticated;
 
 create or replace function public.provi_normalize_username(p_username text)
 returns text
@@ -307,8 +323,68 @@ begin
 end;
 $$;
 
+create or replace function public.provi_enqueue_sales_registration(p_username text, p_token text, p_payload jsonb)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+    v_user_id uuid := public.provi_session_user_id(p_username, p_token);
+    v_payload jsonb := coalesce(p_payload, '{}'::jsonb);
+    v_recipient text := trim(coalesce(v_payload->>'recipient', ''));
+    v_id uuid;
+begin
+    if v_user_id is null then
+        return jsonb_build_object('ok', false, 'error', 'Login-sessionen er udloebet. Log ind igen.');
+    end if;
+
+    if v_recipient = '' or v_recipient !~* '^[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}$' then
+        return jsonb_build_object('ok', false, 'error', 'Salgsregistrering mangler en gyldig flow-mail.');
+    end if;
+
+    insert into public.provi_sales_registration_queue(user_id, recipient, payload)
+    values (v_user_id, v_recipient, v_payload)
+    returning id into v_id;
+
+    return jsonb_build_object('ok', true, 'queue_id', v_id);
+end;
+$$;
+
+create or replace function public.provi_mark_sales_registration_status(p_queue_id uuid, p_status text, p_error text default null)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+    v_status text := lower(trim(coalesce(p_status, 'queued')));
+begin
+    if v_status not in ('queued', 'sent', 'failed') then
+        return jsonb_build_object('ok', false, 'error', 'Ugyldig salgsreg-status.');
+    end if;
+
+    update public.provi_sales_registration_queue
+    set status = v_status,
+        attempts = attempts + case when v_status in ('sent', 'failed') then 1 else 0 end,
+        sent_at = case when v_status = 'sent' then now() else sent_at end,
+        last_error = p_error
+    where id = p_queue_id;
+
+    return jsonb_build_object('ok', found);
+end;
+$$;
+
 grant execute on function public.provi_register(text, text, jsonb) to anon, authenticated;
 grant execute on function public.provi_login(text, text) to anon, authenticated;
 grant execute on function public.provi_load(text, text) to anon, authenticated;
 grant execute on function public.provi_save(text, text, jsonb) to anon, authenticated;
 grant execute on function public.provi_logout(text, text) to anon, authenticated;
+revoke execute on function public.provi_create_session(uuid) from public, anon, authenticated;
+revoke execute on function public.provi_payload_for_user(uuid) from public, anon, authenticated;
+revoke execute on function public.provi_payload_has_data(uuid) from public, anon, authenticated;
+revoke execute on function public.provi_session_user_id(text, text) from public, anon, authenticated;
+revoke execute on function public.provi_enqueue_sales_registration(text, text, jsonb) from public, anon, authenticated;
+grant execute on function public.provi_enqueue_sales_registration(text, text, jsonb) to service_role;
+revoke execute on function public.provi_mark_sales_registration_status(uuid, text, text) from public, anon, authenticated;
+grant execute on function public.provi_mark_sales_registration_status(uuid, text, text) to service_role;

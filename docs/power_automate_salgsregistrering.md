@@ -1,16 +1,16 @@
-# Auto salgsregistrering via mailflow
+# Auto salgsregistrering online
 
-Denne guide beskriver opsætningen uden Azure/Entra-adgang for brugerne. Provi Tracker sender en almindelig Outlook-mail til en flow-mailboks. Mailen indeholder en JSON-vedhæftning med hele ordren, og Power Automate bruger vedhæftningen til at oprette rækken i Excel Online.
+Denne guide beskriver opsætningen uden lokal Excel, lokal Outlook og Azure/Entra-adgang for almindelige brugere.
 
-Brugerne skal kun have klassisk Outlook desktop installeret og sat op på deres Windows-profil. De skal ikke oprette app registrations, bruge Azure Portal eller indtaste Microsoft client ID i Provi Tracker.
+Provi Tracker sender salgsregistreringen til Provi Tracker cloud. Cloud-funktionen sender derefter en mail med JSON-vedhæftning til den flow-mailboks, som Power Automate overvåger. Power Automate opdaterer Excel Online med Office Scriptet.
 
-Når opsætningen er lavet en gang, skal almindelige brugere kun:
+Almindelige brugere skal kun:
 
 1. Åbne **Indstillinger** i Provi Tracker.
 2. Kontrollere **Sælger initialer** og **Flow-mail**.
 3. Slå **Send salgs-reg automatisk ved ny ordre** til.
 4. Trykke **Gem salgsregistrering**.
-5. Trykke **Send testmail** efter ændringer.
+5. Trykke **Send test** efter ændringer.
 
 ## 1. Klargør Excel-arket
 
@@ -21,14 +21,14 @@ Når opsætningen er lavet en gang, skal almindelige brugere kun:
 5. Indsæt hele koden fra `scripts/excel_online_sales_registration.ts`.
 6. Gem scriptet som `ProviTrackerSalesRegistration`.
 
-Office Scriptet finder selv kolonner ud fra overskrifter som `Dato`, `Initialer`, `OSE-nr`, `CVR-nr`, `Firmanavn` og `Telefon`. Produkter matches mod produktnavne og aliases fra Provi Tracker.
+Office Scriptet finder selv kolonner ud fra overskrifter som `Dato`, `Initialer`, `OSE-nr`, `CVR-nr`, `Firmanavn` og `Telefon`. Produkter matches mod produktnavne og aliases fra Provi Tracker. Scriptet kopierer formatet fra rækken ovenover og lægger den nye registrering på næste ledige række.
 
 ## 2. Opret Power Automate-flowet
 
 1. Gå til Power Automate.
 2. Opret et **Automated cloud flow**.
 3. Vælg triggeren **Office 365 Outlook -> When a new email arrives (V3)**.
-4. Vælg den flow-mailboks eller mappe, Provi Tracker skal sende til.
+4. Vælg den flow-mailboks eller mappe, Provi Tracker cloud sender til.
 5. Sæt emnefilter til `Salgs reg -`, hvis feltet er tilgængeligt.
 6. Sørg for at flowet kun fortsætter, når mailen har en vedhæftning.
 7. Tilføj handlingen **Get attachment (V2)** for JSON-vedhæftningen.
@@ -55,24 +55,35 @@ Gå til **Indstillinger -> Salgsregistrering**.
 2. Udfyld **Flow-mail** med den mailboks flowet overvåger.
 3. Slå **Send salgs-reg automatisk ved ny ordre** til.
 4. Tryk **Gem salgsregistrering**.
-5. Tryk **Send testmail**.
+5. Tryk **Send test**.
 
-Hvis testmailen virker, kræver den daglige brug ikke flere trin. Når en ordre oprettes i Provi Tracker, sender appen automatisk salgsregistreringen til flowet.
+Når testen er sendt, kræver daglig brug ikke flere trin. Når en ordre oprettes i Provi Tracker, sendes salgsregistreringen online til mailflowet.
 
-## 4. Krav på brugerens computer
+## 4. Administratoropsætning i Provi Tracker cloud
 
-- Klassisk Outlook desktop skal være installeret.
-- Outlook skal være åbnet mindst en gang og have en fungerende mailprofil.
+Cloud-funktionen `sales-registration-submit` er deployet i Supabase. Den lægger altid salgsregistreringer i tabellen `provi_sales_registration_queue`.
+
+For at funktionen også skal sende mailen videre til Power Automate, skal følgende Supabase Function secrets sættes:
+
+- `RESEND_API_KEY`
+- `SALES_REGISTRATION_FROM`
+
+`SALES_REGISTRATION_FROM` skal være en afsenderadresse, som mailudbyderen accepterer. Almindelige brugere skal ikke kende eller indtaste disse secrets.
+
+## 5. Krav på brugerens computer
+
+- Brugeren skal kunne logge ind i Provi Tracker cloud.
 - Brugeren behøver ikke administratoradgang.
+- Brugeren behøver ikke lokal Excel.
+- Brugeren behøver ikke lokal Outlook.
 - Brugeren behøver ikke Azure/Entra-adgang.
 - Brugeren skal ikke indtaste Microsoft tenant, client ID eller OAuth scope.
 
-## 5. Fejlfinding
+## 6. Fejlfinding
 
-- **Testmailen kommer ikke frem:** Tjek Flow-mail i Provi Tracker og at Outlook kan sende almindelige mails fra computeren.
-- **Provi Tracker siger at Outlook ikke blev fundet:** Installer eller åbn klassisk Outlook desktop på computeren. Den nye webbaserede Outlook-app understøtter ikke altid den lokale Outlook-automation.
+- **Provi Tracker siger at mailer mangler:** Sæt `RESEND_API_KEY` og `SALES_REGISTRATION_FROM` i Supabase Function secrets.
 - **Flowet starter ikke:** Tjek at triggeren lytter på den rigtige mailboks eller mappe, og at emnefilteret matcher `Salgs reg -`.
 - **Office Scriptet fejler med manglende kolonner:** Tjek at masterarket har overskrifter for dato, initialer, ordre/OSE, CVR, firmanavn og telefon.
 - **Et produkt rammer ikke den rigtige kolonne:** Tilføj produktnavnet eller et alias i Provi Tracker, så det matcher en kolonneoverskrift i masterarket.
 
-Testmails har `isTest: true`, så Office Scriptet svarer OK uden at oprette en rigtig salgsrække.
+Testregistreringer har `isTest: true`, så Office Scriptet svarer OK uden at oprette en rigtig salgsrække.
