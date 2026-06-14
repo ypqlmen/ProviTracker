@@ -21,8 +21,8 @@
 #include "commission.h"
 #include "report_service.h"
 
-static constexpr const char* APP_VERSION = "1.5.7";
-static constexpr int APP_BUILD_VERSION = 10510;
+static constexpr const char* APP_VERSION = "1.5.8";
+static constexpr int APP_BUILD_VERSION = 10511;
 static constexpr const char* UPDATE_APPCAST_URL = "https://raw.githubusercontent.com/ypqlmen/ProviTracker/main/appcast.xml";
 
 static QString psSingleQuoted(QString value) {
@@ -2283,7 +2283,7 @@ private:
             }
         });
 
-        QTimer::singleShot(20 * 60 * 1000, process, [process, timedOut]() {
+        QTimer::singleShot(4 * 60 * 1000, process, [process, timedOut]() {
             if (process->state() == QProcess::NotRunning) {
                 return;
             }

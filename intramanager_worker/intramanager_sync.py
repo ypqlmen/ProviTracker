@@ -14,6 +14,10 @@ PUNCH_URL = BASE_URL + "reports/punch-in/"
 KVIKOC_URL = "https://kvikoc.tdc.dk/"
 DEBUG_ENABLED = False
 OFFICE_ONLY_MESSAGE = "Man kan kun stemple ind eller ud på kontorets internet."
+KVIKOC_SEARCH_TIMEOUT_MS = 60000
+KVIKOC_ACCOUNT_TIMEOUT_MS = 60000
+KVIKOC_IDLE_TIMEOUT_MS = 20000
+KVIKOC_LOOKUP_BUDGET_SECONDS = 180
 
 
 def configure_playwright_browser_path():
@@ -393,7 +397,7 @@ def kvikoc_loading_active(page):
         return False
 
 
-def kvikoc_wait_for_ready_state(page, predicate, timeout=240000, settle_ms=250, arg=None):
+def kvikoc_wait_for_ready_state(page, predicate, timeout=KVIKOC_SEARCH_TIMEOUT_MS, settle_ms=250, arg=None):
     ready = False
     try:
         if arg is None:
@@ -405,7 +409,7 @@ def kvikoc_wait_for_ready_state(page, predicate, timeout=240000, settle_ms=250, 
         ready = False
 
     if kvikoc_loading_active(page):
-        kvikoc_wait_until_idle(page, timeout=min(timeout, 60000))
+        kvikoc_wait_until_idle(page, timeout=min(timeout, KVIKOC_IDLE_TIMEOUT_MS))
 
     if settle_ms > 0:
         try:
@@ -416,7 +420,7 @@ def kvikoc_wait_for_ready_state(page, predicate, timeout=240000, settle_ms=250, 
     return ready or not kvikoc_loading_active(page)
 
 
-def kvikoc_wait_until_idle(page, timeout=240000):
+def kvikoc_wait_until_idle(page, timeout=KVIKOC_SEARCH_TIMEOUT_MS):
     try:
         page.wait_for_function(
             r"""() => !Array.from(document.querySelectorAll('.ui-blockui-content'))
@@ -456,7 +460,7 @@ def kvikoc_wait_for_search_result(page):
                     || body.includes('No records found')
                     || body.includes('Ingen poster');
             }""",
-        timeout=240000,
+        timeout=KVIKOC_SEARCH_TIMEOUT_MS,
         settle_ms=300,
     )
 
@@ -605,7 +609,7 @@ def kvikoc_search_subscriber_ref(page, args, debug_dir, subscriber_ref):
             kvikoc_submit_search(page)
             kvikoc_wait_for_search_result(page)
             kvikoc_reload_if_search_stalled(page)
-            kvikoc_wait_until_idle(page, timeout=240000)
+            kvikoc_wait_until_idle(page, timeout=KVIKOC_SEARCH_TIMEOUT_MS)
             if kvikoc_all_subscriptions_visible(page) or kvikoc_customer_account_links(page):
                 return {"success": True, "stage": "kvikoc_subscriber_search", "subscriberRef": candidate}
 
@@ -1432,7 +1436,7 @@ def kvikoc_click_customer_account(page, account_number, debug_dir):
                     return text.includes('Vis Alle Abonnementer')
                         || !!document.querySelector('div[id$="hentkunde2"], div[id$="hentkunde"]');
                 }""",
-                timeout=240000,
+                timeout=KVIKOC_ACCOUNT_TIMEOUT_MS,
             )
             ready = True
         except Exception:
@@ -1516,7 +1520,7 @@ def kvikoc_click_customer_account_resilient(page, account_number, debug_dir):
                         return text.includes('Vis Alle Abonnementer')
                             || !!document.querySelector('div[id$="hentkunde2"], div[id$="hentkunde"]');
                     }""",
-                    timeout=240000,
+                    timeout=KVIKOC_ACCOUNT_TIMEOUT_MS,
                 )
                 ready = True
             except Exception:
@@ -1729,14 +1733,32 @@ def kvikoc_lookup(page, args, debug_dir):
             "seconds": round(time.monotonic() - started_at, 3),
         })
 
+    def budget_exceeded():
+        return (time.monotonic() - started_at) >= KVIKOC_LOOKUP_BUDGET_SECONDS
+
+    def slow_error(stage):
+        save_debug_screenshot(page, debug_dir, f"{stage}.png", force=True)
+        write_debug_text(debug_dir / f"{stage}.html", page.content(), force=True)
+        return {
+            "success": False,
+            "stage": stage,
+            "error": "KvikOC bruger for lang tid på at svare. Prøv igen om lidt; programmet genindlæser automatisk ved næste forsøg.",
+            "timings": timings,
+            "debugDir": str(debug_dir),
+        }
+
     search_result = kvikoc_search(page, args, debug_dir)
     mark("initial_search")
     if not search_result.get("success"):
         return search_result
+    if budget_exceeded():
+        return slow_error("kvikoc_slow_initial_search")
 
     if kvikoc_search_result_not_found(page):
         for retry in range(2):
             try:
+                if budget_exceeded():
+                    return slow_error("kvikoc_slow_not_found_retry")
                 ready_result = kvikoc_prepare_search_form(page, args, debug_dir)
                 if not ready_result.get("success"):
                     return ready_result
@@ -1744,6 +1766,8 @@ def kvikoc_lookup(page, args, debug_dir):
                 mark(f"not_found_retry_{retry + 1}")
                 if not search_result.get("success"):
                     return search_result
+                if budget_exceeded():
+                    return slow_error("kvikoc_slow_not_found_retry")
                 if not kvikoc_search_result_not_found(page):
                     break
             except Exception:
@@ -1765,6 +1789,8 @@ def kvikoc_lookup(page, args, debug_dir):
     customer_accounts = []
     account_summaries = []
     for search_attempt in range(3):
+        if budget_exceeded():
+            return slow_error("kvikoc_slow_account_scan")
         customer_accounts = kvikoc_customer_account_links(page)
         account_summaries = kvikoc_customer_account_summaries(page)
         mark(f"account_scan_{search_attempt + 1}")
@@ -1784,6 +1810,8 @@ def kvikoc_lookup(page, args, debug_dir):
             mark(f"account_scan_retry_search_{search_attempt + 1}")
             if not search_result.get("success"):
                 return search_result
+            if budget_exceeded():
+                return slow_error("kvikoc_slow_account_scan_retry")
         except Exception:
             break
     rows = []
@@ -1791,6 +1819,8 @@ def kvikoc_lookup(page, args, debug_dir):
 
     if account_summaries:
         for summary in account_summaries:
+            if budget_exceeded():
+                return slow_error("kvikoc_slow_account_details")
             account_number = summary.get("accountNumber", "")
             subscriber_refs = summary.get("subscriberRefs", [])
 
@@ -1804,6 +1834,8 @@ def kvikoc_lookup(page, args, debug_dir):
 
             if subscriber_refs and len(detail_rows) < len(subscriber_refs):
                 for subscriber_ref in subscriber_refs:
+                    if budget_exceeded():
+                        return slow_error("kvikoc_slow_subscriber_details")
                     if kvikoc_ref_seen_in_rows(subscriber_ref, detail_rows):
                         continue
 
@@ -1828,6 +1860,8 @@ def kvikoc_lookup(page, args, debug_dir):
                 customer_name = kvikoc_extract_customer_name(page)
     elif customer_accounts:
         for account_number in customer_accounts:
+            if budget_exceeded():
+                return slow_error("kvikoc_slow_account_details")
             account_rows = kvikoc_collect_rows_for_account(page, args, debug_dir, account_number)
             mark(f"account_{account_number}")
 
@@ -1846,6 +1880,21 @@ def kvikoc_lookup(page, args, debug_dir):
         customer_name = kvikoc_extract_customer_name(page)
 
     rows = kvikoc_dedupe_subscription_rows(rows, include_sensitive_details)
+
+    if not rows and (customer_accounts or account_summaries or clean_text(customer_name)):
+        save_debug_screenshot(page, debug_dir, "kvikoc_customer_without_subscriptions.png", force=True)
+        write_debug_text(debug_dir / "kvikoc_customer_without_subscriptions.html", page.content(), force=True)
+        return {
+            "success": False,
+            "stage": "kvikoc_subscriptions",
+            "notFound": False,
+            "customerName": customer_name,
+            "customerAccounts": customer_accounts,
+            "error": "KvikOC fandt kunden, men abonnementslisten blev ikke hentet færdig. Prøv igen; hvis KvikOC er langsom, hjælper en genindlæsning ofte.",
+            "timings": timings,
+            "debugDir": str(debug_dir),
+        }
+
     products = kvikoc_build_product_counts(rows)
 
     if not rows and not customer_accounts and not clean_text(customer_name):
