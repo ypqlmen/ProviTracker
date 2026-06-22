@@ -21,8 +21,8 @@
 #include "commission.h"
 #include "report_service.h"
 
-static constexpr const char* APP_VERSION = "1.5.9";
-static constexpr int APP_BUILD_VERSION = 10512;
+static constexpr const char* APP_VERSION = "1.5.10";
+static constexpr int APP_BUILD_VERSION = 10513;
 static constexpr const char* UPDATE_APPCAST_URL = "https://raw.githubusercontent.com/ypqlmen/ProviTracker/main/appcast.xml";
 
 static QString psSingleQuoted(QString value) {
@@ -1624,84 +1624,6 @@ QSpinBox::down-button {
     }
 };
 
-class SickPayDialog : public QDialog {
-public:
-    SickPayDialog(const QString& salespersonId, std::optional<SickPayEntry> existing = std::nullopt, QWidget* parent = nullptr)
-        : QDialog(parent), salespersonId(salespersonId) {
-        setWindowTitle(existing.has_value() ? "Ret sygeløn" : "Registrer sygeløn");
-        resize(430, 240);
-
-        if (existing.has_value()) {
-            entry = *existing;
-        } else {
-            entry.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
-            entry.salespersonId = this->salespersonId;
-            entry.date = QDate::currentDate();
-        }
-
-        auto* layout = new QVBoxLayout(this);
-        layout->setContentsMargins(18, 18, 18, 18);
-        layout->setSpacing(12);
-
-        auto* form = new QFormLayout;
-        form->setLabelAlignment(Qt::AlignLeft);
-        form->setFormAlignment(Qt::AlignTop);
-        form->setHorizontalSpacing(14);
-        form->setVerticalSpacing(10);
-
-        dateEdit = new QDateEdit(entry.date);
-        dateEdit->setCalendarPopup(true);
-        dateEdit->setDisplayFormat("dd-MM-yyyy");
-        dateEdit->setLocale(QLocale(QLocale::Danish, QLocale::Denmark));
-
-        amountSpin = new QDoubleSpinBox;
-        amountSpin->setRange(0.0, 1000000.0);
-        amountSpin->setDecimals(2);
-        amountSpin->setSuffix(" kr");
-        amountSpin->setSingleStep(100.0);
-        amountSpin->setValue(entry.amount);
-
-        noteEdit = new QLineEdit(entry.note);
-        noteEdit->setPlaceholderText("Valgfri note, fx sygedag eller refusion");
-
-        form->addRow("Dato", dateEdit);
-        form->addRow("Beløb", amountSpin);
-        form->addRow("Note", noteEdit);
-        layout->addLayout(form);
-
-        auto* buttons = new QHBoxLayout;
-        buttons->addStretch();
-        auto* cancelBtn = new QPushButton("Annuller");
-        auto* saveBtn = new QPushButton("Gem");
-        buttons->addWidget(cancelBtn);
-        buttons->addWidget(saveBtn);
-        layout->addLayout(buttons);
-
-        connect(cancelBtn, &QPushButton::clicked, this, &QDialog::reject);
-        connect(saveBtn, &QPushButton::clicked, this, [this]() {
-            if (amountSpin->value() <= 0.0) {
-                QMessageBox::warning(this, "Manglende beløb", "Sygeløn skal have et beløb over 0 kr.");
-                return;
-            }
-
-            entry.salespersonId = this->salespersonId;
-            entry.date = dateEdit->date();
-            entry.amount = amountSpin->value();
-            entry.note = noteEdit->text().trimmed();
-            accept();
-        });
-    }
-
-    SickPayEntry getEntry() const { return entry; }
-
-private:
-    QString salespersonId;
-    SickPayEntry entry;
-    QDateEdit* dateEdit = nullptr;
-    QDoubleSpinBox* amountSpin = nullptr;
-    QLineEdit* noteEdit = nullptr;
-};
-
 // ============================================================
 // Main window
 // ============================================================
@@ -1829,7 +1751,6 @@ private:
     QLabel* voiceProgressHintLabel = nullptr;
 
     QTableWidget* ordersTable = nullptr;
-    QTableWidget* sickPayTable = nullptr;
     QTextEdit* reportText = nullptr;
     QComboBox* reportPresetCombo = nullptr;
     QDateEdit* reportMonthEdit = nullptr;
@@ -3637,13 +3558,6 @@ private:
         }
     }
 
-    void saveSickPayAndSyncCloud() {
-        repo.saveSickPayEntries();
-        if (repo.cloudPersistenceEnabled) {
-            flushCloudSaveSync("Sygeløn er gemt i programmet, men kunne ikke gemmes i skyen lige nu. Programmet prøver igen automatisk.");
-        }
-    }
-
     void updateCloudAccountStatus() {
         if (cloudAccountStatusLabel) {
             if (cloudUsername.trimmed().isEmpty()) {
@@ -4124,13 +4038,11 @@ QTableWidget::item {
         auto* addBtn = new QPushButton("Ny ordre");
         auto* editBtn = new QPushButton("Ret ordre");
         auto* deleteBtn = new QPushButton("Slet ordre");
-        auto* addSickPayBtn = new QPushButton("Registrer sygeløn");
 
         actionsRow->addWidget(refreshBtn);
         actionsRow->addWidget(addBtn);
         actionsRow->addWidget(editBtn);
         actionsRow->addWidget(deleteBtn);
-        actionsRow->addWidget(addSickPayBtn);
         actionsRow->addStretch();
 
         actionsCard.second->addLayout(actionsRow);
@@ -4164,41 +4076,8 @@ QTableWidget::item {
         tableCard.second->addWidget(ordersTable, 1);
         layout->addWidget(tableCard.first, 1);
 
-        auto sickPayCard = createCard("Sygeløn");
-        auto* sickPayActions = new QHBoxLayout;
-        sickPayActions->setSpacing(10);
-        sickPayActions->setContentsMargins(0, 0, 0, 0);
-        auto* editSickPayBtn = new QPushButton("Ret sygeløn");
-        auto* deleteSickPayBtn = new QPushButton("Slet sygeløn");
-        sickPayActions->addWidget(editSickPayBtn);
-        sickPayActions->addWidget(deleteSickPayBtn);
-        sickPayActions->addStretch();
-        sickPayCard.second->addLayout(sickPayActions);
-
-        sickPayTable = new ClearableTableWidget(0, 3);
-        sickPayTable->setHorizontalHeader(new CleanTableHeaderView(Qt::Horizontal, sickPayTable));
-        sickPayTable->setHorizontalHeaderLabels({"Dato", "Beløb", "Note"});
-        sickPayTable->horizontalHeader()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
-        sickPayTable->horizontalHeader()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
-        sickPayTable->horizontalHeader()->setSectionResizeMode(2, QHeaderView::Stretch);
-        sickPayTable->setAlternatingRowColors(true);
-        sickPayTable->setSelectionBehavior(QAbstractItemView::SelectRows);
-        sickPayTable->setSelectionMode(QAbstractItemView::SingleSelection);
-        sickPayTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
-        sickPayTable->verticalHeader()->setVisible(false);
-        sickPayTable->verticalHeader()->setDefaultSectionSize(38);
-        sickPayTable->setWordWrap(true);
-        sickPayTable->setTextElideMode(Qt::ElideNone);
-        sickPayTable->setShowGrid(false);
-        sickPayTable->setMinimumHeight(160);
-        sickPayTable->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
-        styleDataTable(sickPayTable, true);
-        sickPayCard.second->addWidget(sickPayTable);
-        layout->addWidget(sickPayCard.first);
-
         connect(refreshBtn, &QPushButton::clicked, this, [this]() {
             refreshOrdersTable();
-            refreshSickPayTable();
         });
 
         connect(addBtn, &QPushButton::clicked, this, [this]() {
@@ -4211,18 +4090,6 @@ QTableWidget::item {
 
         connect(deleteBtn, &QPushButton::clicked, this, [this]() {
             deleteSelectedOrder();
-        });
-
-        connect(addSickPayBtn, &QPushButton::clicked, this, [this]() {
-            createSickPayEntry();
-        });
-
-        connect(editSickPayBtn, &QPushButton::clicked, this, [this]() {
-            editSelectedSickPayEntry();
-        });
-
-        connect(deleteSickPayBtn, &QPushButton::clicked, this, [this]() {
-            deleteSelectedSickPayEntry();
         });
 
         return w;
@@ -5036,34 +4903,6 @@ QTableWidget::item {
         return out;
     }
 
-    QVector<int> activeSickPayIndicesSorted() const {
-        QVector<int> out;
-        const auto* s = activeSalesperson();
-        if (!s) return out;
-        for (int i = 0; i < repo.sickPayEntries.size(); ++i) {
-            if (repo.sickPayEntries[i].salespersonId == s->id) out.push_back(i);
-        }
-        std::sort(out.begin(), out.end(), [&](int a, int b) {
-            return repo.sickPayEntries[a].date > repo.sickPayEntries[b].date;
-        });
-        return out;
-    }
-
-    double sickPayForRange(
-        const QString& salespersonId,
-        const QDateTime& from,
-        const QDateTime& to
-        ) const {
-        double total = 0.0;
-        for (const auto& entry : repo.sickPayEntries) {
-            if (entry.salespersonId != salespersonId) continue;
-            const QDateTime entryTime(entry.date, QTime(12, 0, 0));
-            if (entryTime < from || entryTime > to) continue;
-            total += entry.amount;
-        }
-        return total;
-    }
-
     QString orderProductsSummary(const Order& order, double* totalPoints = nullptr) const {
         QStringList parts;
         double points = 0.0;
@@ -5141,7 +4980,6 @@ QTableWidget::item {
         activeSalespersonLabel->setText(s ? QString("Du arbejder som <b>%1</b>").arg(s->name) : "Ingen aktiv sælger");
         refreshDashboard();
         refreshOrdersTable();
-        refreshSickPayTable();
         refreshSalespeopleUi();
         refreshSettingsUi();
         generateReport();
@@ -5248,18 +5086,14 @@ QTableWidget::item {
         if (kpiTodayPointsLabel) kpiTodayPointsLabel->setText(money(mDay.totalPoints));
 
         const double currentPayPeriodBaseSalary = cachedHoursForRange(currentPayPeriod) * repo.settings.hourlyRate;
-        const double currentPayPeriodSickPay =
-            cachedSickPayForRange(currentPayPeriod)
-            + sickPayForRange(s->id, currentPayPeriod.first, currentPayPeriod.second);
+        const double currentPayPeriodSickPay = cachedSickPayForRange(currentPayPeriod);
         const double currentPayPeriodBonus = currentPayPeriodMetrics.dayBonus;
         const double backpaidBonusThisMonth = delayedBonus(previousMonthMetrics);
         const double actualSalaryThisMonth =
             currentPayPeriodBaseSalary + currentPayPeriodSickPay + currentPayPeriodBonus + backpaidBonusThisMonth;
 
         const double nextPayPeriodBaseSalary = cachedHoursForRange(nextPayPeriod) * repo.settings.hourlyRate;
-        const double nextPayPeriodSickPay =
-            cachedSickPayForRange(nextPayPeriod)
-            + sickPayForRange(s->id, nextPayPeriod.first, nextPayPeriod.second);
+        const double nextPayPeriodSickPay = cachedSickPayForRange(nextPayPeriod);
         const double nextPayPeriodBonus = nextPayPeriodMetrics.dayBonus;
         const double backpaidBonusNextMonth = delayedBonus(currentCalendarMetrics);
         const double salaryEarnedForNextMonth =
@@ -5491,30 +5325,6 @@ QTableWidget::item {
         ordersTable->resizeColumnToContents(0);
         ordersTable->resizeColumnToContents(1);
         ordersTable->horizontalHeader()->setMinimumSectionSize(80);
-    }
-
-    void refreshSickPayTable() {
-        if (!sickPayTable) return;
-        const auto indices = activeSickPayIndicesSorted();
-        sickPayTable->setRowCount(indices.size());
-
-        auto makeItem = [](const QString& text) {
-            auto* item = new QTableWidgetItem(text);
-            item->setForeground(QBrush(QColor("#EAF4FF")));
-            return item;
-        };
-
-        for (int row = 0; row < static_cast<int>(indices.size()); ++row) {
-            const auto& entry = repo.sickPayEntries[indices[row]];
-            sickPayTable->setItem(row, 0, makeItem(entry.date.toString("dd-MM-yyyy")));
-            sickPayTable->setItem(row, 1, makeItem(money(entry.amount) + " kr"));
-            sickPayTable->setItem(row, 2, makeItem(entry.note));
-            sickPayTable->item(row, 2)->setToolTip(entry.note);
-        }
-
-        sickPayTable->resizeRowsToContents();
-        sickPayTable->resizeColumnToContents(0);
-        sickPayTable->resizeColumnToContents(1);
     }
 
     void refreshSalespeopleUi() {
@@ -5890,48 +5700,6 @@ QTableWidget::item {
         }
     }
 
-    int selectedSickPayRepoIndex() const {
-        if (!sickPayTable) return -1;
-        const int selectedRow = sickPayTable->currentRow();
-        const auto indices = activeSickPayIndicesSorted();
-        if (selectedRow < 0 || selectedRow >= static_cast<int>(indices.size())) return -1;
-        return indices[selectedRow];
-    }
-
-    void createSickPayEntry() {
-        const auto* s = activeSalesperson();
-        if (!s) return;
-        SickPayDialog dlg(s->id, std::nullopt, this);
-        if (dlg.exec() == QDialog::Accepted) {
-            repo.sickPayEntries.push_back(dlg.getEntry());
-            saveSickPayAndSyncCloud();
-            refreshAll();
-        }
-    }
-
-    void editSelectedSickPayEntry() {
-        const int repoIndex = selectedSickPayRepoIndex();
-        if (repoIndex < 0) return;
-        const auto* s = activeSalesperson();
-        if (!s) return;
-        SickPayDialog dlg(s->id, repo.sickPayEntries[repoIndex], this);
-        if (dlg.exec() == QDialog::Accepted) {
-            repo.sickPayEntries[repoIndex] = dlg.getEntry();
-            saveSickPayAndSyncCloud();
-            refreshAll();
-        }
-    }
-
-    void deleteSelectedSickPayEntry() {
-        const int repoIndex = selectedSickPayRepoIndex();
-        if (repoIndex < 0) return;
-        if (confirmQuestion(this, "Slet sygeløn", "Er du sikker på, at du vil slette den valgte sygelønspost?")) {
-            repo.sickPayEntries.removeAt(repoIndex);
-            saveSickPayAndSyncCloud();
-            refreshAll();
-        }
-    }
-
     struct ReportRange {
         QString label;
         QDateTime from;
@@ -6014,7 +5782,7 @@ QTableWidget::item {
         ) const {
         ReportSalaryBreakdown salary;
         if (!range.paymentMonth.isValid()) {
-            salary.sickPay = sickPayForRange(salesperson.id, range.from, range.to);
+            salary.sickPay = hoursEntry.sickPay;
             return salary;
         }
 
@@ -6039,9 +5807,7 @@ QTableWidget::item {
 
         salary.usesPaymentMonthRules = true;
         salary.baseSalary = hoursEntry.hours * repo.settings.hourlyRate;
-        salary.sickPay =
-            hoursEntry.sickPay
-            + sickPayForRange(salesperson.id, payrollRange.first, payrollRange.second);
+        salary.sickPay = hoursEntry.sickPay;
         salary.periodProvision = payrollMetrics.dayBonus;
         salary.delayedProvision =
             previousMonthMetrics.monthlyBonus + previousMonthMetrics.simoBonus + previousMonthMetrics.voiceBonus;

@@ -18,6 +18,7 @@ KVIKOC_SEARCH_TIMEOUT_MS = 60000
 KVIKOC_ACCOUNT_TIMEOUT_MS = 60000
 KVIKOC_IDLE_TIMEOUT_MS = 20000
 KVIKOC_LOOKUP_BUDGET_SECONDS = 180
+INTRAMANAGER_SICK_PAY_FACTOR = 0.5
 
 
 def configure_playwright_browser_path():
@@ -2239,7 +2240,7 @@ def payroll_money_from_cells(cells):
         total += amount
         found_any = True
 
-    return round(total, 2) if found_any else 0.0
+    return round(total * INTRAMANAGER_SICK_PAY_FACTOR, 2) if found_any else 0.0
 
 
 def payroll_summary_from_result_rows(page):
