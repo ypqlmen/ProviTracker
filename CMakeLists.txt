@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(ProvisionTrackerV2 VERSION 1.5.10 LANGUAGES CXX)
+project(ProvisionTrackerV2 VERSION 1.5.11 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -28,3 +28,13 @@ target_link_libraries(ProvisionTrackerV2 PRIVATE
     advapi32
     bcrypt
 )
+
+include(CTest)
+if(BUILD_TESTING)
+    add_executable(IntramanagerCacheTests
+        tests/intramanager_cache_test.cpp
+        domain.h
+    )
+    target_link_libraries(IntramanagerCacheTests PRIVATE Qt6::Core)
+    add_test(NAME IntramanagerCacheTests COMMAND IntramanagerCacheTests)
+endif()

@@ -21,8 +21,8 @@
 #include "commission.h"
 #include "report_service.h"
 
-static constexpr const char* APP_VERSION = "1.5.10";
-static constexpr int APP_BUILD_VERSION = 10513;
+static constexpr const char* APP_VERSION = "1.5.11";
+static constexpr int APP_BUILD_VERSION = 10514;
 static constexpr const char* UPDATE_APPCAST_URL = "https://raw.githubusercontent.com/ypqlmen/ProviTracker/main/appcast.xml";
 
 static QString psSingleQuoted(QString value) {
@@ -4994,8 +4994,9 @@ QTableWidget::item {
         const auto cached = cachedIntramanagerHours(fromDate, toDate);
         const bool periodEnded = range.second.date() < QDate::currentDate();
 
-        if (cached.has_value() && (periodEnded || intramanagerHoursEntryIsFresh(*cached, maxAgeMinutes))) {
-            return;
+        if (cached.has_value()) {
+            if (periodEnded && intramanagerHoursEntryCompletesRange(*cached, range.second)) return;
+            if (!periodEnded && intramanagerHoursEntryIsFresh(*cached, maxAgeMinutes)) return;
         }
 
         const QDateTime nowUtc = QDateTime::currentDateTimeUtc();
@@ -5005,7 +5006,9 @@ QTableWidget::item {
         }
 
         intramanagerDashboardRefreshRequestedAt[key] = nowUtc;
-        fetchIntramanagerHoursAsync(fromDate, toDate, true);
+        fetchIntramanagerHoursAsync(fromDate, toDate, true, [this, key](bool ok) {
+            if (!ok) intramanagerDashboardRefreshRequestedAt.remove(key);
+        });
     }
 
     void refreshDashboardPayrollHoursIfNeeded(

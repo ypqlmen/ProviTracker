@@ -117,6 +117,14 @@ struct IntramanagerHoursEntry {
     QString syncedAt;
 };
 
+static bool intramanagerHoursEntryCompletesRange(
+    const IntramanagerHoursEntry& entry,
+    const QDateTime& rangeEnd
+    ) {
+    const QDateTime synced = QDateTime::fromString(entry.syncedAt, Qt::ISODate);
+    return synced.isValid() && synced > rangeEnd;
+}
+
 struct IntramanagerPunchState {
     bool known = false;
     bool clockedIn = false;
