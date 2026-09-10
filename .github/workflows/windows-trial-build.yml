@@ -51,7 +51,7 @@ jobs:
           $ErrorActionPreference = 'Stop'
           python -m pip install playwright==1.52.0 pyinstaller==6.13.0
           if ($LASTEXITCODE -ne 0) { throw 'Python dependency installation failed' }
-          choco install innosetup --version=6.4.3 --yes --no-progress
+          choco install innosetup --version=6.4.3 --allow-downgrade --yes --no-progress
           if ($LASTEXITCODE -ne 0) { throw 'Inno Setup installation failed' }
       - name: Build application and run existing tests
         run: |
