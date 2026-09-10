@@ -51,8 +51,14 @@ jobs:
           $ErrorActionPreference = 'Stop'
           python -m pip install playwright==1.52.0 pyinstaller==6.13.0
           if ($LASTEXITCODE -ne 0) { throw 'Python dependency installation failed' }
-          choco install innosetup --version=6.4.3 --allow-downgrade --yes --no-progress
-          if ($LASTEXITCODE -ne 0) { throw 'Inno Setup installation failed' }
+          $compilers = @(
+            "${env:ProgramFiles(x86)}/Inno Setup 6/ISCC.exe"
+            "$env:ProgramFiles/Inno Setup 6/ISCC.exe"
+          )
+          $iscc = $compilers | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (!$iscc) { throw 'Hosted Inno Setup 6 compiler not found' }
+          "PROVI_ISCC=$iscc" | Out-File $env:GITHUB_ENV -Append
+          (Get-Item $iscc).VersionInfo | Format-List ProductVersion, FileVersion
       - name: Build application and run existing tests
         run: |
           $ErrorActionPreference = 'Stop'
@@ -86,7 +92,7 @@ jobs:
           # This smoke test uses a local page and never signs in to a service.
           python -c "from playwright.sync_api import sync_playwright; p=sync_playwright().start(); b=p.chromium.launch(headless=True); page=b.new_page(); page.set_content('<title>trial</title>'); assert page.title() == 'trial'; b.close(); p.stop()"
           if ($LASTEXITCODE -ne 0) { throw 'Bundled browser smoke test failed' }
-          $iscc = "${env:ProgramFiles(x86)}/Inno Setup 6/ISCC.exe"
+          $iscc = $env:PROVI_ISCC
           if (!(Test-Path $iscc)) { throw 'Inno Setup compiler not found' }
           & $iscc "/DBuildDir=$stage" installer/ProviTracker.iss
           if ($LASTEXITCODE -ne 0) { throw 'Installer build failed' }
@@ -97,7 +103,7 @@ jobs:
           @(
             'TRIAL BUILD ONLY - not published to users.'
             "Source commit: $env:GITHUB_SHA"
-            'Built with Qt 6.9.3, MinGW 13.1, Python 3.12, Playwright 1.52.0, PyInstaller 6.13.0, Inno Setup 6.4.3.'
+            'Built with Qt 6.9.3, MinGW 13.1, Python 3.12, Playwright 1.52.0, PyInstaller 6.13.0, hosted Inno Setup 6.'
             'Uses the existing installer definition and application version.'
             'The obsolete, unused WinSparkle DLL is not included.'
             'No release upload, update-feed edit, or database operation is performed.'
