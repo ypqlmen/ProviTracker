@@ -1,0 +1,116 @@
+name: Windows trial build
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, codex/windows-trial-build]
+    paths:
+      - '.github/workflows/windows-trial-build.yml'
+  pull_request:
+    paths:
+      - '**.cpp'
+      - '**.h'
+      - 'CMakeLists.txt'
+      - 'intramanager_worker/**'
+      - 'installer/**'
+      - 'tests/**'
+      - '.github/workflows/windows-trial-build.yml'
+
+# This workflow cannot publish releases or change the update feed.
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-trial-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: windows-2022
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install Qt and matching compiler
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.9.3'
+          arch: win64_mingw
+          tools: 'tools_mingw1310,qt.tools.win64_mingw1310'
+          setup-python: false
+          cache: false
+      - name: Prepare packaging tools
+        run: |
+          $ErrorActionPreference = 'Stop'
+          python -m pip install playwright==1.52.0 pyinstaller==6.13.0
+          if ($LASTEXITCODE -ne 0) { throw 'Python dependency installation failed' }
+          choco install innosetup --version=6.4.3 --yes --no-progress
+          if ($LASTEXITCODE -ne 0) { throw 'Inno Setup installation failed' }
+      - name: Build application and run existing tests
+        run: |
+          $ErrorActionPreference = 'Stop'
+          cmake -S . -B build/trial -G "MinGW Makefiles" "-DCMAKE_PREFIX_PATH=$env:QT_ROOT_DIR" -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
+          if ($LASTEXITCODE -ne 0) { throw 'CMake configuration failed' }
+          cmake --build build/trial --parallel 2
+          if ($LASTEXITCODE -ne 0) { throw 'Application build failed' }
+          ctest --test-dir build/trial --output-on-failure --no-tests=error
+          if ($LASTEXITCODE -ne 0) { throw 'C++ tests failed' }
+          python -m unittest discover -s tests -p "test_*.py" -v
+          if ($LASTEXITCODE -ne 0) { throw 'Python tests failed' }
+      - name: Package application and browser worker
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $stage = Join-Path $env:RUNNER_TEMP 'provi-trial-stage'
+          New-Item -ItemType Directory -Path $stage -Force | Out-Null
+          Copy-Item build/trial/ProvisionTrackerV2.exe $stage
+          & "$env:QT_ROOT_DIR/bin/windeployqt.exe" --release --compiler-runtime "$stage/ProvisionTrackerV2.exe"
+          if ($LASTEXITCODE -ne 0) { throw 'Qt deployment failed' }
+          Push-Location intramanager_worker
+          try {
+            python -m PyInstaller intramanager_sync.spec --noconfirm
+            if ($LASTEXITCODE -ne 0) { throw 'Worker build failed' }
+          } finally { Pop-Location }
+          Copy-Item intramanager_worker/dist/intramanager_sync "$stage/intramanager_worker" -Recurse
+          $env:PLAYWRIGHT_BROWSERS_PATH = "$stage/intramanager_worker/b"
+          python -m playwright install chromium
+          if ($LASTEXITCODE -ne 0) { throw 'Browser installation failed' }
+          & "$stage/intramanager_worker/intramanager_sync.exe" --help
+          if ($LASTEXITCODE -ne 0) { throw 'Packaged worker startup failed' }
+          # This smoke test uses a local page and never signs in to a service.
+          python -c "from playwright.sync_api import sync_playwright; p=sync_playwright().start(); b=p.chromium.launch(headless=True); page=b.new_page(); page.set_content('<title>trial</title>'); assert page.title() == 'trial'; b.close(); p.stop()"
+          if ($LASTEXITCODE -ne 0) { throw 'Bundled browser smoke test failed' }
+          $iscc = "${env:ProgramFiles(x86)}/Inno Setup 6/ISCC.exe"
+          if (!(Test-Path $iscc)) { throw 'Inno Setup compiler not found' }
+          & $iscc "/DBuildDir=$stage" installer/ProviTracker.iss
+          if ($LASTEXITCODE -ne 0) { throw 'Installer build failed' }
+          $installers = @(Get-ChildItem dist/ProviBeregnerSetup-*.exe)
+          if ($installers.Count -ne 1) { throw 'Expected exactly one installer' }
+          Compress-Archive -LiteralPath $installers[0].FullName -DestinationPath dist/ProviTracker-TRIAL-update.zip
+          Get-FileHash dist/*.exe, dist/*.zip -Algorithm SHA256 | Format-Table -AutoSize | Out-String | Set-Content dist/SHA256SUMS.txt
+          @(
+            'TRIAL BUILD ONLY - not published to users.'
+            "Source commit: $env:GITHUB_SHA"
+            'Built with Qt 6.9.3, MinGW 13.1, Python 3.12, Playwright 1.52.0, PyInstaller 6.13.0, Inno Setup 6.4.3.'
+            'Uses the existing installer definition and application version.'
+            'The obsolete, unused WinSparkle DLL is not included.'
+            'No release upload, update-feed edit, or database operation is performed.'
+          ) | Set-Content dist/TRIAL-README.txt
+      - name: Verify tracked files are unchanged
+        run: |
+          git diff --exit-code
+          if ($LASTEXITCODE -ne 0) { throw 'Build modified tracked files' }
+      - name: Save trial installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: ProviTracker-Windows-TRIAL-${{ github.run_number }}
+          path: dist/
+          retention-days: 7
+          compression-level: 0
+          if-no-files-found: error
