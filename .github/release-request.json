@@ -1,7 +1,8 @@
 {
-  "version": "1.6.0",
-  "build_version": 10600,
-  "run_id": 34568045059,
-  "source_sha": "f36f83b877b96c1b675a871b817e4f1f60766322",
-  "artifact_id": 10186846475
+  "version": "1.6.1",
+  "build_version": 10601,
+  "run_id": 34597992393,
+  "source_sha": "c3b31c80fcef474f51b01813f8c69d24bcbf61e7",
+  "artifact_id": 10263711028,
+  "release_notes": "- Retter opdateringsscriptets håndtering af Windows-filnavne med æ, ø, å og andre Unicode-tegn.\n- Programmet lukker først, når opdateringshjælperen er startet og har kontrolleret filstierne.\n- Den installerede version kontrolleres før genstart; installationsfejl gemmes i en log.\n- Installationen sker i brugerens egen mappe og kræver ikke administratorrettigheder.\n\nBrugere, der sidder fast på 1.5.11, kan være nødt til at installere denne version manuelt én gang."
 }

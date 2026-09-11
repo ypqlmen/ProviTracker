@@ -125,11 +125,7 @@ def publish(request):
                     f"Published asset mismatch: {asset.name}")
     with tempfile.TemporaryDirectory() as directory:
         notes = Path(directory) / "notes.md"
-        notes.write_text(f"Provi Tracker {version}\n\n"
-                         "- Tjavs har nu adgang til KvikOC-siden.\n"
-                         "- Begge lønkort viser Prognose af timeløn for den relevante lønperiode.\n"
-                         "- Prognosen beregnes ud fra optjent timeløn og arbejdsdage (mandag–fredag).\n"
-                         "- Windows-build, beregningstests og browser-worker er kontrolleret.\n")
+        notes.write_text(f"Provi Tracker {version}\n\n" + request["release_notes"] + "\n")
         subprocess.run(["gh", "release", "edit", "autoupdate", "--repo", REPO,
                         "--title", f"v{version}", "--notes-file", str(notes)], check=True)
     base_url = f"https://github.com/{REPO}/releases/download/autoupdate/"
