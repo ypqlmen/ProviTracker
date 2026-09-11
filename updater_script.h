@@ -26,16 +26,29 @@ try {
     Add-Content -LiteralPath $logPath -Encoding UTF8 -Value ('Installer exit code: ' + $exitCode)
     if (@(0, 42) -notcontains $exitCode) { throw ('Installer failed with exit code ' + $exitCode) }
     if (-not (Test-Path -LiteralPath $targetApp -PathType Leaf)) { throw 'Installed application not found' }
-    $versionFile = $logPath + '.version.txt'
-    $versionCheck = Start-Process -FilePath $targetApp -ArgumentList '--version' -RedirectStandardOutput $versionFile -PassThru -ErrorAction Stop
+    # Own the .NET process directly: Windows PowerShell 5.1 Start-Process can
+    # return a null ExitCode when standard output is redirected.
+    $versionCheck = New-Object System.Diagnostics.Process
+    $versionCheck.StartInfo.FileName = $targetApp
+    $versionCheck.StartInfo.Arguments = '--version'
+    $versionCheck.StartInfo.UseShellExecute = $false
+    $versionCheck.StartInfo.RedirectStandardOutput = $true
+    $versionCheck.StartInfo.CreateNoWindow = $true
+    if (-not $versionCheck.Start()) { throw 'Could not start installed application version check' }
     if (-not $versionCheck.WaitForExit(15000)) {
         Stop-Process -Id $versionCheck.Id -ErrorAction SilentlyContinue
         throw 'Installed application did not report its version'
     }
-    if ($versionCheck.ExitCode -ne 0 -or (Get-Content -LiteralPath $versionFile -Raw).Trim() -ne $expectedVersion) {
+    $actualVersion = $versionCheck.StandardOutput.ReadToEnd().Trim()
+    Add-Content -LiteralPath $logPath -Encoding UTF8 -Value ('Installed version: ' + $actualVersion + '; exit code: ' + $versionCheck.ExitCode)
+    if ($versionCheck.ExitCode -ne 0 -or $actualVersion -ne $expectedVersion) {
         throw 'Installed application version does not match the update'
     }
-    $restarted = Start-Process -FilePath $targetApp -WorkingDirectory (Split-Path -Parent $targetApp) -PassThru -ErrorAction Stop
+    $restarted = New-Object System.Diagnostics.Process
+    $restarted.StartInfo.FileName = $targetApp
+    $restarted.StartInfo.WorkingDirectory = Split-Path -Parent $targetApp
+    $restarted.StartInfo.UseShellExecute = $false
+    if (-not $restarted.Start()) { throw 'Could not restart installed application' }
     if ($restarted.WaitForExit(2000) -and $restarted.ExitCode -ne 0) { throw ('Application failed to start: ' + $restarted.ExitCode) }
     $installSucceeded = $true
     Set-Content -LiteralPath $markerPath -Encoding UTF8 -Value ('success ' + (Get-Date).ToString('s') + ' ' + $targetApp)

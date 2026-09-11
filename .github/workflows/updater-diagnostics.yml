@@ -1,8 +1,6 @@
 name: Diagnose legacy updater
 on:
-  push:
-    branches: [codex/fix-autoupdate]
-    paths: [.github/workflows/updater-diagnostics.yml, tests/generate_legacy_updater_probe.py, tests/updater_fixture.cpp, main_v32.cpp, updater_script.h]
+  workflow_dispatch:
 permissions:
   contents: read
 jobs:

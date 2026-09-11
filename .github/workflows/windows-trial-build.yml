@@ -6,6 +6,7 @@ on:
     branches: [main, codex/windows-trial-build, codex/release-1.6, codex/fix-autoupdate]
     paths:
       - '.github/workflows/windows-trial-build.yml'
+      - 'updater_script.h'
   pull_request:
     paths:
       - '**.cpp'
