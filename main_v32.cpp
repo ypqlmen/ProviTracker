@@ -4968,7 +4968,7 @@ QTableWidget::item {
             "<span style=\"font-size:12px;font-weight:800;color:#BFD7EE;\">Timer: %4 kr</span><br>"
             "<span style=\"font-size:12px;font-weight:800;color:#BFD7EE;\">Sygeløn: %5 kr</span><br>"
             "<span style=\"font-size:12px;font-weight:800;color:#BFD7EE;\">Provision: %6 kr</span><br>"
-            "<span style=\"font-size:12px;font-weight:800;color:#9CC7E8;\">Prognose af timeløn: %7</span>"
+            "<span style=\"font-size:12px;font-weight:800;color:#BFD7EE;\">Prognose af timeløn: %7</span>"
             )
             .arg(money(totalSalary))
             .arg(netText.toHtmlEscaped())
