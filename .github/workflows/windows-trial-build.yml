@@ -3,7 +3,7 @@ name: Windows trial build
 on:
   workflow_dispatch:
   push:
-    branches: [main, codex/windows-trial-build]
+    branches: [main, codex/windows-trial-build, codex/release-1.6]
     paths:
       - '.github/workflows/windows-trial-build.yml'
   pull_request:

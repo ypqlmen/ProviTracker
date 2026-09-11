@@ -2,6 +2,13 @@
 
 Qt Widgets desktop-app i C++ med Supabase cloud-login, per-user installation og GitHub auto-update.
 
+## Nyt i 1.6.0
+
+- Tjavs har adgang til KvikOC-siden på samme niveau som Phillip.
+- Begge lønkort viser "Prognose af timeløn" for deres lønperiode (21.–20.).
+- Prognosen er optjent timeløn pr. forløben mandag–fredag ganget med alle mandage–fredage i perioden. Beregningen følger datoen for de senest hentede timer og omfatter ikke provision eller sygeløn.
+- Manglende timedata og perioder, der ikke er startet, vises som tekst. De faktiske løntal ændres ikke af prognosen.
+
 ## Funktioner
 
 - Brugernavn/kodeord-login via Supabase
@@ -126,10 +133,10 @@ Appen læser appcast fra:
 
 GitHub Release-tagget til auto-update er `autoupdate`. Auto-update i appen henter zip-assetet, pakker det ud i brugerens tempmappe, starter installeren og rydder op bagefter.
 
-Aktuelle assets for version 1.5.11:
+Aktuelle assets for version 1.6.0:
 
-- `ProviTrackerUpdate-1.5.11.zip`
-- `ProviBeregnerSetup-1.5.11.exe`
+- `ProviTrackerUpdate-1.6.0.zip`
+- `ProviBeregnerSetup-1.6.0.exe`
 
 Bemærk: den oprindelige 1.1-build indeholdt WinSparkle DLL'en, men ikke en appcast-URL i selve programmet eller installeren. Brugere på 1.1 skal derfor installere en nyere version manuelt en gang; derefter kan auto-update hente fremtidige versioner.
 

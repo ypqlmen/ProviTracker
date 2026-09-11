@@ -20,9 +20,10 @@
 #include "repository.h"
 #include "commission.h"
 #include "report_service.h"
+#include "payroll_forecast.h"
 
-static constexpr const char* APP_VERSION = "1.5.11";
-static constexpr int APP_BUILD_VERSION = 10514;
+static constexpr const char* APP_VERSION = "1.6.0";
+static constexpr int APP_BUILD_VERSION = 10600;
 static constexpr const char* UPDATE_APPCAST_URL = "https://raw.githubusercontent.com/ypqlmen/ProviTracker/main/appcast.xml";
 
 static QString psSingleQuoted(QString value) {
@@ -1911,7 +1912,8 @@ private:
     bool isKvikocPageAllowed() const {
         const QString username = cloudUsername.trimmed();
         return username.compare("VictorTang", Qt::CaseInsensitive) == 0
-            || username.compare("Phillip", Qt::CaseInsensitive) == 0;
+            || username.compare("Phillip", Qt::CaseInsensitive) == 0
+            || username.compare("Tjavs", Qt::CaseInsensitive) == 0;
     }
 
     bool isKvikocSensitiveDetailsAllowed() const {
@@ -4946,7 +4948,7 @@ QTableWidget::item {
         return QString("<span style=\"color:%1;font-weight:700;\">%2</span>").arg(color).arg(value);
     }
 
-    QString salaryKpiText(double totalSalary, double baseSalary, double sickPay, double provision, const QDate& payoutMonth) const {
+    QString salaryKpiText(double totalSalary, double baseSalary, double sickPay, double provision, const QDate& payoutMonth, const QString& hourlyForecastText) const {
         const bool taxConfigured = repo.settings.taxRatePercent > 0.0;
         const double netSalary = estimatedNetSalary(
             totalSalary,
@@ -4961,14 +4963,16 @@ QTableWidget::item {
             "<span style=\"font-size:12px;font-weight:900;color:#D8F5FF;\">Udbetales: %3</span><br>"
             "<span style=\"font-size:12px;font-weight:800;color:#BFD7EE;\">Timer: %4 kr</span><br>"
             "<span style=\"font-size:12px;font-weight:800;color:#BFD7EE;\">Sygeløn: %5 kr</span><br>"
-            "<span style=\"font-size:12px;font-weight:800;color:#BFD7EE;\">Provision: %6 kr</span>"
+            "<span style=\"font-size:12px;font-weight:800;color:#BFD7EE;\">Provision: %6 kr</span><br>"
+            "<span style=\"font-size:12px;font-weight:800;color:#9CC7E8;\">Prognose af timeløn: %7</span>"
             )
             .arg(money(totalSalary))
             .arg(netText.toHtmlEscaped())
             .arg(payoutDateLabel(payoutMonth).toHtmlEscaped())
             .arg(money(baseSalary))
             .arg(money(sickPay))
-            .arg(money(provision));
+            .arg(money(provision))
+            .arg(hourlyForecastText.toHtmlEscaped());
     }
 
     QString plainBadgeText(const QString& label, const QString& value) const {
@@ -5044,6 +5048,18 @@ QTableWidget::item {
             const auto cached = cachedIntramanagerHours(from, to);
             return cached.has_value() ? cached->sickPay : 0.0;
         };
+        auto hourlyForecastForRange = [this, now](const QPair<QDateTime, QDateTime>& range) -> QString {
+            if (range.first.date() > now) return "Perioden er ikke startet";
+            const auto cached = cachedIntramanagerHours(
+                intramanagerDate(range.first.date()), intramanagerDate(range.second.date()));
+            if (!cached) return "Afventer timedata";
+            const QDateTime synced = QDateTime::fromString(cached->syncedAt, Qt::ISODate);
+            const auto forecast = forecastHourlyPay(
+                cached->hours * repo.settings.hourlyRate, range.first.date(), range.second.date(),
+                synced.isValid() ? synced.toLocalTime().date() : QDate(), now);
+            if (!forecast) return "Afventer beregningsgrundlag";
+            return money(forecast->amount) + " kr";
+        };
         auto delayedBonus = [](const Metrics& metrics) {
             return metrics.monthlyBonus + metrics.simoBonus + metrics.voiceBonus;
         };
@@ -5108,7 +5124,7 @@ QTableWidget::item {
                 currentPayPeriodBaseSalary,
                 currentPayPeriodSickPay,
                 currentPayPeriodBonus + backpaidBonusThisMonth,
-                now
+                now, hourlyForecastForRange(currentPayPeriod)
                 ));
         }
         if (kpiNextMonthPayLabel) {
@@ -5117,7 +5133,7 @@ QTableWidget::item {
                 nextPayPeriodBaseSalary,
                 nextPayPeriodSickPay,
                 nextPayPeriodBonus + backpaidBonusNextMonth,
-                now.addMonths(1)
+                now.addMonths(1), hourlyForecastForRange(nextPayPeriod)
                 ));
         }
 
