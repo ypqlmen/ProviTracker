@@ -1,0 +1,66 @@
+name: Diagnose legacy updater
+on:
+  push:
+    branches: [codex/fix-autoupdate]
+    paths: [.github/workflows/updater-diagnostics.yml, tests/generate_legacy_updater_probe.py, tests/updater_fixture.cpp]
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: windows-2022
+    timeout-minutes: 12
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.9.3'
+          arch: win64_mingw
+          tools: 'tools_mingw1310,qt.tools.win64_mingw1310'
+          setup-python: false
+          cache: false
+      - name: Build exact 1.5.11 updater harness
+        run: |
+          python tests/generate_legacy_updater_probe.py
+          if ($LASTEXITCODE -ne 0) { throw 'Probe generation failed' }
+          @'
+          add_executable(LegacyUpdaterProbe tests/legacy_updater_probe.cpp)
+          target_include_directories(LegacyUpdaterProbe PRIVATE ${CMAKE_SOURCE_DIR})
+          target_link_libraries(LegacyUpdaterProbe PRIVATE Qt6::Widgets Qt6::PrintSupport Qt6::Network crypt32 advapi32 bcrypt)
+          add_executable(UpdaterFixture tests/updater_fixture.cpp)
+          target_link_libraries(UpdaterFixture PRIVATE Qt6::Core)
+          '@ | Add-Content CMakeLists.txt
+          cmake -S . -B build/probe -G 'MinGW Makefiles' -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF
+          if ($LASTEXITCODE -ne 0) { throw 'Configure failed' }
+          cmake --build build/probe --target LegacyUpdaterProbe UpdaterFixture --parallel 2
+          if ($LASTEXITCODE -ne 0) { throw 'Build failed' }
+      - name: Compare ordinary and Unicode Windows paths
+        run: |
+          $roots = @((Join-Path $env:RUNNER_TEMP 'probe-ascii'), (Join-Path $env:RUNNER_TEMP ('probe-S' + [char]0x00f8 + 'ren')))
+          foreach ($root in $roots) {
+            $env:LOCALAPPDATA = $root
+            New-Item -ItemType Directory -Force $root | Out-Null
+            $probe = (Resolve-Path 'build/probe/LegacyUpdaterProbe.exe').Path
+            $fixture = (Resolve-Path 'build/probe/UpdaterFixture.exe').Path
+            $p = Start-Process $probe -ArgumentList @(('"' + $root + '"'), ('"' + $fixture + '"')) -PassThru
+            $p.WaitForExit(15000) | Out-Null
+            if (!$p.HasExited) { Stop-Process -Id $p.Id; throw 'Probe did not exit' }
+            Start-Sleep -Seconds 8
+            $info = Get-Content -LiteralPath (Join-Path $root 'probe-info.json') -Raw | ConvertFrom-Json
+            $launched = Test-Path -LiteralPath (Join-Path $info.targetDir 'launched.txt')
+            Write-Host "RESULT path=$root relaunched=$launched"
+            $logs = Join-Path $info.dataDir 'updates'
+            if (Test-Path -LiteralPath $logs) {
+              Get-ChildItem -LiteralPath $logs -File | ForEach-Object { Write-Host $_.Name; Get-Content -LiteralPath $_.FullName }
+            }
+            if ($root -like '*ascii' -and !$launched) { throw 'ASCII baseline failed' }
+            if ($root -notlike '*ascii' -and $launched) { throw 'Unicode failure did not reproduce' }
+          }
