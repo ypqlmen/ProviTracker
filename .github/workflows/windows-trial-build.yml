@@ -3,7 +3,7 @@ name: Windows trial build
 on:
   workflow_dispatch:
   push:
-    branches: [main, codex/windows-trial-build, codex/release-1.6]
+    branches: [main, codex/windows-trial-build, codex/release-1.6, codex/fix-autoupdate]
     paths:
       - '.github/workflows/windows-trial-build.yml'
   pull_request:
@@ -108,6 +108,22 @@ jobs:
             'The obsolete, unused WinSparkle DLL is not included.'
             'No release upload, update-feed edit, or database operation is performed.'
           ) | Set-Content dist/TRIAL-README.txt
+      - name: Verify actual silent installation and installed application
+        run: |
+          $installer = (Get-ChildItem dist/ProviBeregnerSetup-*.exe).FullName
+          $installLog = Join-Path $env:RUNNER_TEMP 'provi-install-test.log'
+          $proc = Start-Process $installer -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', ('/LOG="' + $installLog + '"')) -PassThru
+          if (!$proc.WaitForExit(180000)) { Stop-Process -Id $proc.Id; throw 'Silent installation timed out' }
+          if ($proc.ExitCode -ne 0) { Get-Content $installLog; throw "Silent installation failed: $($proc.ExitCode)" }
+          $installed = Join-Path $env:LOCALAPPDATA 'Programs/Provi Tracker/ProvisionTrackerV2.exe'
+          $staged = Join-Path $env:RUNNER_TEMP 'provi-trial-stage/ProvisionTrackerV2.exe'
+          if ((Get-FileHash $installed).Hash -ne (Get-FileHash $staged).Hash) { throw 'Installed application does not match tested build' }
+          $versionFile = Join-Path $env:RUNNER_TEMP 'provi-installed-version.txt'
+          $proc = Start-Process $installed -ArgumentList '--version' -RedirectStandardOutput $versionFile -PassThru
+          if (!$proc.WaitForExit(15000)) { Stop-Process -Id $proc.Id; throw 'Installed application startup timed out' }
+          $expectedVersion = [regex]::Match((Get-Content main_v32.cpp -Raw), 'APP_VERSION\s*=\s*"([^"]+)"').Groups[1].Value
+          if ($proc.ExitCode -ne 0 -or (Get-Content $versionFile -Raw).Trim() -ne $expectedVersion) { throw 'Installed application version check failed' }
+          Write-Host "Installed application started successfully: $expectedVersion"
       - name: Verify tracked files are unchanged
         run: |
           git diff --exit-code

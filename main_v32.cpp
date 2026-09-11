@@ -23,8 +23,8 @@
 #include "payroll_forecast.h"
 #include "updater_script.h"
 
-static constexpr const char* APP_VERSION = "1.6.0";
-static constexpr int APP_BUILD_VERSION = 10600;
+static constexpr const char* APP_VERSION = "1.6.1";
+static constexpr int APP_BUILD_VERSION = 10601;
 static constexpr const char* UPDATE_APPCAST_URL = "https://raw.githubusercontent.com/ypqlmen/ProviTracker/main/appcast.xml";
 
 static QString psSingleQuoted(QString value) {
@@ -351,6 +351,7 @@ private:
         ts << "$logPath = " << psSingleQuoted(logPath) << "\n";
         ts << "$workDir = " << psSingleQuoted(workDir) << "\n";
         ts << "$readyPath = " << psSingleQuoted(QDir::toNativeSeparators(readyPath)) << "\n";
+        ts << "$expectedVersion = " << psSingleQuoted(update.shortVersion) << "\n";
         ts << "$parentPid = " << QString::number(QCoreApplication::applicationPid()) << "\n";
         ts << updateHelperBody;
         ts.flush();
@@ -378,8 +379,11 @@ private:
                 QCoreApplication::quit();
             } else if (++*attempts >= 450) {
                 readyTimer->stop();
+                QFile cancelled(QDir(workDir).filePath("helper-cancelled.txt"));
+                cancelled.open(QIODevice::WriteOnly);
+                cancelled.close();
                 failUpdate("Opdateringen kunne ikke starte. Programmet bliver åbent.\n"
-                           "Du kan installere den nye version fra downloadlinket.");
+                           "Du kan installere den nye version fra downloadlinket.", true);
             }
         });
         readyTimer->start(100);
@@ -393,7 +397,7 @@ private:
         return QString();
     }
 
-    void failUpdate(const QString& message) {
+    void failUpdate(const QString& message, bool preserveFiles = false) {
         if (downloadFile) {
             downloadFile->close();
         }
@@ -401,7 +405,7 @@ private:
             progress->close();
         }
         QMessageBox::warning(nullptr, "Opdatering", message);
-        if (!workDir.isEmpty()) {
+        if (!preserveFiles && !workDir.isEmpty()) {
             QDir(workDir).removeRecursively();
         }
         deleteLater();
@@ -6086,6 +6090,10 @@ protected:
 
 int main(int argc, char *argv[]) {
     QApplication app(argc, argv);
+    if (app.arguments().contains("--version")) {
+        QTextStream(stdout) << APP_VERSION << "\n";
+        return 0;
+    }
 
     MainWindow w;
     if (w.startupWasAborted()) {

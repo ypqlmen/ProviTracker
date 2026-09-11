@@ -3,6 +3,10 @@
 // Harmless installer/application stand-in. Writes only within the supplied test directory.
 int main(int argc, char **argv) {
     QCoreApplication app(argc, argv);
+    if (app.arguments().contains("--version")) {
+        QTextStream(stdout) << "1.6.0\n";
+        return 0;
+    }
     if (QFileInfo(app.applicationFilePath()).fileName() == "ProvisionTrackerV2.exe") {
         QFile marker(QDir(app.applicationDirPath()).filePath("launched.txt"));
         if (!marker.open(QIODevice::WriteOnly)) return 9;
