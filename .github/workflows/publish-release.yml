@@ -1,0 +1,42 @@
+name: Publish tested release
+
+on:
+  push:
+    branches: [main]
+    paths: [.github/release-request.json]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: read
+
+concurrency:
+  group: publish-autoupdate
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Validate release request and tested source
+        id: request
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/publish_tested_release.py validate
+      - uses: actions/download-artifact@v4
+        with:
+          artifact-ids: ${{ steps.request.outputs.artifact_id }}
+          run-id: ${{ steps.request.outputs.run_id }}
+          github-token: ${{ github.token }}
+          path: release-artifact
+          merge-multiple: true
+      - name: Publish verified assets and activate update feed
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/publish_tested_release.py publish
