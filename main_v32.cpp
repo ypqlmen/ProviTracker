@@ -21,6 +21,7 @@
 #include "commission.h"
 #include "report_service.h"
 #include "payroll_forecast.h"
+#include "updater_script.h"
 
 static constexpr const char* APP_VERSION = "1.6.0";
 static constexpr int APP_BUILD_VERSION = 10600;
@@ -335,7 +336,10 @@ private:
 
         rememberUpdateAttempt(update.buildVersion);
 
+        const QString readyPath = QDir(workDir).filePath("helper-ready.txt");
         QTextStream ts(&script);
+        ts.setEncoding(QStringConverter::Utf8);
+        ts.setGenerateByteOrderMark(true);
         ts << "$ErrorActionPreference = 'Continue'\n";
         ts << "$installer = " << psSingleQuoted(installer) << "\n";
         ts << "$arguments = @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/CLOSEAPPLICATIONS', '/FORCECLOSEAPPLICATIONS')\n";
@@ -346,28 +350,10 @@ private:
         ts << "$markerPath = " << psSingleQuoted(markerPath) << "\n";
         ts << "$logPath = " << psSingleQuoted(logPath) << "\n";
         ts << "$workDir = " << psSingleQuoted(workDir) << "\n";
-        ts << "$scriptPath = $PSCommandPath\n";
-        ts << "$cleanupRoot = Split-Path -Parent $workDir\n";
+        ts << "$readyPath = " << psSingleQuoted(QDir::toNativeSeparators(readyPath)) << "\n";
         ts << "$parentPid = " << QString::number(QCoreApplication::applicationPid()) << "\n";
-        ts << "$successCodes = @(0, 42)\n";
-        ts << "New-Item -ItemType Directory -Force -Path (Split-Path -Parent $logPath) | Out-Null\n";
-        ts << "Set-Content -LiteralPath $logPath -Value ('Starter update ' + (Get-Date).ToString('s') + ' til ' + $targetDir)\n";
-        ts << "$parent = Get-Process -Id $parentPid -ErrorAction SilentlyContinue\n";
-        ts << "if ($parent) { $parent | Wait-Process -Timeout 25 }\n";
-        ts << "$exitCode = 1\n";
-        ts << "$proc = Start-Process -FilePath $installer -ArgumentList $arguments -PassThru -Wait\n";
-        ts << "if ($proc) { $exitCode = $proc.ExitCode }\n";
-        ts << "Add-Content -LiteralPath $logPath -Value ('Installer exit code: ' + $exitCode)\n";
-        ts << "$installSucceeded = $successCodes -contains $exitCode\n";
-        ts << "if ($installSucceeded) { Set-Content -LiteralPath $markerPath -Value ('success ' + (Get-Date).ToString('s') + ' ' + $currentApp + ' -> ' + $targetDir + ' exit=' + $exitCode) }\n";
-        ts << "Start-Sleep -Seconds 2\n";
-        ts << "Set-Location -LiteralPath $env:TEMP\n";
-        ts << "Remove-Item -LiteralPath $workDir -Recurse -Force\n";
-        ts << "if ((Test-Path $cleanupRoot) -and -not (Get-ChildItem -LiteralPath $cleanupRoot -Force | Select-Object -First 1)) { Remove-Item -LiteralPath $cleanupRoot -Force }\n";
-        ts << "if (-not $installSucceeded) { Remove-Item -LiteralPath $markerPath -Force }\n";
-        ts << "if ($installSucceeded -and (Test-Path $targetApp)) { Start-Process -FilePath $targetApp -WorkingDirectory (Split-Path -Parent $targetApp) }\n";
-        ts << "elseif ($installSucceeded -and (Test-Path $currentApp)) { Start-Process -FilePath $currentApp -WorkingDirectory (Split-Path -Parent $currentApp) }\n";
-        ts << "Remove-Item -LiteralPath $scriptPath -Force\n";
+        ts << updateHelperBody;
+        ts.flush();
         script.close();
 
         const bool started = QProcess::startDetached(
@@ -381,8 +367,22 @@ private:
             return;
         }
 
-        if (progress) progress->close();
-        QTimer::singleShot(300, qApp, &QCoreApplication::quit);
+        // Do not close the running app merely because PowerShell was spawned.
+        // Wait for the helper to parse successfully and verify its file paths.
+        auto* readyTimer = new QTimer(this);
+        auto attempts = std::make_shared<int>(0);
+        connect(readyTimer, &QTimer::timeout, this, [this, readyTimer, attempts, readyPath]() {
+            if (QFileInfo::exists(readyPath)) {
+                readyTimer->stop();
+                if (progress) progress->close();
+                QCoreApplication::quit();
+            } else if (++*attempts >= 450) {
+                readyTimer->stop();
+                failUpdate("Opdateringen kunne ikke starte. Programmet bliver åbent.\n"
+                           "Du kan installere den nye version fra downloadlinket.");
+            }
+        });
+        readyTimer->start(100);
     }
 
     QString findInstaller() const {

@@ -9,6 +9,7 @@ int main(int argc, char **argv) {
         marker.write("launched");
         return 0;
     }
+    if (qEnvironmentVariableIsSet("PROVI_PROBE_INSTALL_FAIL")) return 12;
     for (const auto &arg : app.arguments()) {
         if (!arg.startsWith("/DIR=")) continue;
         const QString target = arg.mid(5);

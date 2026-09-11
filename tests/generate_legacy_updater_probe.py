@@ -1,8 +1,10 @@
 """Build a sandboxed harness around the exact updater shipped in 1.5.11."""
 from pathlib import Path
 import subprocess
+import sys
 
-source = subprocess.check_output(
+fixed = "--fixed" in sys.argv
+source = Path("main_v32.cpp").read_text() if fixed else subprocess.check_output(
     ["git", "show", "1b5b0c3:main_v32.cpp"], text=True
 )
 source = source[:source.index("static void initAutoUpdate()")]
@@ -10,6 +12,12 @@ source = source.replace("private:", "public:", 1)
 source += r'''
 int main(int argc, char **argv) {
     QApplication app(argc, argv);
+    if (argc < 3) {
+        QFile recovered(qEnvironmentVariable("PROVI_PROBE_RECOVERY_PATH"));
+        recovered.open(QIODevice::WriteOnly);
+        recovered.write("recovered");
+        return 0;
+    }
     const QString root = app.arguments().value(1);
     QCoreApplication::setOrganizationName("ProviUpdaterProbe");
     QCoreApplication::setApplicationName(QFileInfo(root).fileName());
@@ -32,4 +40,4 @@ int main(int argc, char **argv) {
     return app.exec();
 }
 '''
-Path("tests/legacy_updater_probe.cpp").write_text(source)
+Path("tests/fixed_updater_probe.cpp" if fixed else "tests/legacy_updater_probe.cpp").write_text(source)

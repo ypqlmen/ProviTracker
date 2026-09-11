@@ -2,7 +2,7 @@ name: Diagnose legacy updater
 on:
   push:
     branches: [codex/fix-autoupdate]
-    paths: [.github/workflows/updater-diagnostics.yml, tests/generate_legacy_updater_probe.py, tests/updater_fixture.cpp]
+    paths: [.github/workflows/updater-diagnostics.yml, tests/generate_legacy_updater_probe.py, tests/updater_fixture.cpp, main_v32.cpp, updater_script.h]
 permissions:
   contents: read
 jobs:
@@ -31,16 +31,21 @@ jobs:
         run: |
           python tests/generate_legacy_updater_probe.py
           if ($LASTEXITCODE -ne 0) { throw 'Probe generation failed' }
+          python tests/generate_legacy_updater_probe.py --fixed
+          if ($LASTEXITCODE -ne 0) { throw 'Fixed probe generation failed' }
           @'
           add_executable(LegacyUpdaterProbe tests/legacy_updater_probe.cpp)
           target_include_directories(LegacyUpdaterProbe PRIVATE ${CMAKE_SOURCE_DIR})
           target_link_libraries(LegacyUpdaterProbe PRIVATE Qt6::Widgets Qt6::PrintSupport Qt6::Network crypt32 advapi32 bcrypt)
+          add_executable(FixedUpdaterProbe tests/fixed_updater_probe.cpp)
+          target_include_directories(FixedUpdaterProbe PRIVATE ${CMAKE_SOURCE_DIR})
+          target_link_libraries(FixedUpdaterProbe PRIVATE Qt6::Widgets Qt6::PrintSupport Qt6::Network crypt32 advapi32 bcrypt)
           add_executable(UpdaterFixture tests/updater_fixture.cpp)
           target_link_libraries(UpdaterFixture PRIVATE Qt6::Core)
           '@ | Add-Content CMakeLists.txt
           cmake -S . -B build/probe -G 'MinGW Makefiles' -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF
           if ($LASTEXITCODE -ne 0) { throw 'Configure failed' }
-          cmake --build build/probe --target LegacyUpdaterProbe UpdaterFixture --parallel 2
+          cmake --build build/probe --target LegacyUpdaterProbe FixedUpdaterProbe UpdaterFixture --parallel 2
           if ($LASTEXITCODE -ne 0) { throw 'Build failed' }
       - name: Compare ordinary and Unicode Windows paths
         run: |
@@ -53,7 +58,7 @@ jobs:
             $p = Start-Process $probe -ArgumentList @(('"' + $root + '"'), ('"' + $fixture + '"')) -PassThru
             $p.WaitForExit(15000) | Out-Null
             if (!$p.HasExited) { Stop-Process -Id $p.Id; throw 'Probe did not exit' }
-            Start-Sleep -Seconds 8
+            Start-Sleep -Seconds 35
             $info = Get-Content -LiteralPath (Join-Path $root 'probe-info.json') -Raw | ConvertFrom-Json
             $launched = Test-Path -LiteralPath (Join-Path $info.targetDir 'launched.txt')
             Write-Host "RESULT path=$root relaunched=$launched"
@@ -61,6 +66,36 @@ jobs:
             if (Test-Path -LiteralPath $logs) {
               Get-ChildItem -LiteralPath $logs -File | ForEach-Object { Write-Host $_.Name; Get-Content -LiteralPath $_.FullName }
             }
-            if ($root -like '*ascii' -and !$launched) { throw 'ASCII baseline failed' }
-            if ($root -notlike '*ascii' -and $launched) { throw 'Unicode failure did not reproduce' }
+            if (!$launched) {
+              Get-ChildItem -LiteralPath $env:TEMP -Filter 'ProviTrackerInstallUpdate_*.ps1' | ForEach-Object {
+                Write-Host ('HELPER ' + $_.FullName + ' size=' + $_.Length)
+                Get-Content -LiteralPath $_.FullName
+              }
+            }
+          }
+      - name: Verify repaired updater and installer failure recovery
+        run: |
+          $names = @('fixed-ascii', ('fixed-S' + [char]0x00f8 + 'ren O''Brien'), 'fixed-failure')
+          foreach ($name in $names) {
+            $root = Join-Path $env:RUNNER_TEMP $name
+            $env:LOCALAPPDATA = $root
+            $env:PROVI_PROBE_RECOVERY_PATH = Join-Path $root 'recovered.txt'
+            if ($name -eq 'fixed-failure') { $env:PROVI_PROBE_INSTALL_FAIL = '1' }
+            New-Item -ItemType Directory -Force $root | Out-Null
+            $probe = (Resolve-Path 'build/probe/FixedUpdaterProbe.exe').Path
+            $fixture = (Resolve-Path 'build/probe/UpdaterFixture.exe').Path
+            $p = Start-Process $probe -ArgumentList @(('"' + $root + '"'), ('"' + $fixture + '"')) -PassThru
+            $p.WaitForExit(55000) | Out-Null
+            if (!$p.HasExited) { Stop-Process -Id $p.Id; throw 'Repaired probe did not exit' }
+            Start-Sleep -Seconds 12
+            $info = Get-Content -LiteralPath (Join-Path $root 'probe-info.json') -Raw | ConvertFrom-Json
+            $launched = Test-Path -LiteralPath (Join-Path $info.targetDir 'launched.txt')
+            $recovered = Test-Path -LiteralPath $env:PROVI_PROBE_RECOVERY_PATH
+            $log = Join-Path $info.dataDir 'updates/last_update_10600.log'
+            Get-Content -LiteralPath $log
+            Write-Host "RESULT path=$root relaunched=$launched recovered=$recovered"
+            if ($name -eq 'fixed-failure') {
+              if (!$recovered -or $launched) { throw 'Failed installer was not handled correctly' }
+              if (!(Test-Path -LiteralPath (Join-Path $root 'work/extract/ProviBeregnerSetup-probe.exe'))) { throw 'Failure evidence deleted' }
+            } elseif (!$launched) { throw 'Repaired updater did not launch installed application' }
           }
