@@ -59,4 +59,16 @@ class ChromeBridgeTests(unittest.TestCase):
     def test_rejects_unknown_origin_before_reading(self):
         self.assertEqual(bridge.native_main('chrome-extension://' + 'a'*32 + '/evil'), 1)
 
+    def test_prepare_can_be_repeated_without_changing_install_location(self):
+        with tempfile.TemporaryDirectory(prefix='provi-æøå-') as folder:
+            with patch.object(bridge, 'root', return_value=Path(folder)), patch.object(bridge, 'register_host') as register:
+                first = bridge.install_extension()
+                path = Path(first['extensionPath'])
+                (path / 'popup.js').write_text('old version')
+                second = bridge.install_extension()
+                self.assertEqual(first, second)
+                self.assertEqual(register.call_count, 2)
+                self.assertEqual((path / 'popup.js').read_bytes(), (bridge.extension_dir() / 'popup.js').read_bytes())
+                self.assertEqual(len(list(path.glob('*'))), 6)
+
 if __name__ == '__main__': unittest.main()

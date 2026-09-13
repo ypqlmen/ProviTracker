@@ -7,8 +7,10 @@ an order registered and never submits customer data.
 ## Implemented
 
 - Settings has Install Chrome extension and Check Chrome (prototype).
-- Installation opens Chrome Web Store in Chrome when a real published store ID is configured.
-  Without one, it explains that the extension is not yet published; no invented URL is opened.
+- Installation prepares bundled files in %LOCALAPPDATA%/ProviTrackerChromeBridge/extension,
+  registers the native host under HKCU and shows an in-app guide with Copy folder path
+  and Open Chrome buttons. Users enable Developer mode and Load unpacked themselves.
+  Repeated preparation refreshes the same directory; users reload the extension afterwards.
 - Check Chrome registers a native messaging host under HKCU (no elevation) using the
   already packaged worker, then requests a read-only check of the specified workbook.
 - Manifest V3 extension only has access to the company's SharePoint hostname. It reads
@@ -26,22 +28,25 @@ Open the workbook, then select Check Chrome in Provi Tracker. Click the extensio
 if Chrome has not reconnected after first-time host registration. Repeat while a different
 tab is foreground. A successful connection check is NOT proof of background Excel writes.
 
-## Before employee installation
+## Installation without a store account
 
-The owner needs a Chrome Web Store developer account. Account terms and any registration
-payment must be completed by the owner. Upload a reviewed package, obtain the actual ID
-and public key, replace the development manifest key, and rebuild the host and application
-with -DPROVI_CHROME_STORE_ID=<actual published ID>. Verify the ID derived from the manifest
-key equals the store ID. Test install, connection, uninstall and reinstall without elevation.
-No store listing has been created or submitted yet.
+The selected distribution is local unpacked installation. No store account, payment,
+store ID or Web Store listing is required. Chrome's enterprise policy must permit
+Developer mode and unpacked extensions. The app does not alter those policies or
+Chrome's Developer mode setting. Users perform the final Chrome steps themselves.
+
+The stable bundled public key keeps the unpacked extension ID and native host allowlist
+aligned. The native host is registered when preparing the extension, before Chrome loads it.
+The Windows workflow tests preparation using the actually installed executable, HKCU host
+registration and repeated preparation to the same location. This does not simulate Chrome
+installation or prove authenticated background Excel execution.
 
 ## Still required
 
 Implement and verify script invocation in the authenticated background tab, exact workbook
 and frame targeting, fresh Excel receipts, queued sale delivery, expiry/account changes,
 retry/conflict handling, and recovery from Chrome sleep/restarts. Only then switch the
-order queue away from its existing separate-browser worker. Prepare store screenshots,
-listing and privacy policy for the final feature before publication.
+order queue away from its existing separate-browser worker. Verify the guided unpacked installation with workplace Chrome policies before distribution.
 
 References:
 - https://developer.chrome.com/docs/extensions/how-to/distribute/install-extensions

@@ -4490,20 +4490,67 @@ QTableWidget::item {
         auto* installChromeBtn = new QPushButton("Installer Chrome-udvidelse");
         auto* probeChromeBtn = new QPushButton("Kontrollér Chrome (prototype)");
         auto* salesActionRow = createSettingsButtonGrid(QVector<QPushButton*>{saveSalesRegistrationBtn, testSalesRegistrationBtn, installChromeBtn, probeChromeBtn});
-        connect(installChromeBtn, &QPushButton::clicked, this, [this]() {
-#ifdef PROVI_CHROME_STORE_ID
-            const QUrl storeUrl("https://chromewebstore.google.com/detail/" PROVI_CHROME_STORE_ID);
-            QSettings chromeUser("HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\App Paths\\chrome.exe", QSettings::NativeFormat);
-            QSettings chromeMachine("HKEY_LOCAL_MACHINE\\Software\\Microsoft\\Windows\\CurrentVersion\\App Paths\\chrome.exe", QSettings::NativeFormat);
-            QString chrome = chromeUser.value(".").toString();
-            if (chrome.isEmpty()) chrome = chromeMachine.value(".").toString();
-            if (chrome.isEmpty() || !QProcess::startDetached(chrome, {storeUrl.toString()})) {
-                QApplication::clipboard()->setText(storeUrl.toString());
-                QMessageBox::information(this, "Chrome-udvidelse", "Installationslinket er kopieret. Åbn det i Chrome, og vælg Føj til Chrome.");
-            }
-#else
-            QMessageBox::information(this, "Chrome-udvidelse", "Udvidelsen er under afprøvning og endnu ikke udgivet i Chrome Web Store. Når den er tilgængelig, åbner denne knap installationssiden i Chrome.");
-#endif
+        connect(installChromeBtn, &QPushButton::clicked, this, [this, installChromeBtn]() {
+            installChromeBtn->setEnabled(false);
+            auto* installer = new QProcess(this);
+            connect(installer, &QProcess::started, this, [installer]() {
+                installer->write("{\"action\":\"chrome-install\"}");
+                installer->closeWriteChannel();
+            });
+            connect(installer, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished), this,
+                [this, installer, installChromeBtn](int, QProcess::ExitStatus) {
+                installChromeBtn->setEnabled(true);
+                const auto result = QJsonDocument::fromJson(installer->readAllStandardOutput()).object();
+                installer->deleteLater();
+                const QString path = result.value("extensionPath").toString();
+                if (!result.value("success").toBool() || result.value("status").toString() != "chrome-prepared"
+                    || !QFileInfo::exists(path + "/manifest.json")) {
+                    QMessageBox::warning(this, "Chrome-udvidelse", result.value("error").toString("Udvidelsen kunne ikke klargøres. Prøv igen."));
+                    return;
+                }
+                QDialog dialog(this);
+                dialog.setWindowTitle("Installer Chrome-udvidelse");
+                dialog.setMinimumWidth(560);
+                auto* layout = new QVBoxLayout(&dialog);
+                auto* instructions = new QLabel("<b>Udvidelsen er klargjort på din computer.</b><br><br>"
+                    "1. Åbn <b>chrome://extensions</b> i Chrome.<br>"
+                    "2. Slå <b>Udviklertilstand</b> til øverst til højre.<br>"
+                    "3. Vælg <b>Indlæs udpakket</b>, og vælg mappen nedenfor.<br><br>"
+                    "Hvis udvidelsen allerede er installeret, klik på dens genindlæsningsknap i Chrome.<br>"
+                    "Genindlæs derefter masterarket, og vælg <b>Kontrollér Chrome</b> i Provi Tracker.<br><br>"
+                    "Hvis Udviklertilstand er blokeret af arbejdspladsen, skal IT tillade den.<br>"
+                    "Denne prototype kontrollerer forbindelsen; den overfører endnu ikke salg.");
+                instructions->setWordWrap(true);
+                layout->addWidget(instructions);
+                auto* folder = new QLineEdit(QDir::toNativeSeparators(path));
+                folder->setReadOnly(true);
+                layout->addWidget(folder);
+                auto* buttons = new QHBoxLayout;
+                auto* copy = new QPushButton("Kopier mappesti");
+                auto* open = new QPushButton("Åbn Chrome");
+                auto* done = new QPushButton("Luk");
+                buttons->addWidget(copy); buttons->addWidget(open); buttons->addWidget(done);
+                layout->addLayout(buttons);
+                connect(copy, &QPushButton::clicked, &dialog, [folder]() { QApplication::clipboard()->setText(folder->text()); });
+                connect(open, &QPushButton::clicked, &dialog, [&dialog]() {
+                    QSettings user("HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\App Paths\\chrome.exe", QSettings::NativeFormat);
+                    QSettings machine("HKEY_LOCAL_MACHINE\\Software\\Microsoft\\Windows\\CurrentVersion\\App Paths\\chrome.exe", QSettings::NativeFormat);
+                    QString chrome = user.value(".").toString();
+                    if (chrome.isEmpty()) chrome = machine.value(".").toString();
+                    if (chrome.isEmpty() || !QProcess::startDetached(chrome, {"chrome://extensions/"}))
+                        QMessageBox::information(&dialog, "Åbn Chrome", "Åbn Chrome, og skriv chrome://extensions i adresselinjen.");
+                });
+                connect(done, &QPushButton::clicked, &dialog, &QDialog::accept);
+                dialog.exec();
+            });
+            connect(installer, &QProcess::errorOccurred, this, [this, installer, installChromeBtn](QProcess::ProcessError error) {
+                if (error != QProcess::FailedToStart) return;
+                installChromeBtn->setEnabled(true);
+                installer->deleteLater();
+                QMessageBox::warning(this, "Chrome-udvidelse", "Hjælperen kunne ikke starte. Geninstaller den nyeste testversion.");
+            });
+            QTimer::singleShot(30000, installer, [installer]() { if (installer->state() != QProcess::NotRunning) installer->kill(); });
+            installer->start(intramanagerWorkerPath(), {"--stdin-json"});
         });
         connect(probeChromeBtn, &QPushButton::clicked, this, [this, probeChromeBtn]() {
             saveSalesRegistrationSettingsFromUi();

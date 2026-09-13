@@ -77,6 +77,25 @@ def register_host():
     with winreg.CreateKey(winreg.HKEY_CURRENT_USER, 'Software\\Google\\Chrome\\NativeMessagingHosts\\' + HOST) as key:
         winreg.SetValueEx(key, '', 0, winreg.REG_SZ, str(path))
 
+def install_extension():
+    # A stable user-owned directory keeps Chrome's unpacked installation valid
+    # after application upgrades. Never load from PyInstaller's internal directory.
+    register_host()
+    destination = root() / 'extension'
+    destination.mkdir(parents=True, exist_ok=True)
+    names = ('manifest.json', 'background.js', 'identity.js', 'probe.js', 'popup.html', 'popup.js')
+    contents = {name: (extension_dir() / name).read_bytes() for name in names}
+    json.loads(contents['manifest.json'])
+    for name, data in contents.items():
+        target = destination / name
+        temp = destination / (name + '.' + uuid.uuid4().hex + '.tmp')
+        try:
+            temp.write_bytes(data)
+            temp.replace(target)
+        finally:
+            temp.unlink(missing_ok=True)
+    return {'success': True, 'status': 'chrome-prepared', 'extensionPath': str(destination)}
+
 def probe(payload):
     url = payload.get('workbookUrl', '')
     if not valid_workbook(url): raise ValueError('Gem et direkte link til masterarket med sourcedoc i adressen.')

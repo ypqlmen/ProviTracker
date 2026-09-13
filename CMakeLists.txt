@@ -29,16 +29,6 @@ target_link_libraries(ProvisionTrackerV2 PRIVATE
     bcrypt
 )
 
-# Empty until the real store listing is published. Never ship a guessed URL.
-set(PROVI_CHROME_STORE_ID "" CACHE STRING "Published Chrome Web Store extension ID")
-if(PROVI_CHROME_STORE_ID)
-    string(LENGTH "${PROVI_CHROME_STORE_ID}" CHROME_ID_LENGTH)
-    if(NOT CHROME_ID_LENGTH EQUAL 32 OR NOT PROVI_CHROME_STORE_ID MATCHES "^[a-p]+$")
-        message(FATAL_ERROR "Invalid Chrome Web Store extension ID")
-    endif()
-    target_compile_definitions(ProvisionTrackerV2 PRIVATE PROVI_CHROME_STORE_ID="${PROVI_CHROME_STORE_ID}")
-endif()
-
 include(CTest)
 if(BUILD_TESTING)
     add_executable(SalesRegistrationTests tests/sales_registration_test.cpp)

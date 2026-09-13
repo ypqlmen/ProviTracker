@@ -135,6 +135,21 @@ jobs:
           $expectedVersion = [regex]::Match((Get-Content main_v32.cpp -Raw), 'APP_VERSION\s*=\s*"([^"]+)"').Groups[1].Value
           if ($proc.ExitCode -ne 0 -or (Get-Content $versionFile -Raw).Trim() -ne $expectedVersion) { throw 'Installed application version check failed' }
           Write-Host "Installed application started successfully: $expectedVersion"
+      - name: Verify local Chrome extension preparation
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $worker = Join-Path $env:LOCALAPPDATA 'Programs/Provi Tracker/intramanager_worker/intramanager_sync.exe'
+          $result = '{"action":"chrome-install"}' | & $worker --stdin-json | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0 -or !$result.success -or $result.status -ne 'chrome-prepared') { throw 'Chrome preparation failed' }
+          $expected = Join-Path $env:LOCALAPPDATA 'ProviTrackerChromeBridge/extension'
+          if ($result.extensionPath -ne $expected) { throw 'Unexpected extension location' }
+          $manifest = Get-Content (Join-Path $expected 'manifest.json') -Raw | ConvertFrom-Json
+          if ($manifest.manifest_version -ne 3) { throw 'Invalid extension manifest' }
+          $key = Get-Item 'HKCU:/Software/Google/Chrome/NativeMessagingHosts/dk.provitracker.masterark'
+          $hostManifest = Get-Content $key.GetValue('') -Raw | ConvertFrom-Json
+          if ($hostManifest.path -ne $worker) { throw 'Native host does not point to installed worker' }
+          $repeat = '{"action":"chrome-install"}' | & $worker --stdin-json | ConvertFrom-Json
+          if (!$repeat.success -or $repeat.extensionPath -ne $result.extensionPath) { throw 'Repeat preparation failed' }
       - name: Verify tracked files are unchanged
         run: |
           git diff --exit-code
