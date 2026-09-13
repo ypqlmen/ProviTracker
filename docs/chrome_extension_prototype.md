@@ -13,7 +13,7 @@ an order registered and never submits customer data.
   Repeated preparation refreshes the same directory; users reload the extension afterwards.
 - Check Chrome registers a native messaging host under HKCU (no elevation) using the
   already packaged worker, then requests a read-only check of the specified workbook.
-- Manifest V3 extension only has access to the company's SharePoint hostname. It reads
+- Manifest V3 extension only has access to the company's SharePoint hostname and the observed euc-excel.officeapps.live.com Excel frame. It reads
   the workbook identity from the tab URL and checks for the Ark1 sheet tab, without
   reading cookies, cell values, passwords or page tokens.
 - Exactly one matching, non-discarded workbook tab is required. Tabs are never activated.
@@ -55,7 +55,9 @@ References:
 
 ## Connection fix 0.1.1
 
-Excel's observed WacFrame_Excel_0 has src=about:blank. Enable match_about_blank and
+Excel's observed WacFrame_Excel_0 has src=about:blank, but its loaded document is
+https://euc-excel.officeapps.live.com/x/_layouts/xlviewerinternal.aspx. Explicitly match
+that Excel origin as well as SharePoint, enable match_about_blank and
 inspect same-origin child documents recursively, since rendering may occur after script
 injection. Retry probes for up to 22 seconds; distinguish no extension reply from a
 responding document without Ark1. Revalidate current tab identity before success.

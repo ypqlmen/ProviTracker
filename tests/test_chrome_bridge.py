@@ -32,7 +32,7 @@ class ChromeBridgeTests(unittest.TestCase):
     def test_extension_identity_and_permissions(self):
         self.assertRegex(bridge.extension_id(), '^[a-p]{32}$')
         manifest = json.loads((bridge.extension_dir() / 'manifest.json').read_text())
-        self.assertEqual(manifest['host_permissions'], ['https://5rmarketing-my.sharepoint.com/*'])
+        self.assertEqual(manifest['host_permissions'], ['https://5rmarketing-my.sharepoint.com/*', 'https://euc-excel.officeapps.live.com/*'])
         self.assertNotIn('cookies', manifest['permissions'])
 
     def test_native_roundtrip_rejects_stale_receipt(self):
