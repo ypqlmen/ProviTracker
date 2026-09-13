@@ -66,6 +66,10 @@ struct Order {
     QDateTime createdAt;
     QVector<OrderItem> items;
     QString note;
+    QJsonObject masterRegistration;
+    QString masterRegistrationState;
+    QString masterRegistrationError;
+    QString masterWorkbookUrl;
 };
 
 struct SickPayEntry {
@@ -151,6 +155,8 @@ struct AppSettings {
     QString salesRegistrationWebhookUrl;
     QString salesRegistrationRecipient;
     bool salesRegistrationEnabled = false;
+    bool masterRegistrationEnabled = false;
+    QString masterWorkbookUrl;
 
     double lastIntramanagerHours = 0.0;
     QString lastIntramanagerPeriodFrom;
@@ -232,7 +238,11 @@ static QJsonObject toJson(const Order& o) {
         {"phoneNumber", o.phoneNumber},
         {"createdAt", o.createdAt.toString(Qt::ISODate)},
         {"items", items},
-        {"note", o.note}
+        {"note", o.note},
+        {"masterRegistration", o.masterRegistration},
+        {"masterRegistrationState", o.masterRegistrationState},
+        {"masterRegistrationError", o.masterRegistrationError},
+        {"masterWorkbookUrl", o.masterWorkbookUrl}
     };
 }
 
@@ -247,6 +257,10 @@ static Order fromOrderJson(const QJsonObject& o) {
     order.createdAt = QDateTime::fromString(o["createdAt"].toString(), Qt::ISODate);
     for (const auto& v : o["items"].toArray()) order.items.push_back(fromOrderItemJson(v.toObject()));
     order.note = o["note"].toString();
+    order.masterRegistration = o.value("masterRegistration").toObject();
+    order.masterRegistrationState = o.value("masterRegistrationState").toString();
+    order.masterRegistrationError = o.value("masterRegistrationError").toString();
+    order.masterWorkbookUrl = o.value("masterWorkbookUrl").toString();
     return order;
 }
 
@@ -399,6 +413,8 @@ static QJsonObject toJson(const AppSettings& s) {
         {"salesRegistrationWebhookUrl", s.salesRegistrationWebhookUrl},
         {"salesRegistrationRecipient", s.salesRegistrationRecipient},
         {"salesRegistrationEnabled", s.salesRegistrationEnabled},
+        {"masterRegistrationEnabled", s.masterRegistrationEnabled},
+        {"masterWorkbookUrl", s.masterWorkbookUrl},
         {"lastIntramanagerHours", s.lastIntramanagerHours},
         {"lastIntramanagerPeriodFrom", s.lastIntramanagerPeriodFrom},
         {"lastIntramanagerPeriodTo", s.lastIntramanagerPeriodTo},
@@ -426,6 +442,8 @@ static AppSettings fromSettingsJson(const QJsonObject& o) {
     }
     s.salesRegistrationRecipient = o.value("salesRegistrationRecipient").toString();
     s.salesRegistrationEnabled = o.value("salesRegistrationEnabled").toBool(false);
+    s.masterRegistrationEnabled = o.value("masterRegistrationEnabled").toBool(false);
+    s.masterWorkbookUrl = o.value("masterWorkbookUrl").toString();
     s.lastIntramanagerHours = o.value("lastIntramanagerHours").toDouble(0.0);
     s.lastIntramanagerPeriodFrom = o.value("lastIntramanagerPeriodFrom").toString();
     s.lastIntramanagerPeriodTo = o.value("lastIntramanagerPeriodTo").toString();

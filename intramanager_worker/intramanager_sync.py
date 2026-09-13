@@ -3385,6 +3385,15 @@ def main():
         payload = json.loads(sys.stdin.read())
 
         args.action = payload.get("action", args.action)
+        if args.action in {"master-setup", "master-register"}:
+            from master_registration import run
+            try:
+                with sync_playwright() as p:
+                    output(run(payload, p))
+            except Exception as exc:
+                output({"success": False, "stage": "master-registration", "error": str(exc)[:700]})
+            return
+
         args.username = payload.get("username", "")
         args.password = payload.get("password", "")
 
