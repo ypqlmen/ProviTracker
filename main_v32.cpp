@@ -1,3 +1,4 @@
+#include <QClipboard>
 #include <QtWidgets>
 #include <QtCore>
 #include <QtPrintSupport>
@@ -4486,7 +4487,55 @@ QTableWidget::item {
 
         auto* saveSalesRegistrationBtn = new QPushButton("Gem salgsregistrering");
         auto* testSalesRegistrationBtn = new QPushButton("Forbind masterark");
-        auto* salesActionRow = createSettingsButtonGrid(QVector<QPushButton*>{saveSalesRegistrationBtn, testSalesRegistrationBtn});
+        auto* installChromeBtn = new QPushButton("Installer Chrome-udvidelse");
+        auto* probeChromeBtn = new QPushButton("Kontrollér Chrome (prototype)");
+        auto* salesActionRow = createSettingsButtonGrid(QVector<QPushButton*>{saveSalesRegistrationBtn, testSalesRegistrationBtn, installChromeBtn, probeChromeBtn});
+        connect(installChromeBtn, &QPushButton::clicked, this, [this]() {
+#ifdef PROVI_CHROME_STORE_ID
+            const QUrl storeUrl("https://chromewebstore.google.com/detail/" PROVI_CHROME_STORE_ID);
+            QSettings chromeUser("HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\App Paths\\chrome.exe", QSettings::NativeFormat);
+            QSettings chromeMachine("HKEY_LOCAL_MACHINE\\Software\\Microsoft\\Windows\\CurrentVersion\\App Paths\\chrome.exe", QSettings::NativeFormat);
+            QString chrome = chromeUser.value(".").toString();
+            if (chrome.isEmpty()) chrome = chromeMachine.value(".").toString();
+            if (chrome.isEmpty() || !QProcess::startDetached(chrome, {storeUrl.toString()})) {
+                QApplication::clipboard()->setText(storeUrl.toString());
+                QMessageBox::information(this, "Chrome-udvidelse", "Installationslinket er kopieret. Åbn det i Chrome, og vælg Føj til Chrome.");
+            }
+#else
+            QMessageBox::information(this, "Chrome-udvidelse", "Udvidelsen er under afprøvning og endnu ikke udgivet i Chrome Web Store. Når den er tilgængelig, åbner denne knap installationssiden i Chrome.");
+#endif
+        });
+        connect(probeChromeBtn, &QPushButton::clicked, this, [this, probeChromeBtn]() {
+            saveSalesRegistrationSettingsFromUi();
+            if (!isMasterWorkbookUrl(repo.settings.masterWorkbookUrl)) {
+                salesRegistrationStatusLabel->setText("Gem dit masterark-link først.");
+                return;
+            }
+            probeChromeBtn->setEnabled(false);
+            auto* probe = new QProcess(this);
+            const QJsonObject input{{"action", "chrome-probe"}, {"workbookUrl", repo.settings.masterWorkbookUrl}};
+            salesRegistrationStatusLabel->setText("Kontrollerer det åbne masterark i Chrome. Der skrives ingen salg i denne kontrol.");
+            connect(probe, &QProcess::started, this, [probe, input]() {
+                probe->write(QJsonDocument(input).toJson(QJsonDocument::Compact));
+                probe->closeWriteChannel();
+            });
+            connect(probe, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished), this, [this, probe, probeChromeBtn](int, QProcess::ExitStatus) {
+                const auto result = QJsonDocument::fromJson(probe->readAllStandardOutput()).object();
+                const bool ok = result.value("success").toBool() && result.value("status").toString() == "chrome-connected";
+                salesRegistrationStatusLabel->setText(ok ? "Chrome har forbindelse til det rigtige masterark. Overførsel af salg via udvidelsen er endnu ikke aktiveret."
+                    : result.value("error").toString("Chrome-kontrollen mislykkedes. Prøv igen."));
+                probeChromeBtn->setEnabled(true);
+                probe->deleteLater();
+            });
+            connect(probe, &QProcess::errorOccurred, this, [this, probe, probeChromeBtn](QProcess::ProcessError error) {
+                if (error != QProcess::FailedToStart) return;
+                salesRegistrationStatusLabel->setText("Chrome-hjælperen kunne ikke starte. Installer den nyeste testversion.");
+                probeChromeBtn->setEnabled(true);
+                probe->deleteLater();
+            });
+            QTimer::singleShot(45000, probe, [probe]() { if (probe->state() != QProcess::NotRunning) probe->kill(); });
+            probe->start(intramanagerWorkerPath(), {"--stdin-json"});
+        });
 
         salesRegistrationStatusLabel = new QLabel("Forbind dit masterark. Microsoft-login foregår i browseren.");
         salesRegistrationStatusLabel->setWordWrap(true);

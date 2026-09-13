@@ -9,6 +9,7 @@ on:
       - 'updater_script.h'
   pull_request:
     paths:
+      - 'chrome_extension/**'
       - '**.cpp'
       - '**.h'
       - 'CMakeLists.txt'
@@ -43,7 +44,11 @@ jobs:
         with:
           node-version: 24
       - name: Check Excel registration logic
-        run: node tests/excel_sales_registration_test.cjs
+        run: |
+          node tests/excel_sales_registration_test.cjs
+          if ($LASTEXITCODE -ne 0) { throw 'Excel registration tests failed' }
+          node tests/chrome_identity_test.mjs
+          if ($LASTEXITCODE -ne 0) { throw 'Chrome identity tests failed' }
       - name: Install Qt and matching compiler
         uses: jurplel/install-qt-action@v4
         with:
@@ -134,6 +139,8 @@ jobs:
         run: |
           git diff --exit-code
           if ($LASTEXITCODE -ne 0) { throw 'Build modified tracked files' }
+      - name: Package Chrome prototype
+        run: Compress-Archive -Path chrome_extension/* -DestinationPath dist/ProviTracker-Chrome-PROTOTYPE.zip
       - name: Save trial installer
         uses: actions/upload-artifact@v4
         with:
