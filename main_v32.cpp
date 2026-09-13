@@ -1070,21 +1070,21 @@ static void configureSettingsButton(QPushButton* button) {
     button->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
 }
 
-static QWidget* createSettingsButtonGrid(const QVector<QPushButton*>& buttons) {
+static QWidget* createSettingsButtonGrid(const QVector<QPushButton*>& buttons, int columns = 2) {
     auto* container = new QWidget;
     auto* grid = new QGridLayout(container);
     grid->setContentsMargins(0, 0, 0, 0);
     grid->setHorizontalSpacing(12);
     grid->setVerticalSpacing(10);
     grid->setColumnStretch(0, 1);
-    grid->setColumnStretch(1, 1);
+    if (columns > 1) grid->setColumnStretch(1, 1);
 
     for (int i = 0; i < buttons.size(); ++i) {
         configureSettingsButton(buttons[i]);
-        grid->addWidget(buttons[i], i / 2, i % 2);
+        grid->addWidget(buttons[i], i / columns, i % columns);
     }
 
-    container->setMinimumWidth(320);
+    container->setMinimumWidth(columns > 1 ? 320 : 0);
     container->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     return container;
 }
@@ -4473,23 +4473,27 @@ QTableWidget::item {
         auto salesRegistrationCard = createCard("Salgsregistrering");
         auto* salesRegForm = new QFormLayout;
         configureSettingsForm(salesRegForm);
+        salesRegForm->setRowWrapPolicy(QFormLayout::WrapLongRows);
 
         defaultSellerInitialsEdit = new QLineEdit;
-        defaultSellerInitialsEdit->setPlaceholderText("Standard initialer ved nye ordrer");
+        defaultSellerInitialsEdit->setPlaceholderText("Initialer ved nye ordrer");
         configureSettingsField(defaultSellerInitialsEdit);
 
         masterWorkbookUrlEdit = new QLineEdit;
-        masterWorkbookUrlEdit->setPlaceholderText("Indsæt linket til dit eget masterark i Excel Online");
+        masterWorkbookUrlEdit->setPlaceholderText("Link til dit masterark i Excel Online");
         configureSettingsField(masterWorkbookUrlEdit);
 
-        salesRegistrationEnabledCheck = new QCheckBox("Registrer nye salg automatisk i masterarket");
+        salesRegistrationEnabledCheck = new QCheckBox("Registrer automatisk i masterarket");
         salesRegistrationEnabledCheck->setFocusPolicy(Qt::NoFocus);
+        salesRegistrationEnabledCheck->setStyleSheet(
+            "QCheckBox::indicator { width:16px; height:16px; border:1px solid #6B829D; border-radius:4px; background:#0B1424; }"
+            "QCheckBox::indicator:checked { background:#14B8A6; border:3px solid #BFF8EF; }");
 
         auto* saveSalesRegistrationBtn = new QPushButton("Gem salgsregistrering");
         auto* testSalesRegistrationBtn = new QPushButton("Forbind masterark");
         auto* installChromeBtn = new QPushButton("Installer Chrome-udvidelse");
-        auto* probeChromeBtn = new QPushButton("Kontrollér Chrome (prototype)");
-        auto* salesActionRow = createSettingsButtonGrid(QVector<QPushButton*>{saveSalesRegistrationBtn, testSalesRegistrationBtn, installChromeBtn, probeChromeBtn});
+        auto* probeChromeBtn = new QPushButton("Kontrollér Chrome");
+        auto* salesActionRow = createSettingsButtonGrid(QVector<QPushButton*>{saveSalesRegistrationBtn, testSalesRegistrationBtn, installChromeBtn, probeChromeBtn}, 1);
         connect(installChromeBtn, &QPushButton::clicked, this, [this, installChromeBtn]() {
             installChromeBtn->setEnabled(false);
             auto* installer = new QProcess(this);
@@ -4517,9 +4521,7 @@ QTableWidget::item {
                     "2. Slå <b>Udviklertilstand</b> til øverst til højre.<br>"
                     "3. Vælg <b>Indlæs udpakket</b>, og vælg mappen nedenfor.<br><br>"
                     "Hvis udvidelsen allerede er installeret, klik på dens genindlæsningsknap i Chrome.<br>"
-                    "Genindlæs derefter masterarket, og vælg <b>Kontrollér Chrome</b> i Provi Tracker.<br><br>"
-                    "Hvis Udviklertilstand er blokeret af arbejdspladsen, skal IT tillade den.<br>"
-                    "Denne prototype kontrollerer forbindelsen; den overfører endnu ikke salg.");
+                    "Genindlæs derefter masterarket, og vælg <b>Kontrollér Chrome</b> i Provi Tracker.");
                 instructions->setWordWrap(true);
                 layout->addWidget(instructions);
                 auto* folder = new QLineEdit(QDir::toNativeSeparators(path));
@@ -4586,13 +4588,15 @@ QTableWidget::item {
 
         salesRegistrationStatusLabel = new QLabel("Forbind dit masterark. Microsoft-login foregår i browseren.");
         salesRegistrationStatusLabel->setWordWrap(true);
+        salesRegistrationStatusLabel->setMinimumWidth(0);
+        salesRegistrationStatusLabel->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
         salesRegistrationStatusLabel->setTextInteractionFlags(Qt::NoTextInteraction);
 
         salesRegForm->addRow("Sælger initialer", defaultSellerInitialsEdit);
         salesRegForm->addRow("Masterark", masterWorkbookUrlEdit);
         salesRegForm->addRow(salesRegistrationEnabledCheck);
-        salesRegForm->addRow("Handlinger", salesActionRow);
-        salesRegForm->addRow("Status", salesRegistrationStatusLabel);
+        salesRegForm->addRow(salesActionRow);
+        salesRegForm->addRow(salesRegistrationStatusLabel);
 
         salesRegistrationCard.second->addLayout(salesRegForm);
         salesRegistrationCard.second->addStretch();

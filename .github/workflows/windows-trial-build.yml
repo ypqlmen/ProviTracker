@@ -49,6 +49,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Excel registration tests failed' }
           node tests/chrome_identity_test.mjs
           if ($LASTEXITCODE -ne 0) { throw 'Chrome identity tests failed' }
+          node tests/chrome_probe_test.mjs
+          if ($LASTEXITCODE -ne 0) { throw 'Chrome probe tests failed' }
       - name: Install Qt and matching compiler
         uses: jurplel/install-qt-action@v4
         with:

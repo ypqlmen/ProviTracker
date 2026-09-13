@@ -1,4 +1,4 @@
-# Chrome prototype 0.1
+# Chrome prototype 0.1.1
 
 This is a read-only transport prototype, not the completed sale-registration replacement.
 The existing order-to-Excel worker remains unchanged. The new Chrome check never marks
@@ -52,3 +52,15 @@ References:
 - https://developer.chrome.com/docs/extensions/how-to/distribute/install-extensions
 - https://developer.chrome.com/docs/extensions/develop/concepts/native-messaging
 - https://developer.chrome.com/docs/webstore/register
+
+## Connection fix 0.1.1
+
+Excel's observed WacFrame_Excel_0 has src=about:blank. Enable match_about_blank and
+inspect same-origin child documents recursively, since rendering may occur after script
+injection. Retry probes for up to 22 seconds; distinguish no extension reply from a
+responding document without Ark1. Revalidate current tab identity before success.
+Regression tests cover blank-frame detection, delayed rendering, stale replies and navigation.
+
+Settings buttons now occupy separate full-width rows; status text spans the card.
+A local Qt/Fusion rendering at 480px reproduced the previous clipped button labels and
+verified the revised layout. This is a local rendering, not a screenshot of the user's Windows session.
