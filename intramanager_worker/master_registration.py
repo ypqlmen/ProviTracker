@@ -119,6 +119,11 @@ def run(payload, playwright):
         else:
             open_automate(page)
             wait_control(page, "radio", SCRIPT_NAME, 30).click()
+        # The details view only reports "script ran" and hides the receipt.
+        # Open the editor to make the structured Output log available.
+        if not any(f.get_by_role("textbox", name="editor", exact=True).count() for f in page.frames):
+            wait_control(page, "button", re.compile(r"^(Rediger|Edit)$"), 45).click()
+        wait_control(page, "textbox", "editor", 45)
         wait_control(page, "button", re.compile(r"^(Kør|Run)$"), 45).click()
         param = wait_control(page, "textbox", re.compile(r"^(Angiv en streng|Enter a string)"), 45)
         param.fill(json.dumps(registration, ensure_ascii=False, separators=(",", ":")))

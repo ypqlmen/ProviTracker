@@ -5459,7 +5459,7 @@ QTableWidget::item {
         order.masterWorkbookUrl = repo.settings.masterWorkbookUrl.trimmed();
     }
 
-    void runMasterWorker(bool setup, const QString& orderId = QString()) {
+    void runMasterWorker(bool setup, QString orderId = QString()) {
         if (masterRegistrationRunning) return;
         if (cloudUsername.isEmpty()) {
             QMessageBox::information(this, "Salgsregistrering", "Log ind i Provi Tracker først.");
@@ -5479,10 +5479,16 @@ QTableWidget::item {
             for (auto& order : repo.orders) if (order.id == orderId) order.masterRegistrationState = "transferring";
             repo.saveOrders();
             // A sale must be durably stored before Excel is allowed to receive it.
-            if (repo.cloudPersistenceEnabled && !flushCloudSaveSync()) return;
+
         }
         if (!isMasterWorkbookUrl(url)) {
             if (salesRegistrationStatusLabel) salesRegistrationStatusLabel->setText("Gem linket til dit masterark i Indstillinger først.");
+            return;
+        }
+        masterRegistrationRunning = true;
+        if (!setup && repo.cloudPersistenceEnabled && !flushCloudSaveSync()) {
+            masterRegistrationRunning = false;
+            if (salesRegistrationStatusLabel) salesRegistrationStatusLabel->setText("Salget afventer forbindelse til skyen. Prøv igen fra Ordrer.");
             return;
         }
         const QString requestId = QUuid::createUuid().toString(QUuid::WithoutBraces);
