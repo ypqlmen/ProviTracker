@@ -5,7 +5,7 @@ a = Analysis(
     ['intramanager_sync.py'],
     pathex=[],
     binaries=[],
-    datas=[],
+    datas=[('../scripts/excel_online_sales_registration.ts', 'sales_registration'), ('../chrome_extension', 'chrome_extension')],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},

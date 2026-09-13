@@ -31,6 +31,9 @@ target_link_libraries(ProvisionTrackerV2 PRIVATE
 
 include(CTest)
 if(BUILD_TESTING)
+    add_executable(SalesRegistrationTests tests/sales_registration_test.cpp)
+    target_link_libraries(SalesRegistrationTests PRIVATE Qt6::Core)
+    add_test(NAME SalesRegistrationTests COMMAND SalesRegistrationTests)
     add_executable(PayrollForecastTests tests/payroll_forecast_test.cpp)
     target_link_libraries(PayrollForecastTests PRIVATE Qt6::Core)
     add_test(NAME PayrollForecastTests COMMAND PayrollForecastTests)
