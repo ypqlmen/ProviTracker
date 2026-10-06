@@ -4,6 +4,7 @@
 #include <functional>
 #include "domain.h"
 #include "storage_paths.h"
+#include "retired_integration_cleanup.h"
 
 // ============================================================
 // Storage
@@ -129,13 +130,13 @@ public:
         payload["sickPayEntries"] = sickPayJson;
         payload["products"] = productsJson;
         payload["salesperson"] = salespeopleJson.isEmpty() ? QJsonObject() : salespeopleJson.at(0).toObject();
-        payload["secrets"] = cloudSecrets;
+        payload["secrets"] = withoutRetiredIntegrationSecrets(cloudSecrets);
         return payload;
     }
 
     void applyCloudPayload(const QJsonObject& payload, const QString& username) {
         settings = fromSettingsJson(payload.value("settings").toObject());
-        cloudSecrets = payload.value("secrets").toObject();
+        cloudSecrets = withoutRetiredIntegrationSecrets(payload.value("secrets").toObject());
 
         orders.clear();
         for (const auto& v : payload.value("orders").toArray()) {
