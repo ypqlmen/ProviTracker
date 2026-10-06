@@ -10,6 +10,7 @@ on:
       - 'chrome_extension/**'
       - 'intramanager_worker/chrome_bridge.py'
       - 'tests/chrome_update_integration.py'
+      - 'tests/chrome_workbook_fixture.py'
   pull_request:
     paths:
       - 'chrome_extension/**'
@@ -59,6 +60,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Chrome identity tests failed' }
           node tests/chrome_probe_test.mjs
           if ($LASTEXITCODE -ne 0) { throw 'Chrome probe tests failed' }
+          node tests/chrome_frames_test.mjs
+          if ($LASTEXITCODE -ne 0) { throw 'Chrome frame tests failed' }
           node tests/chrome_update_test.mjs
           if ($LASTEXITCODE -ne 0) { throw 'Chrome update tests failed' }
       - name: Install Qt and matching compiler

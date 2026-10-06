@@ -91,3 +91,9 @@ Regression tests cover blank-frame detection, delayed rendering, stale replies a
 Settings buttons now occupy separate full-width rows; status text spans the card.
 A local Qt/Fusion rendering at 480px reproduced the previous clipped button labels and
 verified the revised layout. This is a local rendering, not a screenshot of the user's Windows session.
+
+## Ark1-kontrol i udvidelse 0.1.3
+
+Det åbne masterark viste Ark1 som et `role="tab"`-element med `sheet-title="Ark1"` inde i den separate EU Excel-ramme. SharePoint-siden kan ikke selv læse denne ramme. Kontrollen læser derfor resultatet direkte fra hver tilladt ramme og gentager kontrollen i op til 22 sekunder, mens Excel indlæses. Arkets titel kan genkendes, selv om baggrundsfanen endnu ikke er tegnet. Kun virksomhedens SharePoint, EU Excel og deres underliggende blanke rammer tillades.
+
+Hvis Excel-rammen mangler adgang eller endnu ikke svarer, får brugeren en særskilt besked. Dette er fortsat en kontrol uden skrivning til masterarket. Den præcise årsag på brugerens Windows-computer er ikke dokumenteret endnu; en ny kontrol hos brugeren skal bekræfte rettelsen. Windows-prøven bruger et syntetisk ark uden firmaoplysninger og kontrollerer Ark1 i en baggrundsfane efter genindlæsning af udvidelsen.

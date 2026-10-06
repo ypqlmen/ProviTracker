@@ -1,6 +1,6 @@
 """Windows CI: exercise actual unpacked-extension reload through the installed native host.
 
-Uses an isolated Chromium profile and blank tab. Never opens a company workbook or signs in.
+Uses an isolated Chromium profile and synthetic workbook. Never reads company data or signs in.
 Only the disposable installed test copy of the worker bundle is changed, not release artifacts.
 """
 import argparse
@@ -14,6 +14,7 @@ import tempfile
 import time
 import winreg
 from playwright.sync_api import sync_playwright
+from chrome_workbook_fixture import check_native_workbook
 
 def read_json(path):
     try:
@@ -104,6 +105,7 @@ def main(worker, installer):
                 assert page.evaluate('window.proviUntouched') == 'keep-me', 'A workbook tab must not be reloaded'
                 assert context.pages == [page], 'Extension update must not open or activate extra tabs'
                 print(f'Actual Chromium/native-host automatic update passed: {initial} -> {updated}; open tab preserved')
+                check_native_workbook(context, worker, extension_id)
             finally:
                 context.close()
     finally:

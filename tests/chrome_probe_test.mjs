@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import {workbookIdentity} from '../chrome_extension/identity.js';
 const url = 'https://5rmarketing-my.sharepoint.com/a?sourcedoc={535121b9-ed93-447b-9f89-7e8d575d03e4}';
-const tab = {getAttribute:()=> 'Regneark Ark1', getClientRects:()=>[{}]};
+const tab = {getAttribute:()=> 'Regneark Ark1', getClientRects:()=>[{}],querySelector:()=>null};
 const sheet = {querySelectorAll:selector=>selector==='[role="tab"]'?[tab]:[]};
 const parent = {querySelectorAll:selector=>selector==='iframe'?[{contentDocument:sheet}]:[]};
 let handler; const replies=[];
@@ -29,13 +29,13 @@ vm.runInNewContext(fs.readFileSync('chrome_extension/background.js','utf8').repl
     webNavigation:{getAllFrames:async()=>[{frameId:0,url}]},scripting:{executeScript:async()=>{}},
     alarms:{onAlarm:event(),create:()=>{}}}
 });
-const flush=async()=>{await Promise.resolve();await Promise.resolve()};
+const flush=async()=>{for(let i=0;i<12;i++) await Promise.resolve()};
 await nativeHandler({type:'probe',requestId:'fresh',workbookUrl:url});
 const sender={tab:{id:7,url}};
 runtimeHandler({type:'probe-result',requestId:'stale',sheet:'Ark1'},sender,()=>{});await flush();
 assert.equal(results.filter(x=>x.type==='result').length,0);
 runtimeHandler({type:'probe-result',requestId:'fresh',sheet:null},sender,()=>{});
-intervals.at(-1)();assert.equal(probes.length,2,'retry while Excel is still rendering');
+intervals.at(-1)();await flush();assert.equal(probes.length,2,'retry while Excel is still rendering');
 runtimeHandler({type:'probe-result',requestId:'fresh',sheet:'Ark1'},sender,()=>{});await flush();
 assert.equal(results.at(-1).success,true);assert.equal(results.at(-1).background,true);
 timers.at(-1)();assert.equal(results.at(-1).success,true,'late timeout must not replace success');

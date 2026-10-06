@@ -3,6 +3,9 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import {workbookIdentity} from '../chrome_extension/identity.js';
 const source = fs.readFileSync('chrome_extension/background.js','utf8').replace("import {workbookIdentity} from './identity.js';",'');
+const version = JSON.parse(fs.readFileSync('chrome_extension/manifest.json','utf8')).version;
+const next = version.split('.'); next[next.length-1]=Number(next.at(-1))+1;
+const upgraded = next.join('.');
 const url = 'https://5rmarketing-my.sharepoint.com/a?sourcedoc={535121b9-ed93-447b-9f89-7e8d575d03e4}';
 function background() {
   const calls=[], injected=[], timers=[];
@@ -12,29 +15,30 @@ function background() {
   vm.runInNewContext(source, {
     workbookIdentity,URL,
     setInterval:()=>1,clearInterval:()=>{},setTimeout:fn=>{timers.push(fn);return 1},clearTimeout:()=>{},
-    chrome:{runtime:{getManifest:()=>({version:'0.1.2'}),reload:()=>calls.push('reload'),connectNative:()=>port,
+    chrome:{runtime:{getManifest:()=>({version}),reload:()=>calls.push('reload'),connectNative:()=>port,
       onMessage:{addListener:fn=>runtime=fn},onStartup:event(),onInstalled:event()},
       tabs:{query:async()=>[{id:7,url}],get:async()=>({id:7,url,active:false}),sendMessage:async()=>{}},
-      webNavigation:{getAllFrames:async()=>[{frameId:0,url},{frameId:1,url:'https://euc-excel.officeapps.live.com/x'},
-        {frameId:2,url:'https://unrelated.example/x'},{frameId:3,url:'about:blank'}]},
-      scripting:{executeScript:async m=>injected.push(m)},alarms:{onAlarm:event(),create:()=>{}}}
+      webNavigation:{getAllFrames:async()=>[{frameId:0,parentFrameId:-1,url},{frameId:1,parentFrameId:0,url:'https://euc-excel.officeapps.live.com/x'},
+        {frameId:2,parentFrameId:0,url:'https://unrelated.example/x'},{frameId:3,parentFrameId:1,url:'about:blank'},
+        {frameId:4,parentFrameId:2,url:'about:blank'}]},
+      scripting:{executeScript:async m=>{injected.push(m);return []}},alarms:{onAlarm:event(),create:()=>{}}}
   });
   return {calls,injected,timers,native:m=>native(m),runtime:(m,s)=>runtime(m,s,()=>{})};
 }
 const flush=async()=>{await Promise.resolve();await Promise.resolve()};
 const idle=background();
-assert.equal(idle.calls[0].extensionVersion,'0.1.2','report the version actually running');
-for (const version of ['0.1.1','0.1.2','0.1.2.0','bad','0.1.65536',null]) {
-  await idle.native({type:'reload-extension',version});
+assert.equal(idle.calls[0].extensionVersion,version,'report the version actually running');
+for (const candidate of ['0.1.1',version,version+'.0','bad','0.1.65536',null]) {
+  await idle.native({type:'reload-extension',version:candidate});
 }
 assert.equal(idle.calls.filter(x=>x==='reload').length,0);
-await idle.native({type:'reload-extension',version:'0.1.3'});
-await idle.native({type:'reload-extension',version:'0.1.4'});
+await idle.native({type:'reload-extension',version:upgraded});
+await idle.native({type:'reload-extension',version:upgraded});
 assert.equal(idle.calls.filter(x=>x==='reload').length,1,'only one reload per worker');
 const busy=background();
 await busy.native({type:'probe',requestId:'fresh',workbookUrl:url});
-assert.deepEqual(busy.injected.map(x=>x.target.frameIds[0]),[0,1],'reattach only to permitted workbook frames');
-await busy.native({type:'reload-extension',version:'0.1.3'});
+assert.deepEqual(busy.injected.map(x=>x.target.frameIds[0]),[0,1,3],'include blank Excel children but exclude unrelated-origin children');
+await busy.native({type:'reload-extension',version:upgraded});
 assert.equal(busy.calls.filter(x=>x==='reload').length,0,'finish current work first');
 busy.runtime({type:'probe-result',requestId:'fresh',sheet:'Ark1'},{tab:{id:7,url}});
 await flush();

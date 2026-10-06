@@ -4,8 +4,12 @@ function inspectWorkbook(doc, visited = new Set()) {
   if (!doc || visited.has(doc)) return false;
   visited.add(doc);
   const sheet = [...doc.querySelectorAll('[role="tab"]')].some(el => {
+    // Excel's actual sheet control has sheet-title. It remains identifiable when
+    // a background tab is not painted; ribbon tabs or cell text cannot match it.
+    const title = el.querySelector('[sheet-title]')?.getAttribute('sheet-title');
+    if (title !== undefined && title !== null) return title === 'Ark1';
     const label = el.getAttribute('aria-label') || el.textContent || '';
-    return /^(Regneark |Sheet )?Ark1$/.test(label.trim()) && el.getClientRects().length > 0;
+    return /^(Regneark |Sheet )?Ark1$/.test(label.replace(/\s+/g, ' ').trim()) && el.getClientRects().length > 0;
   });
   if (sheet) return true;
   for (const frame of doc.querySelectorAll('iframe')) {
@@ -22,3 +26,6 @@ globalThis.proviWorkbookProbeHandler = message => {
     sheet: inspectWorkbook(document) ? 'Ark1' : null}).catch(() => {});
 };
 chrome.runtime.onMessage.addListener(globalThis.proviWorkbookProbeHandler);
+// executeScript returns this result directly from the target frame. A reply
+// from SharePoint alone is not evidence that the separate Excel frame was read.
+({sheet: inspectWorkbook(document) ? 'Ark1' : null, origin: document.location?.origin || null});

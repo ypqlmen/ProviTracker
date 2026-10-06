@@ -111,7 +111,10 @@ class ChromeBridgeTests(unittest.TestCase):
                 (bundle / name).write_bytes((bridge.extension_dir() / name).read_bytes())
             manifest = bridge.read_json(bundle / 'manifest.json')
             old_version = manifest['version']
-            manifest['version'] = '0.1.3'
+            parts = [int(p) for p in manifest['version'].split('.')]
+            parts[-1] += 1
+            next_version = '.'.join(map(str, parts))
+            manifest['version'] = next_version
             bridge.atomic_json(bundle / 'manifest.json', manifest)
             bridge.atomic_json(root / 'request.json', {'expiresAt': time.time()+30})
             with patch.object(bridge, 'extension_dir', return_value=bundle):
@@ -119,9 +122,9 @@ class ChromeBridgeTests(unittest.TestCase):
                 self.assertEqual(bridge.ready_package()['version'], old_version)
                 (root / 'request.json').unlink()
                 self.assertTrue(bridge.sync_installed_extension()['updated'])
-                self.assertEqual(bridge.ready_package()['version'], '0.1.3')
+                self.assertEqual(bridge.ready_package()['version'], next_version)
             self.assertFalse(bridge.sync_installed_extension()['updated'])
-            self.assertEqual(bridge.ready_package()['version'], '0.1.3')
+            self.assertEqual(bridge.ready_package()['version'], next_version)
 
     def test_interrupted_copy_cannot_trigger_reload_and_can_be_repaired(self):
         with tempfile.TemporaryDirectory() as folder, patch.object(bridge, 'root', return_value=Path(folder)), \
@@ -134,7 +137,10 @@ class ChromeBridgeTests(unittest.TestCase):
                 (bundle / name).write_bytes((bridge.extension_dir() / name).read_bytes())
             (bundle / 'background.js').write_text('// new background')
             manifest = bridge.read_json(bundle / 'manifest.json')
-            manifest['version'] = '0.1.3'
+            parts = [int(p) for p in manifest['version'].split('.')]
+            parts[-1] += 1
+            next_version = '.'.join(map(str, parts))
+            manifest['version'] = next_version
             bridge.atomic_json(bundle / 'manifest.json', manifest)
             original = Path.replace
             def interrupted(path, target):
