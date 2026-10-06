@@ -1,8 +1,8 @@
 {
-  "version": "1.6.1",
-  "build_version": 10601,
-  "run_id": 34597992393,
-  "source_sha": "c3b31c80fcef474f51b01813f8c69d24bcbf61e7",
-  "artifact_id": 10263711028,
-  "release_notes": "- Retter opdateringsscriptets håndtering af Windows-filnavne med æ, ø, å og andre Unicode-tegn.\n- Programmet lukker først, når opdateringshjælperen er startet og har kontrolleret filstierne.\n- Den installerede version kontrolleres før genstart; installationsfejl gemmes i en log.\n- Installationen sker i brugerens egen mappe og kræver ikke administratorrettigheder.\n\nBrugere, der sidder fast på 1.5.11, kan være nødt til at installere denne version manuelt én gang."
+  "version": "1.6.2",
+  "build_version": 10602,
+  "run_id": 37508299465,
+  "source_sha": "2911febc57929a931526ccd81c57a6215b854c82",
+  "artifact_id": 11432583569,
+  "release_notes": "- KvikOC-siden er fjernet helt for alle brugere.\n- KvikOC-opslag, browserintegration og håndtering af KvikOC-login er fjernet fra programmet.\n- Gamle lokale KvikOC-login, sessioner og fejlsøgningsfiler ryddes ved opstart.\n- KvikOC-login indlæses og uploades ikke længere sammen med brugerens cloud-data.\n- Installationen kræver ikke administratorrettigheder."
 }
