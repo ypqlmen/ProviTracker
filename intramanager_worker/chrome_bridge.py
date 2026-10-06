@@ -1,4 +1,4 @@
-"""Read-only Chrome connection prototype. Never accepts sale data or file paths from Chrome."""
+"""Bounded native Chrome transport. Only local app requests carry sale data; Chrome returns receipts."""
 import base64
 import hashlib
 import json
@@ -13,7 +13,7 @@ from urllib.parse import urlparse, parse_qs
 
 HOST = 'dk.provitracker.masterark'
 LIMIT = 16384
-EXTENSION_FILES = ('manifest.json', 'background.js', 'identity.js', 'probe.js', 'popup.html', 'popup.js')
+EXTENSION_FILES = ('manifest.json', 'background.js', 'identity.js', 'probe.js', 'popup.html', 'popup.js', 'office_ui.js', 'receipt.js', 'excel_online_sales_registration_v3.ts')
 
 def version_tuple(value):
     parts = str(value).split('.')
@@ -107,7 +107,7 @@ def write_frame(stream, value):
 def atomic_json(path, value):
     temp = path.with_suffix('.' + uuid.uuid4().hex + '.tmp')
     try:
-        temp.write_text(json.dumps(value), encoding='utf-8')
+        temp.write_text(json.dumps(value, ensure_ascii=False), encoding='utf-8')
         temp.replace(path)
     finally:
         temp.unlink(missing_ok=True)
@@ -184,23 +184,56 @@ def install_extension(only_existing=False):
 def sync_installed_extension():
     return install_extension(only_existing=True)
 
+def valid_receipt(value, registration):
+    if not isinstance(value, dict) or value.get('success') is not True or value.get('scriptVersion') != 3 or value.get('requestId') != registration.get('requestId'):
+        return False
+    if registration.get('isTest') is True:
+        return value.get('status') == 'checked' and value.get('orderNumber') == '' and value.get('registrationId') == '' and type(value.get('row')) is int and value.get('row') == 0
+    return (value.get('status') in {'registered', 'already_registered'} and type(value.get('row')) is int and value['row'] >= 16
+        and value.get('orderNumber') == registration.get('orderNumber') and value.get('registrationId') == registration.get('registrationId'))
+
 def probe(payload):
+    return request_chrome(payload, 'probe')
+
+def run_registration(payload):
+    return request_chrome(payload, 'setup' if payload.get('action') == 'chrome-setup' else 'register')
+
+def request_chrome(payload, kind):
     url = payload.get('workbookUrl', '')
     if not valid_workbook(url): raise ValueError('Gem et direkte link til masterarket med sourcedoc i adressen.')
     register_host()
     folder = root()
     request_id = str(uuid.uuid4())
+    if kind == 'setup' and payload.get('registration', {}).get('requestId'):
+        request_id = str(uuid.UUID(payload['registration']['requestId']))
+    registration = {'isTest': True, 'requestId': request_id} if kind == 'setup' else dict(payload.get('registration', {}))
+    if kind == 'register':
+        try:
+            uuid.UUID(registration['registrationId'])
+            uuid.UUID(registration['requestId'])
+        except (ValueError, KeyError, TypeError) as exc:
+            raise ValueError('Registreringen mangler et gyldigt kontrolnummer. Ældre salg skal kontrolleres manuelt.') from exc
+        request_id = registration['requestId']
+        if registration.get('isTest') is True or not isinstance(registration.get('orderNumber'), str) or not registration['orderNumber'].strip():
+            raise ValueError('Ugyldig salgsregistrering.')
+    duration = 35 if kind == 'probe' else 180
+    envelope = {'type': kind, 'requestId': request_id, 'workbookUrl': url, 'expiresAt': time.time()+duration}
+    if kind != 'probe': envelope['registration'] = registration
+    if len(json.dumps(envelope, ensure_ascii=False).encode('utf-8')) > LIMIT:
+        raise ValueError('Salgsregistreringen er for lang til Chrome. Forkort bemærkningerne og prøv igen.')
     request = folder / 'request.json'
     response = folder / 'response.json'
     with update_lock():
         existing = read_json(request)
         if existing.get('expiresAt', 0) > time.time(): raise RuntimeError('En anden Chrome-kontrol er i gang. Prøv igen om lidt.')
-        atomic_json(request, {'type':'probe', 'requestId':request_id, 'workbookUrl':url, 'expiresAt':time.time()+35})
+        atomic_json(request, envelope)
     try:
-        deadline = time.monotonic() + 35
+        deadline = time.monotonic() + duration
         while time.monotonic() < deadline:
             result = read_json(response)
-            if result.get('requestId') == request_id: return result
+            if result.get('requestId') == request_id:
+                if kind=='probe' or result.get('success') is not True or valid_receipt(result, registration): return result
+                return {'success':False,'error':'Excel returnerede en forkert kvittering. Kontrollér salget før genforsøg.'}
             time.sleep(.2)
         return {'success':False, 'error':'Chrome svarede ikke. Åbn Chrome og masterarket, og klik på Provi Tracker-udvidelsen. Prøv derefter igen.'}
     finally:
@@ -243,7 +276,13 @@ def native_main(origin):
                 last_id = request['requestId']
                 write_frame(sys.stdout.buffer, request)
         elif message.get('type') == 'result' and live and message.get('requestId') == last_id == request.get('requestId'):
-            success = message.get('success') is True and message.get('status') == 'chrome-connected'
-            atomic_json(root() / 'response.json', {'requestId':last_id, 'success':success,
-                'status':'chrome-connected' if success else 'error', 'background':message.get('background') is True,
-                'error':str(message.get('error', 'Chrome-kontrollen mislykkedes.'))[:500]})
+            if request.get('type') == 'probe':
+                success = message.get('success') is True and message.get('status') == 'chrome-connected'
+                result = {'requestId':last_id,'success':success,'status':'chrome-connected' if success else 'error'}
+            else:
+                success = valid_receipt(message, request.get('registration', {}))
+                result = {key:message.get(key) for key in ['requestId','scriptVersion','registrationId','orderNumber','row','status']}
+                result['success'] = success
+            result['background'] = message.get('background') is True
+            if not success: result['error'] = str(message.get('error', 'Excel bekræftede ikke salget. Kontrollér masterarket før genforsøg.'))[:500]
+            atomic_json(root() / 'response.json', result)

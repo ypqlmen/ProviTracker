@@ -15,6 +15,7 @@ int main() {
     order.items = {{"mobil_200gb_36_term",2},{"new_unknown_key",1}};
     const QVector<Product> products = {{"mobil_200gb_36_term","Mobil 200GB 36mdr + term","Mobil",3.25,CountMode::Voice,true}};
     order.masterRegistration = makeSalesRegistration(order, products);
+    order.masterRegistration["registrationId"] = "sale-a";
     order.masterRegistrationState = "pending";
     order.masterWorkbookUrl = "https://example.sharepoint.com/personal/test/Documents/master.xlsx";
     const auto restored = fromOrderJson(toJson(order));
@@ -30,6 +31,13 @@ int main() {
     check(!isMasterWorkbookUrl("http://example.sharepoint.com/file"));
     check(!isMasterWorkbookUrl("https://user:password@example.sharepoint.com/file"));
     check(fromOrderJson(QJsonObject{{"id","legacy"}}).masterRegistration.isEmpty());
+    check(makeSalesRegistration(order, products)["registrationId"].toString() == "sale-a");
+    Order sameOse = order;
+    sameOse.masterRegistration["registrationId"] = "sale-b";
+    check(salesRegistrationIndex({order, sameOse}, "sale-a") == 0);
+    check(salesRegistrationIndex({order, sameOse}, "sale-b") == 1);
+    check(salesRegistrationIndex({order, order}, "sale-a") == -1);
+    check(salesRegistrationIndex({order}, "") == -1);
     AppSettings settings;
     settings.masterRegistrationEnabled = true;
     settings.masterWorkbookUrl = order.masterWorkbookUrl;

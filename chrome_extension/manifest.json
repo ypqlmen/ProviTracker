@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Provi Tracker – Masterark",
-  "version": "0.1.3",
-  "description": "Forbind Provi Tracker med dit åbne masterark. Prototype: kontrollerer kun forbindelsen.",
+  "version": "0.1.4",
+  "description": "Registrer salg fra Provi Tracker i dit åbne masterark.",
   "minimum_chrome_version": "105",
   "permissions": [
     "nativeMessaging",
@@ -12,7 +12,8 @@
   ],
   "host_permissions": [
     "https://5rmarketing-my.sharepoint.com/*",
-    "https://euc-excel.officeapps.live.com/*"
+    "https://euc-excel.officeapps.live.com/*",
+    "https://fa000000043.mro1cdnstorage.public.onecdn.static.microsoft/*"
   ],
   "background": {
     "service_worker": "background.js",

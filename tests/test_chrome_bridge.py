@@ -32,7 +32,7 @@ class ChromeBridgeTests(unittest.TestCase):
     def test_extension_identity_and_permissions(self):
         self.assertRegex(bridge.extension_id(), '^[a-p]{32}$')
         manifest = json.loads((bridge.extension_dir() / 'manifest.json').read_text())
-        self.assertEqual(manifest['host_permissions'], ['https://5rmarketing-my.sharepoint.com/*', 'https://euc-excel.officeapps.live.com/*'])
+        self.assertEqual(manifest['host_permissions'], ['https://5rmarketing-my.sharepoint.com/*', 'https://euc-excel.officeapps.live.com/*', 'https://fa000000043.mro1cdnstorage.public.onecdn.static.microsoft/*'])
         self.assertNotIn('cookies', manifest['permissions'])
 
     def test_native_roundtrip_rejects_stale_receipt(self):
@@ -56,6 +56,50 @@ class ChromeBridgeTests(unittest.TestCase):
             self.assertTrue(result['success'])
             self.assertTrue(result['background'])
 
+    def test_registration_receipt_is_bound_to_request_and_sale(self):
+        registration = {'requestId':'request', 'registrationId':'sale', 'orderNumber':'BISS'}
+        receipt = {'success':True, 'scriptVersion':3, 'requestId':'request', 'registrationId':'sale', 'orderNumber':'BISS', 'status':'registered', 'row':123}
+        self.assertTrue(bridge.valid_receipt(receipt, registration))
+        for key, value in [('requestId','stale'),('registrationId','other-sale'),('orderNumber','other-order'),('row',True),('row',3),('scriptVersion',2),('status','checked')]:
+            self.assertFalse(bridge.valid_receipt({**receipt, key:value}, registration), (key,value))
+        setup = {'requestId':'request', 'isTest':True}
+        self.assertTrue(bridge.valid_receipt({**receipt,'status':'checked','row':0,'orderNumber':'','registrationId':''}, setup))
+        self.assertFalse(bridge.valid_receipt(receipt, setup))
+
+    def test_register_native_roundtrip_validates_receipt(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            registration = {'requestId':'fresh','registrationId':'sale','orderNumber':'BISS'}
+            request = {'type':'register','requestId':'fresh','registration':registration,'expiresAt':time.time()+30,
+                'workbookUrl':'https://5rmarketing-my.sharepoint.com/a?sourcedoc={535121b9-ed93-447b-9f89-7e8d575d03e4}'}
+            bridge.atomic_json(root / 'request.json',request)
+            stdin,stdout=io.BytesIO(),io.BytesIO()
+            receipt={'type':'result','success':True,'scriptVersion':3,**registration,'row':123,'status':'registered'}
+            for message in [{'type':'poll'}, {**receipt,'registrationId':'wrong'}, receipt]: bridge.write_frame(stdin,message)
+            stdin.seek(0)
+            with patch.object(bridge,'root',return_value=root),patch.object(bridge,'prepare_native_stdio'), \
+                patch.object(bridge.sys,'stdin',SimpleNamespace(buffer=stdin)),patch.object(bridge.sys,'stdout',SimpleNamespace(buffer=stdout)):
+                bridge.native_main('chrome-extension://'+bridge.extension_id()+'/')
+            stdout.seek(0)
+            self.assertEqual(bridge.read_frame(stdout),request)
+            result=bridge.read_json(root / 'response.json')
+            self.assertTrue(result['success']);self.assertEqual(result['registrationId'],'sale')
+
+    def test_setup_keeps_app_request_id_and_unicode_file_size(self):
+        with tempfile.TemporaryDirectory() as folder, patch.object(bridge,'root',return_value=Path(folder)),patch.object(bridge,'register_host'):
+            request_id='00000000-0000-4000-8000-000000000001'
+            def respond(_):
+                envelope=bridge.read_json(Path(folder)/'request.json')
+                self.assertEqual(envelope['requestId'],request_id)
+                bridge.atomic_json(Path(folder)/'response.json',{'success':True,'status':'checked','row':0,'orderNumber':'','registrationId':'','scriptVersion':3,'requestId':request_id})
+            with patch.object(bridge.time,'sleep',side_effect=respond):
+                result=bridge.run_registration({'action':'chrome-setup','workbookUrl':'https://5rmarketing-my.sharepoint.com/a?sourcedoc={535121b9-ed93-447b-9f89-7e8d575d03e4}', 'registration':{'requestId':request_id}})
+            self.assertTrue(result['success'])
+            self.assertFalse((Path(folder)/'request.json').exists())
+            data={'note':'ÆØÅ'*1500}
+            bridge.atomic_json(Path(folder)/'unicode.json',data)
+            self.assertEqual(bridge.read_json(Path(folder)/'unicode.json'),data)
+
     def test_rejects_unknown_origin_before_reading(self):
         self.assertEqual(bridge.native_main('chrome-extension://' + 'a'*32 + '/evil'), 1)
 
@@ -71,7 +115,7 @@ class ChromeBridgeTests(unittest.TestCase):
                 self.assertTrue(second["updated"])
                 self.assertEqual(register.call_count, 2)
                 self.assertEqual((path / 'popup.js').read_bytes(), (bridge.extension_dir() / 'popup.js').read_bytes())
-                self.assertEqual(len(list(path.glob('*'))), 6)
+                self.assertEqual(len(list(path.glob('*'))), len(bridge.EXTENSION_FILES))
                 self.assertFalse(bridge.install_extension()['updated'])
 
     def test_new_assets_are_copied_and_verified_before_reload(self):

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import {workbookIdentity} from '../chrome_extension/identity.js';
-const source = fs.readFileSync('chrome_extension/background.js','utf8').replace("import {workbookIdentity} from './identity.js';",'');
+const source = fs.readFileSync('chrome_extension/background.js','utf8').replace(/^import .*;$/gm,'');
 const version = JSON.parse(fs.readFileSync('chrome_extension/manifest.json','utf8')).version;
 const next = version.split('.'); next[next.length-1]=Number(next.at(-1))+1;
 const upgraded = next.join('.');

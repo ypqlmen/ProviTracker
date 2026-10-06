@@ -5,7 +5,7 @@ import {workbookIdentity} from '../chrome_extension/identity.js';
 const url = 'https://5rmarketing-my.sharepoint.com/a?sourcedoc={535121b9-ed93-447b-9f89-7e8d575d03e4}';
 const excel = 'https://euc-excel.officeapps.live.com';
 const version = JSON.parse(fs.readFileSync('chrome_extension/manifest.json','utf8')).version;
-const source = fs.readFileSync('chrome_extension/background.js','utf8').replace("import {workbookIdentity} from './identity.js';",'');
+const source = fs.readFileSync('chrome_extension/background.js','utf8').replace(/^import .*;$/gm,'');
 const probe = fs.readFileSync('chrome_extension/probe.js','utf8');
 const event=()=>({addListener:()=>{}});
 function background() {

@@ -56,6 +56,10 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Chrome extension version check failed' }
           node tests/excel_sales_registration_test.cjs
           if ($LASTEXITCODE -ne 0) { throw 'Excel registration tests failed' }
+          node tests/excel_sales_registration_v3_test.cjs
+          if ($LASTEXITCODE -ne 0) { throw 'Excel V3 registration tests failed' }
+          node tests/chrome_sales_test.mjs
+          if ($LASTEXITCODE -ne 0) { throw 'Chrome registration tests failed' }
           node tests/chrome_identity_test.mjs
           if ($LASTEXITCODE -ne 0) { throw 'Chrome identity tests failed' }
           node tests/chrome_probe_test.mjs

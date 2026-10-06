@@ -19,7 +19,7 @@ assert.equal(replies[1].sheet,null,'loading document must reply without claiming
 const results=[];const timers=[];const intervals=[];let nativeHandler, runtimeHandler, currentUrl=url;const probes=[];
 const event=()=>({addListener:()=>{}});
 const port={postMessage:value=>results.push(value),onDisconnect:event(),onMessage:{addListener:fn=>nativeHandler=fn}};
-vm.runInNewContext(fs.readFileSync('chrome_extension/background.js','utf8').replace("import {workbookIdentity} from './identity.js';",''),{
+vm.runInNewContext(fs.readFileSync('chrome_extension/background.js','utf8').replace(/^import .*;$/gm,''),{
   workbookIdentity,
   setTimeout:fn=>{timers.push(fn);return fn},clearTimeout:()=>{},
   setInterval:fn=>{intervals.push(fn);return fn},clearInterval:()=>{},

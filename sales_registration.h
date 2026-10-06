@@ -13,7 +13,8 @@ static QJsonObject makeSalesRegistration(const Order& order, const QVector<Produ
         items.append(QJsonObject{{"key", item.productKey}, {"productName", name}, {"quantity", item.quantity}});
     }
     return QJsonObject{
-        {"source", "Provi Tracker"}, {"type", "sales_registration"}, {"schemaVersion", 2},
+        {"source", "Provi Tracker"}, {"type", "sales_registration"}, {"schemaVersion", 3},
+        {"registrationId", order.masterRegistration.value("registrationId").toString()},
         {"date", order.createdAt.date().toString("dd.MM.yyyy")},
         {"sellerInitials", order.sellerInitials}, {"orderNumber", order.id},
         {"cvrNumber", order.cvrNumber}, {"companyName", order.companyName},
@@ -23,6 +24,7 @@ static QJsonObject makeSalesRegistration(const Order& order, const QVector<Produ
 
 static QString salesRegistrationStateText(const Order& order) {
     if (order.masterRegistrationState == "registered") return "Registreret i masterark";
+    if (!order.masterRegistration.isEmpty() && order.masterRegistration.value("schemaVersion").toInt() != 3) return "Kontrollér tidligere registrering manuelt";
     if (order.masterRegistrationState == "pending" || order.masterRegistrationState == "transferring") return "Afventer masterark";
     if (order.masterRegistrationState == "error") return "Kræver handling";
     if (order.masterRegistrationState == "changed") return "Ændret – kontrollér masterark";
@@ -34,4 +36,16 @@ static bool isMasterWorkbookUrl(const QString& value) {
     const QString host = url.host().toLower();
     return url.isValid() && url.scheme() == "https" && url.userInfo().isEmpty()
         && host.endsWith(".sharepoint.com") && !url.path().isEmpty();
+}
+
+// OSE is an editable business number and may repeat. Never select a queue item by it.
+static int salesRegistrationIndex(const QVector<Order>& orders, const QString& registrationId) {
+    if (registrationId.isEmpty()) return -1;
+    int found = -1;
+    for (int i = 0; i < orders.size(); ++i) {
+        if (orders[i].masterRegistration.value("registrationId").toString() != registrationId) continue;
+        if (found >= 0) return -1; // Corrupt/duplicated identities require manual review.
+        found = i;
+    }
+    return found;
 }

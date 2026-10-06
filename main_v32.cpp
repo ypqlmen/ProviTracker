@@ -3161,7 +3161,7 @@ private:
 
     void logoutCloudUser() {
         if (masterRegistrationRunning) {
-            QMessageBox::information(this, "Salgsregistrering", "Vent på registreringen, eller luk masterarkets login-vindue først.");
+            QMessageBox::information(this, "Salgsregistrering", "Vent, til registreringen i Chrome er afsluttet.");
             return;
         }
         if (!confirmQuestion(this, "Log ud", "Vil du logge ud af Provi Tracker cloud på denne computer?")) {
@@ -3959,7 +3959,7 @@ QTableWidget::item {
             connect(probe, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished), this, [this, probe, probeChromeBtn](int, QProcess::ExitStatus) {
                 const auto result = QJsonDocument::fromJson(probe->readAllStandardOutput()).object();
                 const bool ok = result.value("success").toBool() && result.value("status").toString() == "chrome-connected";
-                salesRegistrationStatusLabel->setText(ok ? "Chrome har forbindelse til det rigtige masterark. Overførsel af salg via udvidelsen er endnu ikke aktiveret."
+                salesRegistrationStatusLabel->setText(ok ? "Chrome har forbindelse til dit masterark. Vælg Forbind masterark for at kontrollere salgsregistreringen."
                     : result.value("error").toString("Chrome-kontrollen mislykkedes. Prøv igen."));
                 probeChromeBtn->setEnabled(true);
                 probe->deleteLater();
@@ -4107,7 +4107,7 @@ QTableWidget::item {
 
         connect(testSalesRegistrationBtn, &QPushButton::clicked, this, [this]() {
             saveSalesRegistrationSettingsFromUi();
-            runMasterWorker(true);
+            showMasterScriptGuide();
         });
 
         connect(logoutCloudBtn, &QPushButton::clicked, this, [this]() {
@@ -4934,7 +4934,7 @@ QTableWidget::item {
             salesRegistrationEnabledCheck->setChecked(repo.settings.masterRegistrationEnabled);
         }
         if (salesRegistrationStatusLabel) {
-            salesRegistrationStatusLabel->setText("Nye ordrer får en salgsreg. Se status på Ordrer. Forbind masterarket for automatisk overførsel.");
+            salesRegistrationStatusLabel->setText("Nye salg vises øverst i masterarket og gemmes i historikken via Chrome. Se overførselsstatus på Ordrer.");
         }
 
         refreshPunchCardUi();
@@ -4960,13 +4960,48 @@ QTableWidget::item {
     }
 
     void prepareMasterRegistration(Order& order) {
+        const QString identity = order.masterRegistration.value("registrationId").toString();
         order.masterRegistration = makeSalesRegistration(order, repo.products);
+        order.masterRegistration["registrationId"] = identity.isEmpty() ? QUuid::createUuid().toString(QUuid::WithoutBraces) : identity;
         order.masterRegistrationState = "pending";
         order.masterRegistrationError.clear();
         order.masterWorkbookUrl = repo.settings.masterWorkbookUrl.trimmed();
     }
 
-    void runMasterWorker(bool setup, QString orderId = QString()) {
+    void showMasterScriptGuide() {
+        if (masterRegistrationRunning) return;
+        QDialog dialog(this);
+        dialog.setWindowTitle("Forbind salgsregistrering i Chrome");
+        dialog.setMinimumWidth(580);
+        auto* layout = new QVBoxLayout(&dialog);
+        auto* text = new QLabel("<b>Opsætning én gang pr. arbejdskonto</b><br><br>"
+            "1. Åbn dit masterark i <b>Chrome</b>, og log ind.<br>"
+            "2. Vælg <b>Automatiser → Nyt script → Opret i Kodeeditor</b>.<br>"
+            "3. Omdøb det nye script til <b>ProviTrackerSalesRegistrationV3</b>.<br>"
+            "4. Kopier scriptet med knappen nedenfor. Markér hele teksten i kodeeditoren, indsæt og gem.<br>"
+            "5. Lad kodeeditoren være åben, og vælg <b>Kontrollér opsætning</b>.<br><br>"
+            "Findes V3-scriptet allerede, skal du blot åbne det i kodeeditoren."
+            "<br>Kontrollen tilføjer ingen salg. Bagefter kan masterarket ligge i en baggrundsfane.");
+        text->setWordWrap(true);
+        layout->addWidget(text);
+        auto* copy = new QPushButton("Kopier Excel-script");
+        auto* check = new QPushButton("Kontrollér opsætning");
+        auto* close = new QPushButton("Luk");
+        layout->addWidget(copy); layout->addWidget(check); layout->addWidget(close);
+        connect(copy, &QPushButton::clicked, &dialog, [this, &dialog]() {
+            QFile file(QFileInfo(intramanagerWorkerPath()).absolutePath() + "/_internal/chrome_extension/excel_online_sales_registration_v3.ts");
+            if (!file.open(QIODevice::ReadOnly)) {
+                QMessageBox::warning(&dialog, "Excel-script", "Scriptet mangler. Geninstaller den nyeste testversion.");
+                return;
+            }
+            QApplication::clipboard()->setText(QString::fromUtf8(file.readAll()));
+        });
+        connect(close, &QPushButton::clicked, &dialog, &QDialog::reject);
+        connect(check, &QPushButton::clicked, &dialog, &QDialog::accept);
+        if (dialog.exec() == QDialog::Accepted) runMasterWorker(true);
+    }
+
+    void runMasterWorker(bool setup, QString registrationId = QString()) {
         if (masterRegistrationRunning) return;
         if (cloudUsername.isEmpty()) {
             QMessageBox::information(this, "Salgsregistrering", "Log ind i Provi Tracker først.");
@@ -4974,19 +5009,19 @@ QTableWidget::item {
         }
         QJsonObject registration;
         QString url = repo.settings.masterWorkbookUrl;
+        QString orderNumber;
         if (!setup) {
-            for (const auto& order : repo.orders) if (order.id == orderId) {
-                registration = order.masterRegistration;
-                url = order.masterWorkbookUrl;
-                break;
+            const int index = salesRegistrationIndex(repo.orders, registrationId);
+            if (index < 0) {
+                if (salesRegistrationStatusLabel) salesRegistrationStatusLabel->setText("Ordren mangler et entydigt registreringsnummer. Kontrollér masterarket manuelt.");
+                return;
             }
-            if (registration.isEmpty()) return;
-            // Persist an uncertain state before starting: a crash must not allow
-            // an edited order to silently replace the original retry payload.
-            for (auto& order : repo.orders) if (order.id == orderId) order.masterRegistrationState = "transferring";
+            registration = repo.orders[index].masterRegistration;
+            orderNumber = registration.value("orderNumber").toString();
+            url = repo.orders[index].masterWorkbookUrl;
+            if (registration.value("schemaVersion").toInt() != 3 || orderNumber.isEmpty()) return;
+            repo.orders[index].masterRegistrationState = "transferring";
             repo.saveOrders();
-            // A sale must be durably stored before Excel is allowed to receive it.
-
         }
         if (!isMasterWorkbookUrl(url)) {
             if (salesRegistrationStatusLabel) salesRegistrationStatusLabel->setText("Gem linket til dit masterark i Indstillinger først.");
@@ -5001,32 +5036,32 @@ QTableWidget::item {
         const QString requestId = QUuid::createUuid().toString(QUuid::WithoutBraces);
         registration["requestId"] = requestId;
         if (setup) registration["isTest"] = true;
-        const QString profile = repo.baseDir() + "/master-browser/" + QString::fromLatin1(
-            QCryptographicHash::hash(cloudUsername.trimmed().toLower().toUtf8(), QCryptographicHash::Sha256).toHex());
-        const QJsonObject input{{"action", setup ? "master-setup" : "master-register"},
-            {"workbookUrl", url}, {"profileDir", profile}, {"registration", registration}};
+        const QJsonObject input{{"action", setup ? "chrome-setup" : "chrome-register"},
+            {"workbookUrl", url}, {"registration", registration}};
         auto* process = new QProcess(this);
         masterRegistrationRunning = true;
         if (salesRegistrationStatusLabel) salesRegistrationStatusLabel->setText(setup
-            ? "Log ind i det åbne browservindue. Masterarket kontrolleres derefter."
+            ? "Kontrollerer salgsregistreringsscriptet i dit åbne masterark i Chrome. Der skrives ingen salg."
             : "Registrerer salget i masterarket...");
         connect(process, &QProcess::started, this, [process, input]() {
             process->write(QJsonDocument(input).toJson(QJsonDocument::Compact));
             process->closeWriteChannel();
         });
-        const auto finish = [this, process, setup, orderId, requestId, url](QJsonObject result) {
+        const auto finish = [this, process, setup, registrationId, orderNumber, requestId, url](QJsonObject result) {
             masterRegistrationRunning = false;
             const QString status = result.value("status").toString();
-            const bool ok = result.value("success").toBool() && result.value("scriptVersion").toInt() == 2
+            const bool ok = result.value("success").toBool() && result.value("scriptVersion").toInt() == 3
                 && result.value("requestId").toString() == requestId
-                && (setup ? status == "checked" : ((status == "registered" || status == "already_registered")
-                    && result.value("orderNumber").toString() == orderId && result.value("row").toInt() >= 3));
+                && (setup ? (status == "checked" && result.value("row").toInt() == 0 && result.value("orderNumber").toString().isEmpty())
+                    : ((status == "registered" || status == "already_registered")
+                    && result.value("orderNumber").toString() == orderNumber && result.value("registrationId").toString() == registrationId
+                    && result.value("row").toInt() >= 16));
             const QString error = result.value("error").toString("Excel bekræftede ikke registreringen. Kontrollér masterarket og prøv igen.");
             if (!setup) {
-                for (auto& order : repo.orders) if (order.id == orderId) {
-                    order.masterRegistrationState = ok ? "registered" : "error";
-                    order.masterRegistrationError = ok ? QString() : error;
-                    break;
+                const int index = salesRegistrationIndex(repo.orders, registrationId);
+                if (index >= 0) {
+                    repo.orders[index].masterRegistrationState = ok ? "registered" : "error";
+                    repo.orders[index].masterRegistrationError = ok ? QString() : error;
                 }
                 repo.saveOrders();
                 refreshOrdersTable();
@@ -5043,7 +5078,7 @@ QTableWidget::item {
         connect(process, &QProcess::errorOccurred, this, [finish](QProcess::ProcessError error) {
             if (error == QProcess::FailedToStart) finish(QJsonObject{{"error", "Browserhjælperen kunne ikke starte. Geninstaller den nyeste Provi Tracker-version."}});
         });
-        QTimer::singleShot(420000, process, [process]() { if (process->state() != QProcess::NotRunning) process->kill(); });
+        QTimer::singleShot(210000, process, [process]() { if (process->state() != QProcess::NotRunning) process->kill(); });
         process->start(intramanagerWorkerPath(), {"--stdin-json"});
     }
 
@@ -5051,7 +5086,8 @@ QTableWidget::item {
         if (masterRegistrationRunning || !repo.settings.masterRegistrationEnabled) return;
         for (const auto& order : repo.orders) {
             if ((order.masterRegistrationState == "pending" || order.masterRegistrationState == "transferring") && isMasterWorkbookUrl(order.masterWorkbookUrl)) {
-                runMasterWorker(false, order.id);
+                if (order.masterRegistration.value("schemaVersion").toInt() != 3 || order.masterRegistration.value("registrationId").toString().isEmpty()) continue;
+                runMasterWorker(false, order.masterRegistration.value("registrationId").toString());
                 return;
             }
         }
@@ -5066,14 +5102,18 @@ QTableWidget::item {
                 + ". Rettelser til allerede registrerede salg skal kontrolleres i masterarket.");
             return;
         }
+        if (!order.masterRegistration.isEmpty() && order.masterRegistration.value("schemaVersion").toInt() != 3) {
+            QMessageBox::information(this, "Salgsregistrering", "Denne ordre stammer fra den tidligere overførsel. Kontrollér den manuelt i masterarket, så salget ikke registreres to gange.");
+            return;
+        }
         if (order.masterRegistration.isEmpty()) prepareMasterRegistration(order);
         if (order.masterWorkbookUrl.isEmpty()) order.masterWorkbookUrl = repo.settings.masterWorkbookUrl;
         order.masterRegistrationState = "pending";
         order.masterRegistrationError.clear();
-        const QString orderId = order.id;
+        const QString identity = order.masterRegistration.value("registrationId").toString();
         saveOrdersAndSyncCloud();
         refreshOrdersTable();
-        runMasterWorker(false, orderId);
+        runMasterWorker(false, identity);
     }
 
     void createOrder() {
@@ -5494,7 +5534,7 @@ QTableWidget::item {
 protected:
     void closeEvent(QCloseEvent* event) override {
         if (masterRegistrationRunning) {
-            QMessageBox::information(this, "Salgsregistrering", "Vent på registreringen, eller luk masterarkets login-vindue først.");
+            QMessageBox::information(this, "Salgsregistrering", "Vent, til registreringen i Chrome er afsluttet.");
             event->ignore();
             return;
         }

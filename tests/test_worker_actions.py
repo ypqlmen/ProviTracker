@@ -24,11 +24,14 @@ class WorkerActionTests(unittest.TestCase):
         bridge.install_extension = Mock(return_value={"success": True})
         bridge.sync_installed_extension = Mock(return_value={"success": True})
         bridge.probe = Mock(return_value={"success": True})
+        bridge.run_registration = Mock(return_value={"success": True})
         registration.run = Mock(return_value={"success": True})
         for action, handler in [
             ("chrome-install", bridge.install_extension),
             ("chrome-probe", bridge.probe),
             ("chrome-update", bridge.sync_installed_extension),
+            ("chrome-setup", bridge.run_registration),
+            ("chrome-register", bridge.run_registration),
             ("master-setup", registration.run),
             ("master-register", registration.run),
         ]:

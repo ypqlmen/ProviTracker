@@ -1,99 +1,44 @@
-# Chrome prototype 0.1.2
+# Salgsregistrering i Chrome – testversion 0.1.4
 
-This is a read-only transport prototype, not the completed sale-registration replacement.
-The existing order-to-Excel worker remains unchanged. The new Chrome check never marks
-an order registered and never submits customer data.
+Provi Tracker overfører nye salgsregistreringer gennem brugerens eksisterende Chrome-login. Ordrekøen bruger Chrome i stedet for en separat Microsoft-browser. Funktionen er endnu kun i testversionen; den offentlige opdateringskanal ændres ikke af Windows-prøvebygningen.
 
-## Implemented
+## Brugerens opsætning
 
-- Settings has Install Chrome extension and Check Chrome (prototype).
-- Installation prepares bundled files in %LOCALAPPDATA%/ProviTrackerChromeBridge/extension,
-  registers the native host under HKCU and shows an in-app guide with Copy folder path
-  and Open Chrome buttons. Users enable Developer mode and Load unpacked themselves.
-  Repeated preparation refreshes the same directory. From 0.1.2 the native host asks Chrome
-  to reload the extension automatically after a complete update.
-- Check Chrome registers a native messaging host under HKCU (no elevation) using the
-  already packaged worker, then requests a read-only check of the specified workbook.
-- Manifest V3 extension only has access to the company's SharePoint hostname and the observed euc-excel.officeapps.live.com Excel frame. It reads
-  the workbook identity from the tab URL and checks for the Ark1 sheet tab, without
-  reading cookies, cell values, passwords or page tokens.
-- Exactly one matching, non-discarded workbook tab is required. Tabs are never activated.
-- Correlation IDs, fixed local file locations, bounded native frames and an exact allowed
-  extension origin prevent stale responses and arbitrary paths from being accepted.
+1. Installer den nye Windows-testversion. Åbn **Indstillinger → Salgsregistrering** i Provi Tracker.
+2. Gem sælgerinitialer og det direkte masterark-link med `sourcedoc`. Åbn dette masterark én gang i Chrome, og log ind.
+3. Vælg **Installer Chrome-udvidelse**. Følg programmets guide: åbn `chrome://extensions`, behold **Udviklertilstand** aktiveret, og vælg **Indlæs udpakket** med den mappesti, programmet kopierer. Det kræver ingen administratorinstallation. Hvis udvidelsen allerede er installeret, bruges samme mappe og samme udvidelses-ID. Kontrollér version **0.1.4** og adgang til Excel og scriptpanelet; Chrome kan bede om ny webstedsadgang ved denne opdatering.
+4. Vælg **Forbind masterark**. Her ligger guiden og knappen **Kopier Excel-script**. Opret et nyt Office-script via **Automatiser → Nyt script → Opret i Kodeeditor**, og omdøb det til **ProviTrackerSalesRegistrationV3**. Markér hele standardkoden, indsæt den kopierede kode, og gem. Bevar eventuelle tidligere scripts.
+5. Lad V3-scriptet være åbent i kodeeditoren. Vælg **Kontrollér opsætning** i programmets guide. Denne kontrol skal bekræftes af Excel og tilføjer ingen salg.
+6. Slå **Registrer automatisk i masterarket** til, og gem indstillingerne. Gem den næste nye ordre med alle kundedata og produkter. Kontrollér **Registreret i masterark** på Ordrer og de to placeringer i Excel.
 
-## Developer check
+Excel-scriptet skal oprettes én gang pr. arbejdskonto. Brugeren får hjælp inde i programmet og skal ikke hente kildefiler fra GitHub. Scriptet kan genfindes under Automatiser. Det åbne masterark må være en baggrundsfane; brugeren skal ikke aktivere fanen for hvert salg. Browseren og masterarket skal være åbne og logget ind. Microsofts krav om login/MFA gælder fortsat. Mailafsendelse er en senere opgave.
 
-Use a Windows trial build containing this source. For developer testing only, load the
-chrome_extension directory unpacked in Chrome. This is not the employee installation flow.
-Open the workbook, then select Check Chrome in Provi Tracker. Click the extension icon
-if Chrome has not reconnected after first-time host registration. Repeat while a different
-tab is foreground. A successful connection check is NOT proof of background Excel writes.
+## Arkets struktur og skrivning
 
-## Installation without a store account
+V3 kræver fanen Ark1, de kendte overskrifter i række 2, seneste salg i række 3 og en eksisterende historik med månedsmarkeringer længere nede. Ukendte eller manglende kolonner stopper registreringen.
 
-The selected distribution is local unpacked installation. No store account, payment,
-store ID or Web Store listing is required. Chrome's enterprise policy must permit
-Developer mode and unpacked extensions. The app does not alter those policies or
-Chrome's Developer mode setting. Users perform the final Chrome steps themselves.
-Developer mode must remain enabled for Chrome to permit an unpacked extension reload.
+Et nyt salg udfylder først række 3 og arkiveres derefter nederst. Ved første salg i en nyere måned indsættes en særskilt række med månedens første dato, formateret som `dd.mm.yyyy`; rækken kopierer farve og øvrige formater fra arkets eksisterende månedsmarkering. Arkivrækken kopierer salgsformaterne fra række 3. Eksisterende historik og blankområdet mellem række 3 og historikken bevares. Der indsættes ingen tomme måneder uden salg. Salg fra en tidligere måned kræver manuel registrering i den korrekte del af historikken.
 
-The stable bundled public key keeps the unpacked extension ID and native host allowlist
-aligned. The native host is registered when preparing the extension, before Chrome loads it.
-The Windows workflow tests preparation using the actually installed executable, HKCU host
-registration and repeated preparation to the same location. It also uses an isolated Chromium
-profile to verify a real native-host update, extension reload and reconnection while preserving
-an open tab. The isolated profile enables Developer mode once, matching the in-app guide;
-command-line loading alone does not enable it. This does not prove authenticated background
-Excel execution or workplace policies.
+Produkterne bruger præcise katalog-nøgler og de respektive produktkolonner. Tillæg samles i Add-on og specificeres i Bemærkninger. Kundetekst, OSE, CVR og telefon behandles som tekst; produktantal er tal.
 
-## Automatic updates from 0.1.2
+## Kvitteringer og genforsøg
 
-- App startup refreshes an already prepared extension from the app's bundled package. It
-  does not install the extension for a user who has not selected Install Chrome extension.
-- The connected native host also refreshes the package during idle polling, so an existing
-  Chrome session can discover an app update. If Chrome is closed, the new version is loaded
-  when Chrome reconnects. Updates follow app distribution; there is no separate download server.
-- The running service worker reports its own manifest version. A higher, fully copied version
-  triggers runtime.reload(), followed by native-host reconnection and loaded-version confirmation.
-- A lock serializes copies with probe creation. Manifest and a file-hash readiness marker are
-  published last. Interrupted copies cannot trigger reload and a later attempt repairs them.
-  Active checks postpone updates; an older helper cannot downgrade a newer extension.
-- The current probe script is reattached to permitted frames in the matching workbook. Reloading
-  the extension does not activate or reload workbook tabs. Repeated injection replaces its listener.
-- Existing 0.1.1 users need one manual extension reload after preparing 0.1.2. Their old worker has
-  no reload protocol. Afterwards normal code updates are automatic. Changes requesting new
-  permissions can require Chrome's user confirmation, and workplace policy remains authoritative.
-- Every change under chrome_extension must increase manifest.version. The Windows build checks
-  this against the previous push or PR base and rejects a missing version bump.
+Hvert salgs-snapshot har et stabilt registreringsnummer (UUID), og hvert forsøg har et nyt kontrolnummer. OSE er et forretningsnummer og kan gentages i forskellige ordrer. En fuld, frisk V3-kvittering med begge korrekte numre og den korrekte OSE er nødvendig, før programmet gemmer status som registreret. Et tjek af Chrome-forbindelsen alene er utilstrækkeligt.
 
-## Still required
+Et meget skjult journalark `_ProviTrackerReg` reserverer historikrække og indhold før skrivningen. Genforsøg kontrollerer og genbruger denne reservation. En fuldt skrevet række efter et afbrudt forsøg bekræftes uden ny kopi og uden at overskrive seneste salg øverst. Delvis eller manuelt flyttet historik, ændrede salgsdata og uafsluttede reservationer kræver handling; appen gætter ikke på en ny række. Journalen er til genforsøg, ikke en transaktionel lås mellem flere samtidige computere. Brug én Provi Tracker-instans pr. masterark.
 
-Implement and verify script invocation in the authenticated background tab, exact workbook
-and frame targeting, fresh Excel receipts, queued sale delivery, expiry/account changes,
-retry/conflict handling, and recovery from Chrome sleep/restarts. Only then switch the
-order queue away from its existing separate-browser worker. Verify the guided unpacked installation with workplace Chrome policies before distribution.
+Ældre V2-registreringer overføres ikke automatisk igen, fordi de ikke har V3-identitet. De skal kontrolleres manuelt. Rettelser og sletninger til allerede overførte salg ændrer ikke automatisk Excel.
 
-References:
-- https://developer.chrome.com/docs/extensions/how-to/distribute/install-extensions
-- https://developer.chrome.com/docs/extensions/develop/concepts/native-messaging
-- https://developer.chrome.com/docs/webstore/register
+## Chrome-adgang og opdateringer
 
-## Connection fix 0.1.1
+Udvidelsen har adgang til virksomhedens præcise SharePoint-vært, EU Excel-rammen og det observerede Office Scripts-panel på `fa000000043.mro1cdnstorage.public.onecdn.static.microsoft`. Panelet må kun bruges, når det er direkte barn af den tilladte Excel-ramme. Den konkrete arbejdsbog identificeres af `sourcedoc` i fanens adresse og kontrolleres igen under forløbet. Kun én tilsvarende, ikke parkeret fane accepteres.
 
-Excel's observed WacFrame_Excel_0 has src=about:blank, but its loaded document is
-https://euc-excel.officeapps.live.com/x/_layouts/xlviewerinternal.aspx. Explicitly match
-that Excel origin as well as SharePoint, enable match_about_blank and
-inspect same-origin child documents recursively, since rendering may occur after script
-injection. Retry probes for up to 22 seconds; distinguish no extension reply from a
-responding document without Ark1. Revalidate current tab identity before success.
-Regression tests cover blank-frame detection, delayed rendering, stale replies and navigation.
+Udvidelsen betjener Office Scripts' almindelige synlige knapper og parameterfelt. Den læser ikke cookies, adgangskoder, sidetokens eller private Excel-API'er. Kundedata sendes lokalt fra appen gennem native messaging og videre til scriptet i brugerens eget masterark. Appen gemmer den oprindelige ordre før Excel-overførslen. Et afbrudt login eller manglende panel giver en handlingsbesked og et genforsøg fra Ordrer.
 
-Settings buttons now occupy separate full-width rows; status text spans the card.
-A local Qt/Fusion rendering at 480px reproduced the previous clipped button labels and
-verified the revised layout. This is a local rendering, not a screenshot of the user's Windows session.
+Forberedelsen kopierer filerne til `%LOCALAPPDATA%/ProviTrackerChromeBridge/extension` og registrerer hjælpeprogrammet under HKCU. Provi Tracker opdaterer denne mappe fra sin medfølgende pakke. Den aktive udvidelse genindlæses automatisk efter en fuld opdatering, når en igangværende kontrol/registrering er færdig. En tidligere installeret 0.1.1 skal genindlæses manuelt én gang. Nye webstedsrettigheder kan kræve Chrome-bekræftelse. Hver ændring i udvidelsespakken skal hæve versionsnummeret; Windows-prøvebygningen håndhæver det.
 
-## Ark1-kontrol i udvidelse 0.1.3
+## Verifikation og praktiske grænser
 
-Det åbne masterark viste Ark1 som et `role="tab"`-element med `sheet-title="Ark1"` inde i den separate EU Excel-ramme. SharePoint-siden kan ikke selv læse denne ramme. Kontrollen læser derfor resultatet direkte fra hver tilladt ramme og gentager kontrollen i op til 22 sekunder, mens Excel indlæses. Arkets titel kan genkendes, selv om baggrundsfanen endnu ikke er tegnet. Kun virksomhedens SharePoint, EU Excel og deres underliggende blanke rammer tillades.
+Node-prøver kontrollerer produktkatalog, øverste række, historik, måned/årsskifte, formater og afbrudte/genoptagne registreringer. Python- og C++-prøver kontrollerer ordrenumre, stabile registreringsnumre, kvitteringer, kø og native transport. En isoleret Chromium-prøve betjener de faktiske udvidelsesfunktioner mod syntetiske Office-kontroller uden Microsoft-login eller kundedata. Windows-forløbet bruger det installerede hjælpeprogram, HKCU, opdatering/genindlæsning og kvitteringer fra det syntetiske panel.
 
-Hvis Excel-rammen mangler adgang eller endnu ikke svarer, får brugeren en særskilt besked. Dette er fortsat en kontrol uden skrivning til masterarket. Den præcise årsag på brugerens Windows-computer er ikke dokumenteret endnu; en ny kontrol hos brugeren skal bekræfte rettelsen. Windows-prøven bruger et syntetisk ark uden firmaoplysninger og kontrollerer Ark1 i en baggrundsfane efter genindlæsning af udvidelsen.
+En skrivefri kørsel af V3 i brugerens rigtige Excel validerer kompilering, kolonner og historik. Den endelige afprøvning af et autentificeret salg fra brugerens Windows-program i en baggrundsfane sker hos brugeren, før fuld udgivelse. Microsoft kan ændre kontrollernes struktur; løsningen skal i så fald opdateres og afprøves igen.

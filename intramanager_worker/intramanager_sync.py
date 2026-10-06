@@ -1637,6 +1637,13 @@ def main():
             except Exception as exc:
                 output({"success": False, "error": str(exc)[:700]})
             return
+        if args.action in {"chrome-setup", "chrome-register"}:
+            from chrome_bridge import run_registration
+            try:
+                output(run_registration(payload))
+            except Exception as exc:
+                output({"success": False, "error": str(exc)[:700]})
+            return
         if args.action == "chrome-probe":
             from chrome_bridge import probe
             try:
