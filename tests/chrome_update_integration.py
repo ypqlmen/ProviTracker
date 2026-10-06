@@ -61,6 +61,16 @@ def main(worker, installer):
             context = p.chromium.launch_persistent_context(profile, channel='chromium', headless=True,
                 args=[f'--disable-extensions-except={extension}', f'--load-extension={extension}'])
             try:
+                # Command-line loading alone does not enable Developer mode. Reproduce the
+                # one-time guide step in this disposable profile; otherwise Chromium disables
+                # the unpacked extension on reload. Never change the employee's browser here.
+                setup = context.new_page()
+                setup.goto('chrome://extensions/')
+                config = setup.evaluate('async () => await new Promise(r => chrome.developerPrivate.getProfileConfiguration(r))')
+                assert config['canLoadUnpacked'] and not config['isDeveloperModeControlledByPolicy']
+                setup.evaluate('async () => await new Promise(r => chrome.developerPrivate.updateProfileConfiguration({inDeveloperMode:true},r))')
+                assert setup.evaluate('async () => await new Promise(r => chrome.developerPrivate.getProfileConfiguration(r))')['inDeveloperMode']
+                setup.close()
                 page = context.pages[0]
                 page.evaluate('window.proviUntouched = "keep-me"')
                 wait_for(context, lambda: read_json(root / 'loaded.json').get('version') == initial,
