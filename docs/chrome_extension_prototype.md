@@ -35,13 +35,16 @@ The selected distribution is local unpacked installation. No store account, paym
 store ID or Web Store listing is required. Chrome's enterprise policy must permit
 Developer mode and unpacked extensions. The app does not alter those policies or
 Chrome's Developer mode setting. Users perform the final Chrome steps themselves.
+Developer mode must remain enabled for Chrome to permit an unpacked extension reload.
 
 The stable bundled public key keeps the unpacked extension ID and native host allowlist
 aligned. The native host is registered when preparing the extension, before Chrome loads it.
 The Windows workflow tests preparation using the actually installed executable, HKCU host
 registration and repeated preparation to the same location. It also uses an isolated Chromium
 profile to verify a real native-host update, extension reload and reconnection while preserving
-an open tab. This does not prove authenticated background Excel execution or workplace policies.
+an open tab. The isolated profile enables Developer mode once, matching the in-app guide;
+command-line loading alone does not enable it. This does not prove authenticated background
+Excel execution or workplace policies.
 
 ## Automatic updates from 0.1.2
 

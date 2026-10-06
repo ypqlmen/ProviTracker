@@ -3905,7 +3905,7 @@ QTableWidget::item {
                 auto* layout = new QVBoxLayout(&dialog);
                 auto* instructions = new QLabel("<b>Udvidelsen er klargjort på din computer.</b><br><br>"
                     "1. Åbn <b>chrome://extensions</b> i Chrome.<br>"
-                    "2. Slå <b>Udviklertilstand</b> til øverst til højre.<br>"
+                    "2. Slå <b>Udviklertilstand</b> til øverst til højre, og behold den slået til.<br>"
                     "3. Vælg <b>Indlæs udpakket</b>, og vælg mappen nedenfor.<br><br>"
                     "Har du den gamle udvidelse 0.1.1, skal du genindlæse den én gang i Chrome.<br>"
                     "Fremover opdateres udvidelsen automatisk sammen med Provi Tracker.<br>"

@@ -162,7 +162,7 @@ jobs:
           if ($hostManifest.path -ne $worker) { throw 'Native host does not point to installed worker' }
           $repeat = '{"action":"chrome-install"}' | & $worker --stdin-json | ConvertFrom-Json
           if (!$repeat.success -or $repeat.extensionPath -ne $result.extensionPath) { throw 'Repeat preparation failed' }
-      - name: Verify automatic Chrome extension reload with actual native host
+      - name: Verify automatic extension update with Chrome open
         run: |
           $ErrorActionPreference = 'Stop'
           $worker = Join-Path $env:LOCALAPPDATA 'Programs/Provi Tracker/intramanager_worker/intramanager_sync.exe'
