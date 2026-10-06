@@ -46,7 +46,7 @@ class ChromeBridgeTests(unittest.TestCase):
                             {'type':'result', 'requestId':'fresh', 'success':True, 'status':'chrome-connected', 'background':True}]:
                 bridge.write_frame(stdin, message)
             stdin.seek(0)
-            with patch.object(bridge, 'root', return_value=root), patch.object(bridge.sys, 'platform', 'test'), \
+            with patch.object(bridge, 'root', return_value=root), patch.object(bridge, 'prepare_native_stdio'), \
                  patch.object(bridge.sys, 'stdin', SimpleNamespace(buffer=stdin)), patch.object(bridge.sys, 'stdout', SimpleNamespace(buffer=stdout)):
                 self.assertEqual(bridge.native_main('chrome-extension://' + bridge.extension_id() + '/'), 0)
             stdout.seek(0)
@@ -167,7 +167,7 @@ class ChromeBridgeTests(unittest.TestCase):
             for loaded in ['0.1.1', version, '0.1.9', 'bad', None]:
                 bridge.write_frame(stdin, {'type':'poll', 'extensionVersion':loaded})
             stdin.seek(0)
-            with patch.object(bridge.sys, 'platform', 'test'), \
+            with patch.object(bridge, 'prepare_native_stdio'), \
                  patch.object(bridge.sys, 'stdin', SimpleNamespace(buffer=stdin)), \
                  patch.object(bridge.sys, 'stdout', SimpleNamespace(buffer=stdout)):
                 bridge.native_main('chrome-extension://' + bridge.extension_id() + '/')
@@ -189,7 +189,7 @@ class ChromeBridgeTests(unittest.TestCase):
             stdin.seek(0)
             with patch.object(bridge, 'sync_installed_extension', side_effect=start_probe), \
                  patch.object(bridge, 'ready_package', return_value={'version':'0.1.2'}), \
-                 patch.object(bridge.sys, 'platform', 'test'), \
+                 patch.object(bridge, 'prepare_native_stdio'), \
                  patch.object(bridge.sys, 'stdin', SimpleNamespace(buffer=stdin)), \
                  patch.object(bridge.sys, 'stdout', SimpleNamespace(buffer=stdout)):
                 bridge.native_main('chrome-extension://' + bridge.extension_id() + '/')

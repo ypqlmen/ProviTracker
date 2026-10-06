@@ -207,12 +207,15 @@ def probe(payload):
         if read_json(request).get('requestId') == request_id: request.unlink(missing_ok=True)
         if read_json(response).get('requestId') == request_id: response.unlink(missing_ok=True)
 
-def native_main(origin):
-    if origin != 'chrome-extension://' + extension_id() + '/': return 1
+def prepare_native_stdio():
     if sys.platform == 'win32':
         import msvcrt
         msvcrt.setmode(sys.stdin.fileno(), os.O_BINARY)
         msvcrt.setmode(sys.stdout.fileno(), os.O_BINARY)
+
+def native_main(origin):
+    if origin != 'chrome-extension://' + extension_id() + '/': return 1
+    prepare_native_stdio()
     last_id = None
     while True:
         message = read_frame(sys.stdin.buffer)
