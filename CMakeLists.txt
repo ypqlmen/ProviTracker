@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(ProvisionTrackerV2 VERSION 1.6.1 LANGUAGES CXX)
+project(ProvisionTrackerV2 VERSION 1.6.2 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -31,6 +31,9 @@ target_link_libraries(ProvisionTrackerV2 PRIVATE
 
 include(CTest)
 if(BUILD_TESTING)
+    add_executable(RetiredIntegrationCleanupTests tests/retired_integration_cleanup_test.cpp)
+    target_link_libraries(RetiredIntegrationCleanupTests PRIVATE Qt6::Core)
+    add_test(NAME RetiredIntegrationCleanupTests COMMAND RetiredIntegrationCleanupTests)
     add_executable(PayrollForecastTests tests/payroll_forecast_test.cpp)
     target_link_libraries(PayrollForecastTests PRIVATE Qt6::Core)
     add_test(NAME PayrollForecastTests COMMAND PayrollForecastTests)

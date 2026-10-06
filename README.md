@@ -2,9 +2,13 @@
 
 Qt Widgets desktop-app i C++ med Supabase cloud-login, per-user installation og GitHub auto-update.
 
+## Nyt i 1.6.2
+
+- Den tidligere opslagsside og dens browserintegration er fjernet for alle brugere.
+- Gamle lokale login-, sessions- og fejlsøgningsfiler til integrationen ryddes ved opstart.
+
 ## Nyt i 1.6.0
 
-- Tjavs har adgang til KvikOC-siden på samme niveau som Phillip.
 - Begge lønkort viser "Prognose af timeløn" for deres lønperiode (21.–20.).
 - Prognosen er optjent timeløn pr. forløben mandag–fredag ganget med alle mandage–fredage i perioden. Beregningen følger datoen for de senest hentede timer og omfatter ikke provision eller sygeløn.
 - Manglende timedata og perioder, der ikke er startet, vises som tekst. De faktiske løntal ændres ikke af prognosen.

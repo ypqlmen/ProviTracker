@@ -3,7 +3,7 @@ name: Windows trial build
 on:
   workflow_dispatch:
   push:
-    branches: [main, codex/windows-trial-build, codex/release-1.6, codex/fix-autoupdate]
+    branches: [main, codex/windows-trial-build, codex/release-1.6, codex/fix-autoupdate, codex/hotfix-remove-kvikoc]
     paths:
       - '.github/workflows/windows-trial-build.yml'
       - 'updater_script.h'
@@ -137,3 +137,4 @@ jobs:
           retention-days: 7
           compression-level: 0
           if-no-files-found: error
+
