@@ -17,6 +17,11 @@ from intramanager_worker import intramanager_sync as worker
 
 
 class WorkerActionTests(unittest.TestCase):
+    def test_qt_utf8_pipe_preserves_customer_names(self):
+        data = '{"companyName":"Synthetic ÆØÅ", "note":"Bemærkning"}'.encode("utf-8")
+        with patch.object(sys, "stdin", types.SimpleNamespace(buffer=io.BytesIO(data))):
+            self.assertEqual(worker.read_stdin_json()["companyName"], "Synthetic ÆØÅ")
+
     def test_registration_actions_still_reach_their_handlers_after_hotfix(self):
         bridge = types.ModuleType("chrome_bridge")
         registration = types.ModuleType("master_registration")

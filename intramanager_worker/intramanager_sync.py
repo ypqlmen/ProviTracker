@@ -71,6 +71,13 @@ def output(obj):
     sys.stdout.flush()
 
 
+def read_stdin_json():
+    # Qt sends UTF-8 bytes. Windows pipe text encoding otherwise depends on locale.
+    stream = getattr(sys.stdin, "buffer", None)
+    raw = stream.read().decode("utf-8") if stream is not None else sys.stdin.read()
+    return json.loads(raw)
+
+
 def parse_hours(text):
     match = re.search(r"(\d+)\s*t\.\s*(\d+)\s*min\.", text)
 
@@ -1620,7 +1627,7 @@ def main():
     args = parser.parse_args()
 
     if args.stdin_json:
-        payload = json.loads(sys.stdin.read())
+        payload = read_stdin_json()
 
         args.action = payload.get("action", args.action)
         if args.action == "chrome-update":

@@ -92,9 +92,9 @@ def check_native_workbook(context, worker, extension_id):
 
 def check_native_sales(context, worker, workbook, foreground):
     def run(action, registration):
-        process=subprocess.Popen([str(worker),'--stdin-json'],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
+        process=subprocess.Popen([str(worker),'--stdin-json'],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,encoding='utf-8')
         try:
-            process.stdin.write(json.dumps({'action':action,'workbookUrl':WORKBOOK_URL,'registration':registration}))
+            process.stdin.write(json.dumps({'action':action,'workbookUrl':WORKBOOK_URL,'registration':registration},ensure_ascii=False))
             process.stdin.close()
             deadline=time.monotonic()+190
             while process.poll() is None and time.monotonic()<deadline:foreground.wait_for_timeout(100)
