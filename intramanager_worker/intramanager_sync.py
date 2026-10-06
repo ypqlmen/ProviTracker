@@ -1623,6 +1623,13 @@ def main():
         payload = json.loads(sys.stdin.read())
 
         args.action = payload.get("action", args.action)
+        if args.action == "chrome-update":
+            from chrome_bridge import sync_installed_extension
+            try:
+                output(sync_installed_extension())
+            except Exception as exc:
+                output({"success": False, "error": str(exc)[:700]})
+            return
         if args.action == "chrome-install":
             from chrome_bridge import install_extension
             try:

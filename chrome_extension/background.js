@@ -1,7 +1,28 @@
 import {workbookIdentity} from './identity.js';
 let port = null;
 let pending = null;
+const loadedVersion = chrome.runtime.getManifest().version;
+let reloadRequested = false;
+let reloadTarget = null;
 let status = 'Åbn Provi Tracker, og vælg Kontrollér Chrome.';
+function reloadWhenIdle() {
+  if (reloadTarget && !pending && !reloadRequested) {
+    reloadRequested = true;
+    chrome.runtime.reload();
+  }
+}
+function poll() {
+  if (port && !pending && !reloadRequested) port.postMessage({type:'poll', extensionVersion:loadedVersion});
+}
+function newerVersion(value) {
+  if (typeof value !== 'string' || !/^\d+(\.\d+){0,3}$/.test(value)) return false;
+  const a = value.split('.').map(Number), b = loadedVersion.split('.').map(Number);
+  if (a.some(n => n > 65535)) return false;
+  for (let i = 0; i < 4; i++) {
+    if ((a[i] || 0) !== (b[i] || 0)) return (a[i] || 0) > (b[i] || 0);
+  }
+  return false;
+}
 function finish(job, result) {
   if (pending !== job) return;
   clearInterval(job.poll);
@@ -9,9 +30,10 @@ function finish(job, result) {
   pending = null;
   status = result.success ? 'Forbindelsen virker. Denne prototype skriver endnu ikke salg.' : result.error;
   port?.postMessage({type:'result', requestId:job.requestId, ...result});
+  reloadWhenIdle();
 }
 function connect() {
-  if (port) return;
+  if (port || reloadRequested) return;
   port = chrome.runtime.connectNative('dk.provitracker.masterark');
   port.onDisconnect.addListener(() => {
     void chrome.runtime.lastError;
@@ -20,6 +42,14 @@ function connect() {
     status = 'Åbn Provi Tracker, og vælg Kontrollér Chrome.';
   });
   port.onMessage.addListener(async message => {
+    if (message.type === 'reload-extension') {
+      if (newerVersion(message.version)) { reloadTarget = message.version; reloadWhenIdle(); }
+      return;
+    }
+    if (message.type === 'extension-update-error') {
+      status = 'Udvidelsen kunne ikke opdateres. Åbn Provi Tracker igen, og prøv Kontrollér Chrome.';
+      return;
+    }
     if (message.type !== 'probe' || pending) return;
     const identity = workbookIdentity(message.workbookUrl);
     if (!identity) return;
@@ -33,6 +63,16 @@ function connect() {
         return;
       }
       job.tabId = tabs[0].id;
+      // Reattach the current content script after an extension reload. Keep the workbook intact.
+      const frames = await chrome.webNavigation.getAllFrames({tabId:job.tabId});
+      if (pending !== job) return;
+      const allowed = frames.filter(frame => {
+        try { return ['https://5rmarketing-my.sharepoint.com', 'https://euc-excel.officeapps.live.com'].includes(new URL(frame.url).origin); }
+        catch { return false; }
+      });
+      await Promise.allSettled(allowed.map(frame => chrome.scripting.executeScript({
+        target:{tabId:job.tabId,frameIds:[frame.frameId]},files:['probe.js']})));
+      if (pending !== job) return;
       const probe = () => {
         if (pending !== job) return;
         chrome.tabs.sendMessage(job.tabId, {type:'probe', requestId:job.requestId}).catch(() => {});
@@ -47,7 +87,7 @@ function connect() {
       finish(job, {success:false, error:'Chrome-kontrollen blev afbrudt. Åbn masterarket, og prøv igen.'});
     }
   });
-  port.postMessage({type:'poll'});
+  poll();
 }
 chrome.runtime.onMessage.addListener((message, sender, reply) => {
   if (message?.type === 'status' && !sender.tab) { reply({status}); connect(); return; }
@@ -66,8 +106,8 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
     finish(job, {success:true, status:'chrome-connected', background:!tab.active});
   }).catch(() => finish(job, {success:false, error:'Masterarket blev lukket under kontrollen.'}));
 });
-setInterval(() => { if (port && !pending) port.postMessage({type:'poll'}); }, 3000);
-chrome.alarms.onAlarm.addListener(connect);
+setInterval(poll, 3000);
+chrome.alarms.onAlarm.addListener(() => { connect(); poll(); });
 chrome.runtime.onStartup.addListener(connect);
 chrome.runtime.onInstalled.addListener(connect);
 chrome.alarms.create('reconnect', {periodInMinutes:1});

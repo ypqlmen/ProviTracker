@@ -66,9 +66,115 @@ class ChromeBridgeTests(unittest.TestCase):
                 path = Path(first['extensionPath'])
                 (path / 'popup.js').write_text('old version')
                 second = bridge.install_extension()
-                self.assertEqual(first, second)
+                self.assertEqual(first["extensionPath"], second["extensionPath"])
+                self.assertTrue(first["updated"])
+                self.assertTrue(second["updated"])
                 self.assertEqual(register.call_count, 2)
                 self.assertEqual((path / 'popup.js').read_bytes(), (bridge.extension_dir() / 'popup.js').read_bytes())
                 self.assertEqual(len(list(path.glob('*'))), 6)
+                self.assertFalse(bridge.install_extension()['updated'])
+
+    def test_update_does_not_install_without_user_setup(self):
+        with tempfile.TemporaryDirectory() as folder, patch.object(bridge, 'root', return_value=Path(folder)), \
+             patch.object(bridge, 'register_host') as register:
+            self.assertEqual(bridge.sync_installed_extension()['status'], 'chrome-not-installed')
+            register.assert_not_called()
+
+    def test_upgrade_defers_during_probe_and_never_downgrades(self):
+        with tempfile.TemporaryDirectory() as folder, patch.object(bridge, 'root', return_value=Path(folder)), \
+             patch.object(bridge, 'register_host'):
+            root = Path(folder)
+            bridge.install_extension()
+            bundle = root / 'bundle'
+            bundle.mkdir()
+            for name in bridge.EXTENSION_FILES:
+                (bundle / name).write_bytes((bridge.extension_dir() / name).read_bytes())
+            manifest = bridge.read_json(bundle / 'manifest.json')
+            old_version = manifest['version']
+            manifest['version'] = '0.1.3'
+            bridge.atomic_json(bundle / 'manifest.json', manifest)
+            bridge.atomic_json(root / 'request.json', {'expiresAt': time.time()+30})
+            with patch.object(bridge, 'extension_dir', return_value=bundle):
+                self.assertEqual(bridge.sync_installed_extension()['status'], 'chrome-update-deferred')
+                self.assertEqual(bridge.ready_package()['version'], old_version)
+                (root / 'request.json').unlink()
+                self.assertTrue(bridge.sync_installed_extension()['updated'])
+                self.assertEqual(bridge.ready_package()['version'], '0.1.3')
+            self.assertFalse(bridge.sync_installed_extension()['updated'])
+            self.assertEqual(bridge.ready_package()['version'], '0.1.3')
+
+    def test_interrupted_copy_cannot_trigger_reload_and_can_be_repaired(self):
+        with tempfile.TemporaryDirectory() as folder, patch.object(bridge, 'root', return_value=Path(folder)), \
+             patch.object(bridge, 'register_host'):
+            root = Path(folder)
+            bridge.install_extension()
+            bundle = root / 'bundle'
+            bundle.mkdir()
+            for name in bridge.EXTENSION_FILES:
+                (bundle / name).write_bytes((bridge.extension_dir() / name).read_bytes())
+            (bundle / 'background.js').write_text('// new background')
+            manifest = bridge.read_json(bundle / 'manifest.json')
+            manifest['version'] = '0.1.3'
+            bridge.atomic_json(bundle / 'manifest.json', manifest)
+            original = Path.replace
+            def interrupted(path, target):
+                if target.name == 'identity.js':
+                    raise OSError('Simulated interruption')
+                return original(path, target)
+            with patch.object(bridge, 'extension_dir', return_value=bundle):
+                with patch.object(Path, 'replace', interrupted), self.assertRaises(OSError):
+                    bridge.sync_installed_extension()
+                self.assertEqual(bridge.ready_package(), {})
+                self.assertTrue(bridge.sync_installed_extension()['updated'])
+                self.assertTrue(bridge.ready_package())
+                self.assertEqual(list((root / 'extension').glob('*.tmp')), [])
+
+    def test_update_lock_excludes_concurrent_updates(self):
+        with tempfile.TemporaryDirectory() as folder, patch.object(bridge, 'root', return_value=Path(folder)):
+            with bridge.update_lock():
+                with self.assertRaises(RuntimeError):
+                    with bridge.update_lock():
+                        self.fail('Concurrent update acquired the lock')
+            with bridge.update_lock():
+                pass
+
+    def test_native_requests_reload_then_confirms_loaded_version(self):
+        with tempfile.TemporaryDirectory() as folder, patch.object(bridge, 'root', return_value=Path(folder)), \
+             patch.object(bridge, 'register_host'):
+            bridge.install_extension()
+            version = bridge.ready_package()['version']
+            stdin, stdout = io.BytesIO(), io.BytesIO()
+            for loaded in ['0.1.1', version, '0.1.9', 'bad', None]:
+                bridge.write_frame(stdin, {'type':'poll', 'extensionVersion':loaded})
+            stdin.seek(0)
+            with patch.object(bridge.sys, 'platform', 'test'), \
+                 patch.object(bridge.sys, 'stdin', SimpleNamespace(buffer=stdin)), \
+                 patch.object(bridge.sys, 'stdout', SimpleNamespace(buffer=stdout)):
+                bridge.native_main('chrome-extension://' + bridge.extension_id() + '/')
+            stdout.seek(0)
+            self.assertEqual(bridge.read_frame(stdout), {'type':'reload-extension', 'version':version})
+            self.assertEqual(bridge.read_frame(stdout)['type'], 'extension-update-error')
+            self.assertIsNone(bridge.read_frame(stdout))
+            self.assertEqual(bridge.read_json(Path(folder) / 'loaded.json')['version'], version)
+
+    def test_probe_started_during_poll_prevents_reload(self):
+        with tempfile.TemporaryDirectory() as folder, patch.object(bridge, 'root', return_value=Path(folder)):
+            root = Path(folder)
+            request = {'type':'probe', 'requestId':'started', 'expiresAt':time.time()+30,
+                'workbookUrl':'https://5rmarketing-my.sharepoint.com/a?sourcedoc={535121b9-ed93-447b-9f89-7e8d575d03e4}'}
+            def start_probe():
+                bridge.atomic_json(root / 'request.json', request)
+            stdin, stdout = io.BytesIO(), io.BytesIO()
+            bridge.write_frame(stdin, {'type':'poll', 'extensionVersion':'0.1.1'})
+            stdin.seek(0)
+            with patch.object(bridge, 'sync_installed_extension', side_effect=start_probe), \
+                 patch.object(bridge, 'ready_package', return_value={'version':'0.1.2'}), \
+                 patch.object(bridge.sys, 'platform', 'test'), \
+                 patch.object(bridge.sys, 'stdin', SimpleNamespace(buffer=stdin)), \
+                 patch.object(bridge.sys, 'stdout', SimpleNamespace(buffer=stdout)):
+                bridge.native_main('chrome-extension://' + bridge.extension_id() + '/')
+            stdout.seek(0)
+            self.assertEqual(bridge.read_frame(stdout), request)
+            self.assertIsNone(bridge.read_frame(stdout))
 
 if __name__ == '__main__': unittest.main()

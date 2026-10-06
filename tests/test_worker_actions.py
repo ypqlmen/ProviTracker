@@ -22,11 +22,13 @@ class WorkerActionTests(unittest.TestCase):
         registration = types.ModuleType("master_registration")
         from unittest.mock import Mock
         bridge.install_extension = Mock(return_value={"success": True})
+        bridge.sync_installed_extension = Mock(return_value={"success": True})
         bridge.probe = Mock(return_value={"success": True})
         registration.run = Mock(return_value={"success": True})
         for action, handler in [
             ("chrome-install", bridge.install_extension),
             ("chrome-probe", bridge.probe),
+            ("chrome-update", bridge.sync_installed_extension),
             ("master-setup", registration.run),
             ("master-register", registration.run),
         ]:

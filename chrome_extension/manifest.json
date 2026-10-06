@@ -1,12 +1,14 @@
 {
   "manifest_version": 3,
   "name": "Provi Tracker – Masterark",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Forbind Provi Tracker med dit åbne masterark. Prototype: kontrollerer kun forbindelsen.",
   "minimum_chrome_version": "105",
   "permissions": [
     "nativeMessaging",
-    "alarms"
+    "alarms",
+    "scripting",
+    "webNavigation"
   ],
   "host_permissions": [
     "https://5rmarketing-my.sharepoint.com/*",

@@ -14,8 +14,11 @@ function inspectWorkbook(doc, visited = new Set()) {
   }
   return false;
 }
-chrome.runtime.onMessage.addListener(message => {
+// executeScript can be called repeatedly for the same open workbook.
+if (globalThis.proviWorkbookProbeHandler) chrome.runtime.onMessage.removeListener(globalThis.proviWorkbookProbeHandler);
+globalThis.proviWorkbookProbeHandler = message => {
   if (message?.type !== 'probe' || typeof message.requestId !== 'string') return;
   chrome.runtime.sendMessage({type: 'probe-result', requestId: message.requestId,
     sheet: inspectWorkbook(document) ? 'Ark1' : null}).catch(() => {});
-});
+};
+chrome.runtime.onMessage.addListener(globalThis.proviWorkbookProbeHandler);

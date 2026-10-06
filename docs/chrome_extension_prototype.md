@@ -1,4 +1,4 @@
-# Chrome prototype 0.1.1
+# Chrome prototype 0.1.2
 
 This is a read-only transport prototype, not the completed sale-registration replacement.
 The existing order-to-Excel worker remains unchanged. The new Chrome check never marks
@@ -10,7 +10,8 @@ an order registered and never submits customer data.
 - Installation prepares bundled files in %LOCALAPPDATA%/ProviTrackerChromeBridge/extension,
   registers the native host under HKCU and shows an in-app guide with Copy folder path
   and Open Chrome buttons. Users enable Developer mode and Load unpacked themselves.
-  Repeated preparation refreshes the same directory; users reload the extension afterwards.
+  Repeated preparation refreshes the same directory. From 0.1.2 the native host asks Chrome
+  to reload the extension automatically after a complete update.
 - Check Chrome registers a native messaging host under HKCU (no elevation) using the
   already packaged worker, then requests a read-only check of the specified workbook.
 - Manifest V3 extension only has access to the company's SharePoint hostname and the observed euc-excel.officeapps.live.com Excel frame. It reads
@@ -38,8 +39,29 @@ Chrome's Developer mode setting. Users perform the final Chrome steps themselves
 The stable bundled public key keeps the unpacked extension ID and native host allowlist
 aligned. The native host is registered when preparing the extension, before Chrome loads it.
 The Windows workflow tests preparation using the actually installed executable, HKCU host
-registration and repeated preparation to the same location. This does not simulate Chrome
-installation or prove authenticated background Excel execution.
+registration and repeated preparation to the same location. It also uses an isolated Chromium
+profile to verify a real native-host update, extension reload and reconnection while preserving
+an open tab. This does not prove authenticated background Excel execution or workplace policies.
+
+## Automatic updates from 0.1.2
+
+- App startup refreshes an already prepared extension from the app's bundled package. It
+  does not install the extension for a user who has not selected Install Chrome extension.
+- The connected native host also refreshes the package during idle polling, so an existing
+  Chrome session can discover an app update. If Chrome is closed, the new version is loaded
+  when Chrome reconnects. Updates follow app distribution; there is no separate download server.
+- The running service worker reports its own manifest version. A higher, fully copied version
+  triggers runtime.reload(), followed by native-host reconnection and loaded-version confirmation.
+- A lock serializes copies with probe creation. Manifest and a file-hash readiness marker are
+  published last. Interrupted copies cannot trigger reload and a later attempt repairs them.
+  Active checks postpone updates; an older helper cannot downgrade a newer extension.
+- The current probe script is reattached to permitted frames in the matching workbook. Reloading
+  the extension does not activate or reload workbook tabs. Repeated injection replaces its listener.
+- Existing 0.1.1 users need one manual extension reload after preparing 0.1.2. Their old worker has
+  no reload protocol. Afterwards normal code updates are automatic. Changes requesting new
+  permissions can require Chrome's user confirmation, and workplace policy remains authoritative.
+- Every change under chrome_extension must increase manifest.version. The Windows build checks
+  this against the previous push or PR base and rejects a missing version bump.
 
 ## Still required
 

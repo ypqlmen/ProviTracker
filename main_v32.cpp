@@ -1665,6 +1665,8 @@ public:
         setupUi();
         refreshAll();
         setupIntramanagerAutoSync();
+        if (!qEnvironmentVariableIsSet("PROVI_VISUAL_REVIEW_DIR"))
+            QTimer::singleShot(0, this, [this]() { updateInstalledChromeExtension(); });
         QTimer::singleShot(2000, this, [this]() { processMasterQueue(); });
     }
 
@@ -3905,8 +3907,9 @@ QTableWidget::item {
                     "1. Åbn <b>chrome://extensions</b> i Chrome.<br>"
                     "2. Slå <b>Udviklertilstand</b> til øverst til højre.<br>"
                     "3. Vælg <b>Indlæs udpakket</b>, og vælg mappen nedenfor.<br><br>"
-                    "Hvis udvidelsen allerede er installeret, klik på dens genindlæsningsknap i Chrome.<br>"
-                    "Genindlæs derefter masterarket, og vælg <b>Kontrollér Chrome</b> i Provi Tracker.");
+                    "Har du den gamle udvidelse 0.1.1, skal du genindlæse den én gang i Chrome.<br>"
+                    "Fremover opdateres udvidelsen automatisk sammen med Provi Tracker.<br>"
+                    "Vælg derefter <b>Kontrollér Chrome</b> i Provi Tracker.");
                 instructions->setWordWrap(true);
                 layout->addWidget(instructions);
                 auto* folder = new QLineEdit(QDir::toNativeSeparators(path));
@@ -4935,6 +4938,25 @@ QTableWidget::item {
         }
 
         refreshPunchCardUi();
+    }
+
+    void updateInstalledChromeExtension() {
+        auto* updater = new QProcess(this);
+        connect(updater, &QProcess::started, this, [updater]() {
+            updater->write("{\"action\":\"chrome-update\"}");
+            updater->closeWriteChannel();
+        });
+        connect(updater, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished), this,
+                [updater](int, QProcess::ExitStatus) {
+            updater->deleteLater();
+        });
+        connect(updater, &QProcess::errorOccurred, updater, [updater](QProcess::ProcessError error) {
+            if (error == QProcess::FailedToStart) updater->deleteLater();
+        });
+        QTimer::singleShot(30000, updater, [updater]() {
+            if (updater->state() != QProcess::NotRunning) updater->kill();
+        });
+        updater->start(intramanagerWorkerPath(), {"--stdin-json"});
     }
 
     void prepareMasterRegistration(Order& order) {

@@ -23,8 +23,10 @@ vm.runInNewContext(fs.readFileSync('chrome_extension/background.js','utf8').repl
   workbookIdentity,
   setTimeout:fn=>{timers.push(fn);return fn},clearTimeout:()=>{},
   setInterval:fn=>{intervals.push(fn);return fn},clearInterval:()=>{},
-  chrome:{runtime:{connectNative:()=>port,onMessage:{addListener:fn=>runtimeHandler=fn},onStartup:event(),onInstalled:event()},
+  URL,
+  chrome:{runtime:{getManifest:()=>({version:'0.1.2'}),reload:()=>{},connectNative:()=>port,onMessage:{addListener:fn=>runtimeHandler=fn},onStartup:event(),onInstalled:event()},
     tabs:{query:async()=>[{id:7,url}],get:async()=>({id:7,url:currentUrl,active:false}),sendMessage:async(id,msg)=>probes.push(msg)},
+    webNavigation:{getAllFrames:async()=>[{frameId:0,url}]},scripting:{executeScript:async()=>{}},
     alarms:{onAlarm:event(),create:()=>{}}}
 });
 const flush=async()=>{await Promise.resolve();await Promise.resolve()};

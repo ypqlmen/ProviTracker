@@ -7,6 +7,7 @@ on:
     paths:
       - '.github/workflows/windows-trial-build.yml'
       - 'updater_script.h'
+      - 'chrome_extension/**'
   pull_request:
     paths:
       - 'chrome_extension/**'
@@ -37,6 +38,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -44,13 +46,19 @@ jobs:
         with:
           node-version: 24
       - name: Check Excel registration logic
+        env:
+          CHROME_VERSION_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
         run: |
+          python scripts/verify_chrome_extension_version.py "$env:CHROME_VERSION_BASE"
+          if ($LASTEXITCODE -ne 0) { throw 'Chrome extension version check failed' }
           node tests/excel_sales_registration_test.cjs
           if ($LASTEXITCODE -ne 0) { throw 'Excel registration tests failed' }
           node tests/chrome_identity_test.mjs
           if ($LASTEXITCODE -ne 0) { throw 'Chrome identity tests failed' }
           node tests/chrome_probe_test.mjs
           if ($LASTEXITCODE -ne 0) { throw 'Chrome probe tests failed' }
+          node tests/chrome_update_test.mjs
+          if ($LASTEXITCODE -ne 0) { throw 'Chrome update tests failed' }
       - name: Install Qt and matching compiler
         uses: jurplel/install-qt-action@v4
         with:
@@ -152,6 +160,14 @@ jobs:
           if ($hostManifest.path -ne $worker) { throw 'Native host does not point to installed worker' }
           $repeat = '{"action":"chrome-install"}' | & $worker --stdin-json | ConvertFrom-Json
           if (!$repeat.success -or $repeat.extensionPath -ne $result.extensionPath) { throw 'Repeat preparation failed' }
+      - name: Verify automatic Chrome extension reload with actual native host
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $worker = Join-Path $env:LOCALAPPDATA 'Programs/Provi Tracker/intramanager_worker/intramanager_sync.exe'
+          $env:PLAYWRIGHT_BROWSERS_PATH = Join-Path $env:RUNNER_TEMP 'provi-trial-stage/intramanager_worker/b'
+          $installer = (Get-ChildItem dist/ProviBeregnerSetup-*.exe).FullName
+          python tests/chrome_update_integration.py --worker "$worker" --installer "$installer"
+          if ($LASTEXITCODE -ne 0) { throw 'Actual Chrome extension auto-update failed' }
       - name: Verify tracked files are unchanged
         run: |
           git diff --exit-code
