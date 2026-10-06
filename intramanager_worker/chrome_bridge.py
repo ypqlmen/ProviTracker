@@ -3,7 +3,7 @@ import base64
 import hashlib
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import struct
 import sys
 import time
@@ -23,7 +23,7 @@ def version_tuple(value):
 
 def package_hash(contents):
     digest = hashlib.sha256()
-    for name in EXTENSION_FILES:
+    for name in sorted(contents):
         digest.update(name.encode('utf-8') + b'\0' + contents[name] + b'\0')
     return digest.hexdigest()
 
@@ -58,13 +58,22 @@ def ready_package():
     folder = root()
     ready = read_json(folder / 'installed.json')
     try:
-        contents = {name: (folder / 'extension' / name).read_bytes() for name in EXTENSION_FILES}
+        names = ready.get('files', [])
+        if not valid_package_files(names):
+            return {}
+        contents = {name: (folder / 'extension' / name).read_bytes() for name in names}
         manifest = json.loads(contents['manifest.json'])
         if ready.get('version') == manifest['version'] and ready.get('hash') == package_hash(contents):
             return ready
     except (OSError, ValueError, KeyError):
         pass
     return {}
+
+def valid_package_files(names):
+    return isinstance(names, list) and all(
+        isinstance(name, str) and name and '\\' not in name and ':' not in name
+        and not PurePosixPath(name).is_absolute() and '..' not in PurePosixPath(name).parts
+        for name in names) and set(EXTENSION_FILES).issubset(names)
 
 def extension_dir():
     return Path(sys._MEIPASS) / 'chrome_extension' if getattr(sys, 'frozen', False) else Path(__file__).resolve().parent.parent / 'chrome_extension'
@@ -140,7 +149,11 @@ def install_extension(only_existing=False):
         request = read_json(root() / 'request.json')
         if request.get('expiresAt', 0) > time.time():
             return {'success': True, 'status': 'chrome-update-deferred', 'updated': False}
-        contents = {name: (extension_dir() / name).read_bytes() for name in EXTENSION_FILES}
+        source = extension_dir()
+        contents = {path.relative_to(source).as_posix(): path.read_bytes()
+                    for path in source.rglob('*') if path.is_file()}
+        if not valid_package_files(list(contents)):
+            raise ValueError('Chrome-udvidelsens pakke er ufuldstændig.')
         manifest = json.loads(contents['manifest.json'])
         version_tuple(manifest['version'])
         current = read_json(destination / 'manifest.json')
@@ -154,15 +167,17 @@ def install_extension(only_existing=False):
                       for name, data in contents.items())
         if changed:
             # Publish the manifest and readiness marker last. A partial copy cannot trigger reload.
-            for name in [n for n in EXTENSION_FILES if n != 'manifest.json'] + ['manifest.json']:
+            for name in sorted(n for n in contents if n != 'manifest.json') + ['manifest.json']:
                 target = destination / name
-                temp = destination / (name + '.' + uuid.uuid4().hex + '.tmp')
+                target.parent.mkdir(parents=True, exist_ok=True)
+                temp = target.with_name(target.name + '.' + uuid.uuid4().hex + '.tmp')
                 try:
                     temp.write_bytes(contents[name])
                     temp.replace(target)
                 finally:
                     temp.unlink(missing_ok=True)
-        atomic_json(root() / 'installed.json', {'version': manifest['version'], 'hash': package_hash(contents)})
+        atomic_json(root() / 'installed.json', {'version': manifest['version'], 'hash': package_hash(contents),
+            'files': sorted(contents)})
         return {'success': True, 'status': 'chrome-prepared', 'updated': changed,
             'extensionPath': str(destination), 'extensionVersion': manifest['version']}
 

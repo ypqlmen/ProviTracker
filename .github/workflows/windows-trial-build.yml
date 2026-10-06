@@ -8,6 +8,7 @@ on:
       - '.github/workflows/windows-trial-build.yml'
       - 'updater_script.h'
       - 'chrome_extension/**'
+      - 'intramanager_worker/chrome_bridge.py'
   pull_request:
     paths:
       - 'chrome_extension/**'

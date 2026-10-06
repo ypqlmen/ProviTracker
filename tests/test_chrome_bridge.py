@@ -74,6 +74,26 @@ class ChromeBridgeTests(unittest.TestCase):
                 self.assertEqual(len(list(path.glob('*'))), 6)
                 self.assertFalse(bridge.install_extension()['updated'])
 
+    def test_new_assets_are_copied_and_verified_before_reload(self):
+        with tempfile.TemporaryDirectory() as folder, patch.object(bridge, 'root', return_value=Path(folder)), \
+             patch.object(bridge, 'register_host'):
+            root = Path(folder)
+            bridge.install_extension()
+            bundle = root / 'bundle'
+            bundle.mkdir()
+            for name in bridge.EXTENSION_FILES:
+                (bundle / name).write_bytes((bridge.extension_dir() / name).read_bytes())
+            (bundle / 'assets').mkdir()
+            (bundle / 'assets' / 'new.js').write_text('// new feature')
+            with patch.object(bridge, 'extension_dir', return_value=bundle):
+                self.assertTrue(bridge.sync_installed_extension()['updated'])
+            ready = bridge.ready_package()
+            self.assertIn('assets/new.js', ready['files'])
+            (root / 'extension' / 'assets' / 'new.js').unlink()
+            self.assertEqual(bridge.ready_package(), {})
+            for unsafe in ['../outside.json', '/outside.json', 'C:\\outside.json']:
+                self.assertFalse(bridge.valid_package_files(list(bridge.EXTENSION_FILES)+[unsafe]))
+
     def test_update_does_not_install_without_user_setup(self):
         with tempfile.TemporaryDirectory() as folder, patch.object(bridge, 'root', return_value=Path(folder)), \
              patch.object(bridge, 'register_host') as register:
