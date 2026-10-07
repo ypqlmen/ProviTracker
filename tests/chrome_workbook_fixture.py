@@ -135,7 +135,7 @@ def check_native_sales(context, worker, workbook, foreground):
     assert service.evaluate('id=>chrome.tabs.get(id).then(t=>t.autoDiscardable)',tab_id) is False
     # Simulate Chrome's discarded flag at the API boundary. Forcing real discard
     # under DevTools crashes Chromium 136; the Office/background work above is real.
-    service.evaluate('globalThis.fixtureTabsGet=chrome.tabs.get.bind(chrome.tabs);chrome.tabs.get=async id=>({...await fixtureTabsGet(id),discarded:true})')
+    service.evaluate('()=>{globalThis.fixtureTabsGet=chrome.tabs.get.bind(chrome.tabs);chrome.tabs.get=async id=>({...await fixtureTabsGet(id),discarded:true});}')
     try:
         waiting=run('chrome-setup',{'requestId':'00000000-0000-4000-8000-000000000107'},False)
         assert waiting['status']=='chrome-sleeping',waiting
