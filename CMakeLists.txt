@@ -11,6 +11,7 @@ find_package(Qt6 REQUIRED COMPONENTS Widgets Core PrintSupport Network)
 
 add_executable(ProvisionTrackerV2 WIN32
     main_v32.cpp
+    settings_icons.qrc
     storage_paths.h
     domain.h
     credentials.h
@@ -31,6 +32,9 @@ target_link_libraries(ProvisionTrackerV2 PRIVATE
 
 include(CTest)
 if(BUILD_TESTING)
+    add_executable(SalesRegistrationTests tests/sales_registration_test.cpp)
+    target_link_libraries(SalesRegistrationTests PRIVATE Qt6::Core)
+    add_test(NAME SalesRegistrationTests COMMAND SalesRegistrationTests)
     add_executable(RetiredIntegrationCleanupTests tests/retired_integration_cleanup_test.cpp)
     target_link_libraries(RetiredIntegrationCleanupTests PRIVATE Qt6::Core)
     add_test(NAME RetiredIntegrationCleanupTests COMMAND RetiredIntegrationCleanupTests)

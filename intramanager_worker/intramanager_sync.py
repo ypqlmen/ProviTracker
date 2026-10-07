@@ -71,6 +71,13 @@ def output(obj):
     sys.stdout.flush()
 
 
+def read_stdin_json():
+    # Qt sends UTF-8 bytes. Windows pipe text encoding otherwise depends on locale.
+    stream = getattr(sys.stdin, "buffer", None)
+    raw = stream.read().decode("utf-8") if stream is not None else sys.stdin.read()
+    return json.loads(raw)
+
+
 def parse_hours(text):
     match = re.search(r"(\d+)\s*t\.\s*(\d+)\s*min\.", text)
 
@@ -1620,9 +1627,46 @@ def main():
     args = parser.parse_args()
 
     if args.stdin_json:
-        payload = json.loads(sys.stdin.read())
+        payload = read_stdin_json()
 
         args.action = payload.get("action", args.action)
+        if args.action == "chrome-update":
+            from chrome_bridge import sync_installed_extension
+            try:
+                output(sync_installed_extension())
+            except Exception as exc:
+                output({"success": False, "error": str(exc)[:700]})
+            return
+        if args.action == "chrome-install":
+            from chrome_bridge import install_extension
+            try:
+                output(install_extension())
+            except Exception as exc:
+                output({"success": False, "error": str(exc)[:700]})
+            return
+        if args.action in {"chrome-setup", "chrome-register"}:
+            from chrome_bridge import run_registration
+            try:
+                output(run_registration(payload))
+            except Exception as exc:
+                output({"success": False, "error": str(exc)[:700]})
+            return
+        if args.action == "chrome-probe":
+            from chrome_bridge import probe
+            try:
+                output(probe(payload))
+            except Exception as exc:
+                output({"success": False, "error": str(exc)[:700]})
+            return
+        if args.action in {"master-setup", "master-register"}:
+            from master_registration import run
+            try:
+                with sync_playwright() as p:
+                    output(run(payload, p))
+            except Exception as exc:
+                output({"success": False, "stage": "master-registration", "error": str(exc)[:700]})
+            return
+
         args.username = payload.get("username", "")
         args.password = payload.get("password", "")
 
@@ -1718,4 +1762,7 @@ def main():
 
 
 if __name__ == "__main__":
+    if len(sys.argv) > 1 and sys.argv[1].startswith("chrome-extension://"):
+        from chrome_bridge import native_main
+        sys.exit(native_main(sys.argv[1]))
     main()

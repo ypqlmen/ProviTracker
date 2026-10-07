@@ -17,6 +17,36 @@ from intramanager_worker import intramanager_sync as worker
 
 
 class WorkerActionTests(unittest.TestCase):
+    def test_qt_utf8_pipe_preserves_customer_names(self):
+        data = '{"companyName":"Synthetic ÆØÅ", "note":"Bemærkning"}'.encode("utf-8")
+        with patch.object(sys, "stdin", types.SimpleNamespace(buffer=io.BytesIO(data))):
+            self.assertEqual(worker.read_stdin_json()["companyName"], "Synthetic ÆØÅ")
+
+    def test_registration_actions_still_reach_their_handlers_after_hotfix(self):
+        bridge = types.ModuleType("chrome_bridge")
+        registration = types.ModuleType("master_registration")
+        from unittest.mock import Mock
+        bridge.install_extension = Mock(return_value={"success": True})
+        bridge.sync_installed_extension = Mock(return_value={"success": True})
+        bridge.probe = Mock(return_value={"success": True})
+        bridge.run_registration = Mock(return_value={"success": True})
+        registration.run = Mock(return_value={"success": True})
+        for action, handler in [
+            ("chrome-install", bridge.install_extension),
+            ("chrome-probe", bridge.probe),
+            ("chrome-update", bridge.sync_installed_extension),
+            ("chrome-setup", bridge.run_registration),
+            ("chrome-register", bridge.run_registration),
+            ("master-setup", registration.run),
+            ("master-register", registration.run),
+        ]:
+            with self.subTest(action=action):
+                handler.reset_mock()
+                with patch.dict(sys.modules, {"chrome_bridge": bridge, "master_registration": registration}), patch.object(sys, "argv", ["worker", "--stdin-json"]), patch.object(sys, "stdin", io.StringIO('{"action":"' + action + '"}')), patch.object(worker, "output") as output, patch.object(worker, "sync_playwright"):
+                    worker.main()
+                    handler.assert_called_once()
+                    output.assert_called_once_with({"success": True})
+
     def test_removed_action_rejected_before_browser_launch_for_cli_and_json(self):
         for argv, stdin in [
             (["worker", "--action", "kvikoc-lookup"], ""),
