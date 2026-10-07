@@ -13,7 +13,7 @@ import subprocess
 import tempfile
 import time
 import winreg
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import sync_playwright, Error
 from chrome_workbook_fixture import check_native_workbook
 
 def read_json(path):
@@ -107,7 +107,9 @@ def main(worker, installer):
                 print(f'Actual Chromium/native-host automatic update passed: {initial} -> {updated}; open tab preserved')
                 check_native_workbook(context, worker, extension_id)
             finally:
-                context.close()
+                try: context.close()
+                except Error as exc:
+                    if 'has been closed' not in str(exc): raise
     finally:
         bundle_manifest.write_bytes(original)
         (root / 'request.json').unlink(missing_ok=True)

@@ -3,6 +3,7 @@ import json
 import re
 import subprocess
 import time
+from playwright.sync_api import Error
 
 WORKBOOK_URL = 'https://5rmarketing-my.sharepoint.com/personal/fixture/_layouts/15/doc2.aspx?sourcedoc={00000000-0000-4000-8000-000000000001}'
 OFFICE_ORIGIN = 'https://fa000000043.mro1cdnstorage.public.onecdn.static.microsoft'
@@ -74,6 +75,7 @@ def check_native_workbook(context, worker, extension_id):
             assert result.get('success') and result.get('status') == 'chrome-connected', result
             assert result.get('background') is True, result
             assert workbook.evaluate('window.proviUntouched') == 'keep-workbook', 'Probe must preserve the workbook'
+            print('Native background workbook probe passed.',flush=True)
             check_native_sales(context, worker, workbook, foreground)
             print('Actual Chromium/native-host workbook probe passed: cross-origin Ark1, background tab, extension reload')
         finally:
@@ -83,15 +85,19 @@ def check_native_workbook(context, worker, extension_id):
             process.stdout.close()
             process.stderr.close()
     finally:
-        foreground.close()
-        workbook.close()
-        context.unroute(re.compile(re.escape(WORKBOOK_URL)))
-        context.unroute(re.compile(re.escape(EXCEL_URL)))
-        context.unroute(OFFICE_ORIGIN+'/**')
+        try:
+            foreground.close();workbook.close()
+            context.unroute(re.compile(re.escape(WORKBOOK_URL)))
+            context.unroute(re.compile(re.escape(EXCEL_URL)))
+            context.unroute(OFFICE_ORIGIN+'/**')
+        except Error as exc:
+            if 'has been closed' not in str(exc): raise
+
 
 
 def check_native_sales(context, worker, workbook, foreground):
     def run(action, registration, expected_success=True):
+        print('Native fixture step:',action,'success expected:',expected_success,flush=True)
         process=subprocess.Popen([str(worker),'--stdin-json'],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,encoding='utf-8')
         try:
             process.stdin.write(json.dumps({'action':action,'workbookUrl':WORKBOOK_URL,'registration':registration},ensure_ascii=False))
@@ -102,6 +108,7 @@ def check_native_sales(context, worker, workbook, foreground):
             output,errors=process.stdout.read(),process.stderr.read()
             assert process.returncode==0,errors
             result=json.loads(output)
+            print('Native fixture result:',result.get('status'),result.get('success'),flush=True)
             assert result.get('success') is expected_success,result
             if expected_success: assert result.get('background') is True,result
             assert result.get('requestId')==registration['requestId'],result
