@@ -1668,6 +1668,9 @@ public:
         if (!qEnvironmentVariableIsSet("PROVI_VISUAL_REVIEW_DIR"))
             QTimer::singleShot(0, this, [this]() { updateInstalledChromeExtension(); });
         QTimer::singleShot(2000, this, [this]() { processMasterQueue(); });
+        auto* masterRetryTimer = new QTimer(this);
+        connect(masterRetryTimer, &QTimer::timeout, this, [this]() { processMasterQueue(); });
+        masterRetryTimer->start(60000);
     }
 
     bool startupWasAborted() const {
@@ -3873,8 +3876,8 @@ QTableWidget::item {
         salesRegistrationEnabledCheck = new QCheckBox("Registrer automatisk i masterarket");
         salesRegistrationEnabledCheck->setFocusPolicy(Qt::NoFocus);
         salesRegistrationEnabledCheck->setStyleSheet(
-            "QCheckBox::indicator { width:16px; height:16px; border:1px solid #6B829D; border-radius:4px; background:#0B1424; }"
-            "QCheckBox::indicator:checked { background:#14B8A6; border:3px solid #BFF8EF; }");
+            "QCheckBox::indicator { width:16px; height:16px; border:none; image:url(:/settings/checkbox-unchecked.png); }"
+            "QCheckBox::indicator:checked { image:url(:/settings/checkbox-checked.png); }");
 
         auto* saveSalesRegistrationBtn = new QPushButton("Gem salgsregistrering");
         auto* testSalesRegistrationBtn = new QPushButton("Forbind masterark");
@@ -4979,15 +4982,27 @@ QTableWidget::item {
             "2. Vælg <b>Automatiser → Nyt script → Opret i Kodeeditor</b>.<br>"
             "3. Omdøb det nye script til <b>ProviTrackerSalesRegistrationV3</b>.<br>"
             "4. Kopier scriptet med knappen nedenfor. Markér hele teksten i kodeeditoren, indsæt og gem.<br>"
-            "5. Lad kodeeditoren være åben, og vælg <b>Kontrollér opsætning</b>.<br><br>"
+            "5. I Chrome: <b>Indstillinger → Ydeevne → Hold altid disse websites aktive</b>. Tilføj <b>5rmarketing-my.sharepoint.com</b> én gang, så Chrome ikke sætter masterarket i dvale.<br>"
+            "6. Lad kodeeditoren være åben, og vælg <b>Kontrollér opsætning</b>.<br><br>"
             "Findes V3-scriptet allerede, skal du blot åbne det i kodeeditoren."
             "<br>Kontrollen tilføjer ingen salg. Bagefter kan masterarket ligge i en baggrundsfane.");
         text->setWordWrap(true);
         layout->addWidget(text);
         auto* copy = new QPushButton("Kopier Excel-script");
         auto* check = new QPushButton("Kontrollér opsætning");
+        auto* keepActive = new QPushButton("Hold masterarket aktivt i Chrome");
+        keepActive->setToolTip("Kopierer webstedets navn og åbner Chromes ydeevneindstillinger.");
         auto* close = new QPushButton("Luk");
-        layout->addWidget(copy); layout->addWidget(check); layout->addWidget(close);
+        layout->addWidget(copy); layout->addWidget(keepActive); layout->addWidget(check); layout->addWidget(close);
+        connect(keepActive, &QPushButton::clicked, &dialog, [&dialog]() {
+            QApplication::clipboard()->setText("5rmarketing-my.sharepoint.com");
+            QSettings user("HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\App Paths\\chrome.exe", QSettings::NativeFormat);
+            QSettings machine("HKEY_LOCAL_MACHINE\\Software\\Microsoft\\Windows\\CurrentVersion\\App Paths\\chrome.exe", QSettings::NativeFormat);
+            QString chrome = user.value(".").toString();
+            if (chrome.isEmpty()) chrome = machine.value(".").toString();
+            if (chrome.isEmpty() || !QProcess::startDetached(chrome, {"chrome://settings/performance"}))
+                QMessageBox::information(&dialog, "Hold masterarket aktivt", "Åbn chrome://settings/performance i Chrome. Tilføj det kopierede webstedsnavn under Hold altid disse websites aktive.");
+        });
         connect(copy, &QPushButton::clicked, &dialog, [this, &dialog]() {
             QFile file(QFileInfo(intramanagerWorkerPath()).absolutePath() + "/_internal/chrome_extension/excel_online_sales_registration_v3.ts");
             if (!file.open(QIODevice::ReadOnly)) {
@@ -5060,7 +5075,7 @@ QTableWidget::item {
             if (!setup) {
                 const int index = salesRegistrationIndex(repo.orders, registrationId);
                 if (index >= 0) {
-                    repo.orders[index].masterRegistrationState = ok ? "registered" : "error";
+                    repo.orders[index].masterRegistrationState = ok ? "registered" : status == "chrome-sleeping" ? "waiting-browser" : "error";
                     repo.orders[index].masterRegistrationError = ok ? QString() : error;
                 }
                 repo.saveOrders();
@@ -5085,7 +5100,7 @@ QTableWidget::item {
     void processMasterQueue() {
         if (masterRegistrationRunning || !repo.settings.masterRegistrationEnabled) return;
         for (const auto& order : repo.orders) {
-            if ((order.masterRegistrationState == "pending" || order.masterRegistrationState == "transferring") && isMasterWorkbookUrl(order.masterWorkbookUrl)) {
+            if ((order.masterRegistrationState == "pending" || order.masterRegistrationState == "transferring" || order.masterRegistrationState == "waiting-browser") && isMasterWorkbookUrl(order.masterWorkbookUrl)) {
                 if (order.masterRegistration.value("schemaVersion").toInt() != 3 || order.masterRegistration.value("registrationId").toString().isEmpty()) continue;
                 runMasterWorker(false, order.masterRegistration.value("registrationId").toString());
                 return;

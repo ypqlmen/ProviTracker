@@ -26,6 +26,7 @@ static QString salesRegistrationStateText(const Order& order) {
     if (order.masterRegistrationState == "registered") return "Registreret i masterark";
     if (!order.masterRegistration.isEmpty() && order.masterRegistration.value("schemaVersion").toInt() != 3) return "Kontrollér tidligere registrering manuelt";
     if (order.masterRegistrationState == "pending" || order.masterRegistrationState == "transferring") return "Afventer masterark";
+    if (order.masterRegistrationState == "waiting-browser") return "Afventer Chrome – prøver automatisk igen";
     if (order.masterRegistrationState == "error") return "Kræver handling";
     if (order.masterRegistrationState == "changed") return "Ændret – kontrollér masterark";
     return "Ikke oprettet";

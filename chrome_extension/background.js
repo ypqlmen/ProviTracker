@@ -22,6 +22,30 @@ function workbookFrames(frames) {
   }
   return frames.filter(frame => permitted(frame));
 }
+// Only this verified workbook is protected from Memory Saver. This does not
+// override Chrome's separate freezing policy; the guide supplies its site exception.
+const protectionKey = id => 'masterTab.' + id;
+async function protectWorkbook(tab, identity) {
+  tab=await chrome.tabs.get(tab.id);
+  if (workbookIdentity(tab.url)!==identity) throw new Error('Workbook changed');
+  await releaseWorkbook(tab.id,tab);
+  const key=protectionKey(tab.id);
+  const saved=(await chrome.storage.session.get(key))[key];
+  if (!saved) await chrome.storage.session.set({[key]:{identity,autoDiscardable:tab.autoDiscardable!==false}});
+  await chrome.tabs.update(tab.id,{autoDiscardable:false});
+}
+async function releaseWorkbook(id, tab) {
+  const key=protectionKey(id);
+  const saved=(await chrome.storage.session.get(key))[key];
+  if (!saved || (tab && workbookIdentity(tab.url)===saved.identity)) return;
+  await chrome.storage.session.remove(key);
+  if (tab) await chrome.tabs.update(id,{autoDiscardable:saved.autoDiscardable}).catch(()=>{});
+}
+function sleeping(job, tab) {
+  if (!tab.discarded && !tab.frozen) return false;
+  finish(job,{success:false,status:'chrome-sleeping',error:'Chrome har sat masterarket i dvale. Salget afventer automatisk. Tilføj 5rmarketing-my.sharepoint.com under Chrome → Indstillinger → Ydeevne → Hold altid disse websites aktive, og åbn masterark-fanen én gang.'});
+  return true;
+}
 async function confirmWorkbook(job) {
   try {
     const tab = await chrome.tabs.get(job.tabId);
@@ -30,6 +54,7 @@ async function confirmWorkbook(job) {
       finish(job, {success:false, error:'Chrome-fanen skiftede til et andet ark under kontrollen. Prøv igen.'});
       return;
     }
+    if (sleeping(job, tab)) return;
     if (job.type==='probe') finish(job, {success:true, status:'chrome-connected', background:!tab.active});
     else if (!job.connected) { job.connected=true; job.phase='open'; }
   } catch { finish(job, {success:false, error:'Masterarket blev lukket under kontrollen.'}); }
@@ -76,6 +101,7 @@ async function scanOffice(job) {
   try {
     const tab=await chrome.tabs.get(job.tabId);
     if(workbookIdentity(tab.url)!==job.identity) { finish(job,{success:false,error:'Chrome-fanen skiftede masterark. Registreringen er stoppet; kontrollér arket før genforsøg.'});return; }
+    if (sleeping(job, tab)) return;
     const frames=await chrome.webNavigation.getAllFrames({tabId:job.tabId}) || [];
     const office=officeFrames(frames);
     const excel=frames.filter(f=>originOf(f.url)===workbookOrigins[1]);
@@ -104,7 +130,19 @@ async function scanOffice(job) {
   } catch { /* Frame recreation and transient Excel navigation are retried within the deadline. */ }
   finally { job.scanning=false; }
 }
-async function scan(job) { return job.connected ? scanOffice(job) : scanWorkbook(job); }
+async function scan(job) {
+  if (pending!==job) return;
+  try {
+    const tab=await chrome.tabs.get(job.tabId);
+    if (pending!==job) return;
+    if (workbookIdentity(tab.url)!==job.identity) {
+      finish(job,{success:false,error:'Chrome-fanen skiftede masterark. Kontrollér arket før genforsøg.'});return;
+    }
+    // Check outside the injection lock: a suspended injected call can stay pending.
+    if (sleeping(job,tab)) return;
+    return job.connected ? scanOffice(job) : scanWorkbook(job);
+  } catch { finish(job,{success:false,error:'Masterarket blev lukket. Åbn det igen, og prøv fra Ordrer.'}); }
+}
 function reloadWhenIdle() {
   if (reloadTarget && !pending && !reloadRequested) {
     reloadRequested = true;
@@ -158,13 +196,15 @@ function connect() {
     const job = pending = {requestId:message.requestId, identity, heard:false,type:message.type,registration};
     try {
       const tabs = (await chrome.tabs.query({url:'https://5rmarketing-my.sharepoint.com/*'}))
-        .filter(tab => workbookIdentity(tab.url) === identity && !tab.discarded);
+        .filter(tab => workbookIdentity(tab.url) === identity);
       if (pending !== job) return;
       if (tabs.length !== 1) {
         finish(job, {success:false, error:tabs.length ? 'Masterarket er åbent flere gange. Lad kun én fane være åben.' : 'Åbn det gemte masterark i Chrome, og log ind.'});
         return;
       }
       job.tabId = tabs[0].id;
+      await protectWorkbook(tabs[0],identity);
+      if (pending!==job || sleeping(job,await chrome.tabs.get(job.tabId))) return;
       // Re-read the current frames while Excel boots, including frames created
       // after the first scan. Never activate or reload the workbook tab.
       job.poll = setInterval(() => scan(job), 500);
@@ -192,6 +232,14 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
   job.heard = true;
   if (message.sheet !== 'Ark1') return;
   confirmWorkbook(job);
+});
+chrome.tabs.onUpdated.addListener((id, change, tab) => {
+  if (change.url) releaseWorkbook(id,tab).catch(()=>{});
+  if (pending?.tabId===id && (change.discarded || change.frozen)) scan(pending);
+});
+chrome.tabs.onRemoved.addListener(id => {
+  releaseWorkbook(id,null).catch(()=>{});
+  if (pending?.tabId===id) finish(pending,{success:false,error:'Masterarket blev lukket. Åbn det igen, og prøv fra Ordrer.'});
 });
 setInterval(poll, 3000);
 chrome.alarms.onAlarm.addListener(() => { connect(); poll(); });

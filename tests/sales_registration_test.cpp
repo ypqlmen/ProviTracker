@@ -38,6 +38,11 @@ int main() {
     check(salesRegistrationIndex({order, sameOse}, "sale-b") == 1);
     check(salesRegistrationIndex({order, order}, "sale-a") == -1);
     check(salesRegistrationIndex({order}, "") == -1);
+    order.masterRegistrationState = "waiting-browser";
+    const auto sleeping = fromOrderJson(toJson(order));
+    check(sleeping.masterRegistrationState == "waiting-browser");
+    check(sleeping.masterRegistration == order.masterRegistration);
+    check(sleeping.masterWorkbookUrl == order.masterWorkbookUrl);
     AppSettings settings;
     settings.masterRegistrationEnabled = true;
     settings.masterWorkbookUrl = order.masterWorkbookUrl;

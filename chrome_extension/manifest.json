@@ -1,14 +1,15 @@
 {
   "manifest_version": 3,
   "name": "Provi Tracker – Masterark",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "Registrer salg fra Provi Tracker i dit åbne masterark.",
-  "minimum_chrome_version": "105",
+  "minimum_chrome_version": "132",
   "permissions": [
     "nativeMessaging",
     "alarms",
     "scripting",
-    "webNavigation"
+    "webNavigation",
+    "storage"
   ],
   "host_permissions": [
     "https://5rmarketing-my.sharepoint.com/*",

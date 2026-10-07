@@ -1,4 +1,4 @@
-# Salgsregistrering i Chrome – testversion 0.1.4
+# Salgsregistrering i Chrome – testversion 0.1.5
 
 Provi Tracker overfører nye salgsregistreringer gennem brugerens eksisterende Chrome-login. Ordrekøen bruger Chrome i stedet for en separat Microsoft-browser. Funktionen er endnu kun i testversionen; den offentlige opdateringskanal ændres ikke af Windows-prøvebygningen.
 
@@ -6,10 +6,11 @@ Provi Tracker overfører nye salgsregistreringer gennem brugerens eksisterende C
 
 1. Installer den nye Windows-testversion. Åbn **Indstillinger → Salgsregistrering** i Provi Tracker.
 2. Gem sælgerinitialer og det direkte masterark-link med `sourcedoc`. Åbn dette masterark én gang i Chrome, og log ind.
-3. Vælg **Installer Chrome-udvidelse**. Følg programmets guide: åbn `chrome://extensions`, behold **Udviklertilstand** aktiveret, og vælg **Indlæs udpakket** med den mappesti, programmet kopierer. Det kræver ingen administratorinstallation. Hvis udvidelsen allerede er installeret, bruges samme mappe og samme udvidelses-ID. Kontrollér version **0.1.4** og adgang til Excel og scriptpanelet; Chrome kan bede om ny webstedsadgang ved denne opdatering.
+3. Vælg **Installer Chrome-udvidelse**. Følg programmets guide: åbn `chrome://extensions`, behold **Udviklertilstand** aktiveret, og vælg **Indlæs udpakket** med den mappesti, programmet kopierer. Det kræver ingen administratorinstallation. Hvis udvidelsen allerede er installeret, bruges samme mappe og samme udvidelses-ID. Kontrollér version **0.1.5** og adgang til Excel og scriptpanelet; Chrome kan bede om ny webstedsadgang ved denne opdatering.
 4. Vælg **Forbind masterark**. Her ligger guiden og knappen **Kopier Excel-script**. Opret et nyt Office-script via **Automatiser → Nyt script → Opret i Kodeeditor**, og omdøb det til **ProviTrackerSalesRegistrationV3**. Markér hele standardkoden, indsæt den kopierede kode, og gem. Bevar eventuelle tidligere scripts.
 5. Lad V3-scriptet være åbent i kodeeditoren. Vælg **Kontrollér opsætning** i programmets guide. Denne kontrol skal bekræftes af Excel og tilføjer ingen salg.
-6. Slå **Registrer automatisk i masterarket** til, og gem indstillingerne. Gem den næste nye ordre med alle kundedata og produkter. Kontrollér **Registreret i masterark** på Ordrer og de to placeringer i Excel.
+6. I Chrome → **Indstillinger → Ydeevne → Hold altid disse websites aktive**: tilføj **5rmarketing-my.sharepoint.com** én gang. Det undtager masterarket fra både hukommelsesbesparelse og Chromes frysning under energibesparelse. En allerede sovende fane skal åbnes én gang. Derefter kan du arbejde i en anden fane.
+7. Slå **Registrer automatisk i masterarket** til, og gem indstillingerne. Gem den næste nye ordre med alle kundedata og produkter. Kontrollér **Registreret i masterark** på Ordrer og de to placeringer i Excel.
 
 Excel-scriptet skal oprettes én gang pr. arbejdskonto. Brugeren får hjælp inde i programmet og skal ikke hente kildefiler fra GitHub. Scriptet kan genfindes under Automatiser. Det åbne masterark må være en baggrundsfane; brugeren skal ikke aktivere fanen for hvert salg. Browseren og masterarket skal være åbne og logget ind. Microsofts krav om login/MFA gælder fortsat. Mailafsendelse er en senere opgave.
 
@@ -31,7 +32,7 @@ Et meget skjult journalark `_ProviTrackerReg` reserverer historikrække og indho
 
 ## Chrome-adgang og opdateringer
 
-Udvidelsen har adgang til virksomhedens præcise SharePoint-vært, EU Excel-rammen og det observerede Office Scripts-panel på `fa000000043.mro1cdnstorage.public.onecdn.static.microsoft`. Panelet må kun bruges, når det er direkte barn af den tilladte Excel-ramme. Den konkrete arbejdsbog identificeres af `sourcedoc` i fanens adresse og kontrolleres igen under forløbet. Kun én tilsvarende, ikke parkeret fane accepteres.
+Udvidelsen kræver Chrome 132 eller nyere for at kunne identificere frosne faner. Den har adgang til virksomhedens præcise SharePoint-vært, EU Excel-rammen og det observerede Office Scripts-panel på `fa000000043.mro1cdnstorage.public.onecdn.static.microsoft`. Panelet må kun bruges, når det er direkte barn af den tilladte Excel-ramme. Den konkrete arbejdsbog identificeres af `sourcedoc` i fanens adresse og kontrolleres igen under forløbet. Kun én tilsvarende fane accepteres. Udvidelsen beskytter det verificerede masterark mod automatisk aflastning med `autoDiscardable:false`. Den oprindelige værdi opbevares i Chromes sessionslager og gendannes ved navigation væk fra arket. Udvidelsen aktiverer ikke fanen. En allerede aflastet eller frosset fane giver `chrome-sleeping`; appen bevarer den samme registrering i køen og prøver igen hvert minut. Et nyt kontrolnummer bruges ved hvert genforsøg. Andre fejl kræver fortsat handling. `autoDiscardable` forhindrer ikke alene frysning; derfor er undtagelsen under Ydeevne en del af opsætningen.
 
 Udvidelsen betjener Office Scripts' almindelige synlige knapper og parameterfelt. Den læser ikke cookies, adgangskoder, sidetokens eller private Excel-API'er. Kundedata sendes lokalt fra appen gennem native messaging og videre til scriptet i brugerens eget masterark. Appen gemmer den oprindelige ordre før Excel-overførslen. Et afbrudt login eller manglende panel giver en handlingsbesked og et genforsøg fra Ordrer.
 

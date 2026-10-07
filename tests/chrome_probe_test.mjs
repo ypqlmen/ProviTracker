@@ -25,7 +25,8 @@ vm.runInNewContext(fs.readFileSync('chrome_extension/background.js','utf8').repl
   setInterval:fn=>{intervals.push(fn);return fn},clearInterval:()=>{},
   URL,
   chrome:{runtime:{getManifest:()=>({version:'0.1.2'}),reload:()=>{},connectNative:()=>port,onMessage:{addListener:fn=>runtimeHandler=fn},onStartup:event(),onInstalled:event()},
-    tabs:{query:async()=>[{id:7,url}],get:async()=>({id:7,url:currentUrl,active:false}),sendMessage:async(id,msg)=>probes.push(msg)},
+    storage:{session:{get:async()=>({}),set:async()=>{},remove:async()=>{}}},
+    tabs:{onUpdated:event(),onRemoved:event(),update:async(id,value)=>{assert.equal(Object.keys(value).join(','),'autoDiscardable');},query:async()=>[{id:7,url}],get:async()=>({id:7,url:currentUrl,active:false}),sendMessage:async(id,msg)=>probes.push(msg)},
     webNavigation:{getAllFrames:async()=>[{frameId:0,url}]},scripting:{executeScript:async()=>{}},
     alarms:{onAlarm:event(),create:()=>{}}}
 });
@@ -43,6 +44,7 @@ await nativeHandler({type:'probe',requestId:'moved',workbookUrl:url});
 currentUrl=url.replace('535121b9','535121b8');
 runtimeHandler({type:'probe-result',requestId:'moved',sheet:'Ark1'},sender,()=>{});await flush();
 assert.equal(results.at(-1).success,false,'navigation must invalidate success');
+currentUrl=url;
 await nativeHandler({type:'probe',requestId:'silent',workbookUrl:url});
 timers.at(-1)();assert.match(results.at(-1).error,/Udvidelsen svarede ikke/);
 console.log('Chrome blank-frame, delayed-render, retry and stale/navigation checks passed');

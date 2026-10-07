@@ -15,7 +15,8 @@ function background() {
   vm.runInNewContext(source, {workbookIdentity,URL,setTimeout:fn=>{timers.push(fn);return fn},clearTimeout:()=>{},
     setInterval:fn=>{intervals.push(fn);return fn},clearInterval:()=>{},
     chrome:{runtime:{getManifest:()=>({version}),reload:()=>{},connectNative:()=>port,onMessage:event(),onStartup:event(),onInstalled:event()},
-      tabs:{query:async()=>[{id:7,url}],get:async()=>({id:7,url:currentUrl,active:false}),sendMessage:async()=>{}},
+      storage:{session:{get:async()=>({}),set:async()=>{},remove:async()=>{}}},
+    tabs:{onUpdated:event(),onRemoved:event(),update:async(id,value)=>{assert.equal(Object.keys(value).join(','),'autoDiscardable');},query:async()=>[{id:7,url}],get:async()=>({id:7,url:currentUrl,active:false}),sendMessage:async()=>{}},
       webNavigation:{getAllFrames:async()=>frames},scripting:{executeScript:async ({target})=>{
         const id=target.frameIds[0];injected.push(id);
         if(id===1 && blocked) throw Error('Frame access denied');

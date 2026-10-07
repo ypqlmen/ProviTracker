@@ -11,6 +11,7 @@ find_package(Qt6 REQUIRED COMPONENTS Widgets Core PrintSupport Network)
 
 add_executable(ProvisionTrackerV2 WIN32
     main_v32.cpp
+    settings_icons.qrc
     storage_paths.h
     domain.h
     credentials.h
