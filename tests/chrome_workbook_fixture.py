@@ -96,11 +96,11 @@ def check_native_workbook(context, worker, extension_id):
 
 
 def check_native_sales(context, worker, workbook, foreground):
-    def run(action, registration, expected_success=True):
+    def run(action, registration, expected_success=True, workbook_url=WORKBOOK_URL):
         print('Native fixture step:',action,'success expected:',expected_success,flush=True)
         process=subprocess.Popen([str(worker),'--stdin-json'],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,encoding='utf-8')
         try:
-            process.stdin.write(json.dumps({'action':action,'workbookUrl':WORKBOOK_URL,'registration':registration},ensure_ascii=False))
+            process.stdin.write(json.dumps({'action':action,'workbookUrl':workbook_url,'registration':registration},ensure_ascii=False))
             process.stdin.close()
             deadline=time.monotonic()+190
             while process.poll() is None and time.monotonic()<deadline:foreground.wait_for_timeout(100)
@@ -133,11 +133,15 @@ def check_native_sales(context, worker, workbook, foreground):
     service=next(w for w in context.service_workers if w.url.startswith('chrome-extension://'))
     tab_id=service.evaluate('async()=> (await chrome.tabs.query({url:"https://5rmarketing-my.sharepoint.com/*"}))[0].id')
     assert service.evaluate('id=>chrome.tabs.get(id).then(t=>t.autoDiscardable)',tab_id) is False
-    # Explicit discarding overrides Memory Saver protection. Detection must not wake it.
-    await_discard=service.evaluate('id=>chrome.tabs.discard(id)',tab_id)
-    assert await_discard['discarded'] is True
-    waiting=run('chrome-setup',{'requestId':'00000000-0000-4000-8000-000000000107'},False)
-    assert waiting['status']=='chrome-sleeping',waiting
-    assert service.evaluate('id=>chrome.tabs.get(id).then(t=>t.active)',tab_id) is False
-    print('Actual browser lifecycle passed: protected background tab, forced discard, typed wait without activation')
+    # Simulate Chrome's discarded flag at the API boundary. Forcing real discard
+    # under DevTools crashes Chromium 136; the Office/background work above is real.
+    service.evaluate('globalThis.fixtureTabsGet=chrome.tabs.get.bind(chrome.tabs);chrome.tabs.get=async id=>({...await fixtureTabsGet(id),discarded:true})')
+    try:
+        waiting=run('chrome-setup',{'requestId':'00000000-0000-4000-8000-000000000107'},False)
+        assert waiting['status']=='chrome-sleeping',waiting
+        assert service.evaluate('id=>fixtureTabsGet(id).then(t=>t.active)',tab_id) is False
+        assert pane.evaluate('sales.length')==1,'A sleeping result must not submit anything'
+    finally:
+        service.evaluate('chrome.tabs.get=fixtureTabsGet;delete globalThis.fixtureTabsGet')
+    print('Native lifecycle wait passed with simulated discarded flag; active tab and workbook preserved',flush=True)
     print('Actual Chromium/native host + Office controls transport passed: gallery, setup, parameters, fresh receipt, retry, background tab')
