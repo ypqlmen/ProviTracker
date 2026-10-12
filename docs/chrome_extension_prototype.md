@@ -1,4 +1,4 @@
-# Salgsregistrering i Chrome – testversion 0.1.5
+# Salgsregistrering i Chrome – testversion 0.1.6
 
 Provi Tracker overfører nye salgsregistreringer gennem brugerens eksisterende Chrome-login. Ordrekøen bruger Chrome i stedet for en separat Microsoft-browser. Funktionen er endnu kun i testversionen; den offentlige opdateringskanal ændres ikke af Windows-prøvebygningen.
 
@@ -6,7 +6,7 @@ Provi Tracker overfører nye salgsregistreringer gennem brugerens eksisterende C
 
 1. Installer den nye Windows-testversion. Åbn **Indstillinger → Salgsregistrering** i Provi Tracker.
 2. Gem sælgerinitialer og det direkte masterark-link med `sourcedoc`. Åbn dette masterark én gang i Chrome, og log ind.
-3. Vælg **Installer Chrome-udvidelse**. Følg programmets guide: åbn `chrome://extensions`, behold **Udviklertilstand** aktiveret, og vælg **Indlæs udpakket** med den mappesti, programmet kopierer. Det kræver ingen administratorinstallation. Hvis udvidelsen allerede er installeret, bruges samme mappe og samme udvidelses-ID. Kontrollér version **0.1.5** og adgang til Excel og scriptpanelet; Chrome kan bede om ny webstedsadgang ved denne opdatering.
+3. Vælg **Installer Chrome-udvidelse**. Følg programmets guide: åbn `chrome://extensions`, behold **Udviklertilstand** aktiveret, og vælg **Indlæs udpakket** med den mappesti, programmet kopierer. Det kræver ingen administratorinstallation. Hvis udvidelsen allerede er installeret, bruges samme mappe og samme udvidelses-ID. Kontrollér version **0.1.6** og adgang til Excel og scriptpanelet; Chrome kan bede om ny webstedsadgang ved denne opdatering.
 4. Vælg **Forbind masterark**. Her ligger guiden og knappen **Kopier Excel-script**. Opret et nyt Office-script via **Automatiser → Nyt script → Opret i Kodeeditor**, og omdøb det til **ProviTrackerSalesRegistrationV3**. Markér hele standardkoden, indsæt den kopierede kode, og gem. Bevar eventuelle tidligere scripts.
 5. Lad V3-scriptet være åbent i kodeeditoren. Vælg **Kontrollér opsætning** i programmets guide. Denne kontrol skal bekræftes af Excel og tilføjer ingen salg.
 6. I Chrome → **Indstillinger → Ydeevne → Hold altid disse websites aktive**: tilføj **5rmarketing-my.sharepoint.com** én gang. Det undtager masterarket fra både hukommelsesbesparelse og Chromes frysning under energibesparelse. En allerede sovende fane skal åbnes én gang. Derefter kan du arbejde i en anden fane.
@@ -43,3 +43,7 @@ Forberedelsen kopierer filerne til `%LOCALAPPDATA%/ProviTrackerChromeBridge/exte
 Node-prøver kontrollerer produktkatalog, øverste række, historik, måned/årsskifte, formater og afbrudte/genoptagne registreringer. Python- og C++-prøver kontrollerer ordrenumre, stabile registreringsnumre, kvitteringer, kø og native transport. En isoleret Chromium-prøve betjener de faktiske udvidelsesfunktioner mod syntetiske Office-kontroller uden Microsoft-login eller kundedata. Windows-forløbet bruger det installerede hjælpeprogram, HKCU, opdatering/genindlæsning og kvitteringer fra det syntetiske panel.
 
 En skrivefri kørsel af V3 i brugerens rigtige Excel validerer kompilering, kolonner og historik. Den endelige afprøvning af et autentificeret salg fra brugerens Windows-program i en baggrundsfane sker hos brugeren, før fuld udgivelse. Microsoft kan ændre kontrollernes struktur; løsningen skal i så fald opdateres og afprøves igen.
+
+## Parametervinduet
+
+Udvidelsen genkender `payloadJson` via feltets label, navn eller tilgængelighedstekst. Den ældre hjælpetekst er kun en fallback. Et allerede åbent V3-parametervindue genbruges før kodeeditorens Kør-knap. Salgsdata erstatter den indledende `{"isTest":true}`-værdi; kun en fuld identisk værdi må sendes. Hvis Excel nulstiller et styret felt, udfyldes det igen højst tre gange. Et vindue, som et tidligere forsøg allerede har sendt, kræver kontrol før genbrug. Scriptet i Excel er uændret.

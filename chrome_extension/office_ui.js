@@ -50,26 +50,43 @@ export function officeStep(phase, payloadJson) {
     run.click();
     return {started:true};
   }
-  if (['parameter','submit'].includes(phase) && /\/dialog\.html$/.test(location.pathname)) {
+  if (['open','run','parameter','submit'].includes(phase) && /\/dialog\.html$/.test(location.pathname)) {
     if (!document.body.textContent.includes(scriptName)) return {error:'Excel åbnede parametre til et andet script. Registreringen er stoppet.'};
-    const inputs = [...document.querySelectorAll('input[type="text"]')].filter(el=>usable(el)&&/^(Angiv en streng|Enter a string)/.test(el.placeholder));
-    const run = button(['Kør','Run']);
+    const fields=[...document.querySelectorAll('input,textarea')].filter(el=>usable(el)
+      && (el.tagName==='TEXTAREA' || el.type==='text'));
+    const parameterName=value=>/^payloadJson\s*\*?$/.test((value || '').trim());
+    const labels=el=>[el.getAttribute('aria-label'),el.name,
+      ...[...(el.labels || [])].map(label=>label.textContent),
+      ...(el.getAttribute('aria-labelledby') || '').split(/\s+/).filter(Boolean).map(id=>document.getElementById(id)?.textContent)];
+    const namedFields=fields.filter(el=>labels(el).some(parameterName));
+    const inputs=namedFields.length ? namedFields : fields.filter(el=>/^(Angiv en streng|Enter a string)/.test(el.placeholder || ''));
+    const run=button(['Kør','Run']);
+    if (inputs.length>1) return {error:'Excel viser flere mulige payloadJson-felter. Registreringen er stoppet.'};
     if (inputs.length!==1) return null;
-    const request=JSON.parse(payloadJson);
+    const input=inputs[0],request=JSON.parse(payloadJson);
+    // A previous attempt can leave this dialog open. Resume its parameter step
+    // instead of clicking the editor's Run button behind the modal a second time.
+    if (['open','run'].includes(phase)) {
+      if (globalThis.proviScriptSubmitted && globalThis.proviScriptSubmitted!==request.requestId)
+        return {error:'Et tidligere Excel-forsøg har allerede valgt Kør. Kontrollér salget og luk parametervinduet før genforsøg.'};
+      return {parameters:true};
+    }
     if (globalThis.proviScriptSubmitted===request.requestId) return {submitted:true};
     if (phase==='submit') {
-      if (!run || inputs[0].value!==payloadJson) return null;
+      // A controlled field can revert while the page applies its state update.
+      // Return to filling; never submit the default test value or an older sale.
+      if (input.value!==payloadJson) return {refill:true};
+      if (!run) return null;
       globalThis.proviScriptSubmitted=request.requestId;
       run.click();
       return {submitted:true};
     }
-    // Native value setter + input event delivers one complete value to React.
-    const setter=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set;
-    setter.call(inputs[0],payloadJson);
-    inputs[0].dispatchEvent(new Event('input',{bubbles:true}));
-    inputs[0].dispatchEvent(new Event('change',{bubbles:true}));
-    if (inputs[0].value!==payloadJson) return {error:'Excel modtog ikke hele salgsregistreringen.'};
-    // Let the page apply its state update before clicking Run in the next scan.
+    const prototype=input.tagName==='TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+    const setter=Object.getOwnPropertyDescriptor(prototype,'value').set;
+    setter.call(input,payloadJson);
+    input.dispatchEvent(new Event('input',{bubbles:true}));
+    input.dispatchEvent(new Event('change',{bubbles:true}));
+    if (input.value!==payloadJson) return {refill:true};
     return {filled:true};
   }
   if (phase === 'receipt' && /\/index\.html$/.test(location.pathname) && named) {

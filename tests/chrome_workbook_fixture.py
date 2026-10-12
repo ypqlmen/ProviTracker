@@ -30,7 +30,9 @@ def open_workbook(context):
 if(!p.isTest){const old=sales.find(x=>x.registrationId===p.registrationId);status=old?'already_registered':'registered';if(old)row=old.row;else{const month=p.date.slice(3);if(months.at(-1)!==month)months.push(month);row=122+sales.length+months.length;preview=p;sales.push({...p,row})}}
 const r={success:true,status,scriptVersion:3,row,orderNumber:p.isTest?'':p.orderNumber,registrationId:p.isTest?'':p.registrationId,requestId:p.requestId};const li=document.createElement('li');li.setAttribute('role','listitem');li.textContent='Oplysninger: PROVITRACKER_RESULT:'+JSON.stringify(r);document.getElementById('output').append(li)})</script>'''
         elif route.request.url.startswith(OFFICE_DIALOG):
-            body = '''<div>Angiv parametre for ProviTrackerSalesRegistrationV3</div><input type="text" placeholder="Angiv en streng (f.eks. abcd)" oninput="window.payload=this.value;Promise.resolve().then(()=>document.getElementById('submit').disabled=false)"><button id="submit" disabled onclick="parent.postMessage({type:'payload',payload:JSON.parse(window.payload)},'https://euc-excel.officeapps.live.com')">Kør</button>'''
+            # Default test payload, implicit text type, accessible parameter label,
+            # and a controlled field that asynchronously reverts its first edit.
+            body = '''<div>Angiv parametre for ProviTrackerSalesRegistrationV3</div><label for="payload">payloadJson *</label><input id="payload" value='{"isTest":true}' oninput="const value=this.value;Promise.resolve().then(()=>{if(!window.reverted){window.reverted=true;this.value=JSON.stringify({isTest:true})}else{window.payload=value;document.getElementById('submit').disabled=false}})"><button id="submit" disabled onclick="parent.postMessage({type:'payload',payload:JSON.parse(window.payload)},'https://euc-excel.officeapps.live.com')">Kør</button>'''
         else:
             # SharePoint starts with an empty source and loads Excel asynchronously.
             body = '<iframe id="WacFrame_Excel_0" src=""></iframe><script>setTimeout(()=>document.querySelector("iframe").src='+json.dumps(EXCEL_URL)+',500)</script>'
@@ -122,6 +124,10 @@ def check_native_sales(context, worker, workbook, foreground):
     assert pane.evaluate('sales.length')==0,'Setup must not add a sale'
     sale={'registrationId':'00000000-0000-4000-8000-000000000102','requestId':'00000000-0000-4000-8000-000000000103',
         'date':'07.10.2026','orderNumber':'TEST-OSE','companyName':'Synthetic ÆØÅ','note':'Synthetic only','sellerInitials':'TEST','cvrNumber':'00000000','phoneNumber':'00000000','items':[{'key':'mobil_25gb_36','quantity':2}]}
+    # A prior attempt can leave a dialog open with the test default. The next
+    # sale must reuse that dialog, replace the default and submit only its data.
+    pane.evaluate("document.getElementById('run').click()")
+    workbook.frame_locator('#WacFrame_Excel_0').frame_locator('#dialog').get_by_label('payloadJson *',exact=True).wait_for()
     first=run('chrome-register',sale)
     assert first['status']=='registered' and first['registrationId']==sale['registrationId']
     assert pane.evaluate('sales.length')==1

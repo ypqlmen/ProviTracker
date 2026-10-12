@@ -106,7 +106,9 @@ async function scanOffice(job) {
     const office=officeFrames(frames);
     const excel=frames.filter(f=>originOf(f.url)===workbookOrigins[1]);
     // Inspect the pane first. Open the gallery only if the script pane is absent.
-    const targets=office.length ? office : job.phase==='open' ? excel : [];
+    const dialogs=office.filter(frame=>/\/dialog\.html(?:[?#]|$)/i.test(frame.url));
+    const parameterPhase=['open','run','parameter','submit'].includes(job.phase);
+    const targets=parameterPhase && dialogs.length ? dialogs : office.length ? office : job.phase==='open' ? excel : [];
     for(const frame of targets) {
       if(pending!==job) return;
       let readings;
@@ -116,6 +118,12 @@ async function scanOffice(job) {
         const result=item.result;
         if(!result) continue;
         if(result.error) { finish(job,{success:false,error:result.error});return; }
+        if(result.parameters) { job.phase='parameter';return; }
+        if(result.refill) {
+          job.refills=(job.refills || 0)+1;
+          if(job.refills>3) { finish(job,{success:false,error:'Excel beholdt ikke salgsdataene i payloadJson-feltet. Salget er ikke bekræftet; luk parametervinduet og prøv igen fra Ordrer.'});return; }
+          job.phase='parameter';return;
+        }
         if(result.ready) { job.phase='run';return; }
         if(result.started) { job.phase='parameter';return; }
         if(result.filled) { job.phase='submit';return; }
@@ -209,7 +217,7 @@ function connect() {
       // after the first scan. Never activate or reload the workbook tab.
       job.poll = setInterval(() => scan(job), 500);
       job.timeout = setTimeout(() => finish(job, {success:false, error:job.connected
-        ? (job.officeBlocked ? 'Chrome-udvidelsen mangler adgang til Excels scriptpanel. Genindlæs udvidelsen i Chrome, og prøv igen.' : 'Excel bekræftede ikke registreringen. Åbn ProviTrackerSalesRegistrationV3 i kodeeditoren via Automatiser. Kontrollér arket før genforsøg.')
+        ? (job.officeBlocked ? 'Chrome-udvidelsen mangler adgang til Excels scriptpanel. Genindlæs udvidelsen i Chrome, og prøv igen.' : (['parameter','submit','run'].includes(job.phase) ? 'Excel stoppede ved scriptets parametre. Luk parametervinduet, kontrollér at Chrome-udvidelsen er opdateret, og prøv igen fra Ordrer.' : 'Excel bekræftede ikke registreringen. Åbn ProviTrackerSalesRegistrationV3 i kodeeditoren via Automatiser. Kontrollér arket før genforsøg.'))
         : job.excelBlocked && !job.excelRead
         ? 'Chrome-udvidelsen har ikke adgang til Excel-rammen. Kontrollér udvidelsens webstedsadgang til euc-excel.officeapps.live.com i Chrome, og prøv igen.'
         : job.heard && !job.excelRead
