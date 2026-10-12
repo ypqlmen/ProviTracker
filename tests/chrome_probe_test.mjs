@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import {workbookIdentity} from '../chrome_extension/identity.js';
 const url = 'https://5rmarketing-my.sharepoint.com/a?sourcedoc={535121b9-ed93-447b-9f89-7e8d575d03e4}';
-const tab = {getAttribute:()=> 'Regneark Ark1', getClientRects:()=>[{}],querySelector:()=>null};
+const tab = {getAttribute:name=> name==='aria-selected'?'true':'Regneark Ark1', getClientRects:()=>[{}],querySelector:()=>null};
 const sheet = {querySelectorAll:selector=>selector==='[role="tab"]'?[tab]:[]};
 const parent = {querySelectorAll:selector=>selector==='iframe'?[{contentDocument:sheet}]:[]};
 let handler; const replies=[];
@@ -32,7 +32,7 @@ vm.runInNewContext(fs.readFileSync('chrome_extension/background.js','utf8').repl
 });
 const flush=async()=>{for(let i=0;i<12;i++) await Promise.resolve()};
 await nativeHandler({type:'probe',requestId:'fresh',workbookUrl:url});
-const sender={tab:{id:7,url}};
+const sender={url:'https://euc-excel.officeapps.live.com/x',tab:{id:7,url}};
 runtimeHandler({type:'probe-result',requestId:'stale',sheet:'Ark1'},sender,()=>{});await flush();
 assert.equal(results.filter(x=>x.type==='result').length,0);
 runtimeHandler({type:'probe-result',requestId:'fresh',sheet:null},sender,()=>{});

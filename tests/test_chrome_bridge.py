@@ -79,10 +79,11 @@ class ChromeBridgeTests(unittest.TestCase):
 
     def test_registration_receipt_is_bound_to_request_and_sale(self):
         registration = {'requestId':'request', 'registrationId':'sale', 'orderNumber':'BISS'}
-        receipt = {'success':True, 'scriptVersion':3, 'requestId':'request', 'registrationId':'sale', 'orderNumber':'BISS', 'status':'registered', 'row':123}
+        receipt = {'success':True, 'scriptVersion':4,'worksheetName':'Salg ÆØÅ','worksheetId':'sheet-1', 'requestId':'request', 'registrationId':'sale', 'orderNumber':'BISS', 'status':'registered', 'row':123}
         self.assertTrue(bridge.valid_receipt(receipt, registration))
-        for key, value in [('requestId','stale'),('registrationId','other-sale'),('orderNumber','other-order'),('row',True),('row',3),('scriptVersion',2),('status','checked')]:
+        for key, value in [('requestId','stale'),('registrationId','other-sale'),('orderNumber','other-order'),('row',True),('row',3),('scriptVersion',2),('scriptVersion',3),('worksheetName',''),('worksheetId',''),('status','checked')]:
             self.assertFalse(bridge.valid_receipt({**receipt, key:value}, registration), (key,value))
+        self.assertFalse(bridge.valid_receipt(receipt, {**registration, 'worksheetName':'Another'}))
         setup = {'requestId':'request', 'isTest':True}
         self.assertTrue(bridge.valid_receipt({**receipt,'status':'checked','row':0,'orderNumber':'','registrationId':''}, setup))
         self.assertFalse(bridge.valid_receipt(receipt, setup))
@@ -95,7 +96,7 @@ class ChromeBridgeTests(unittest.TestCase):
                 'workbookUrl':'https://5rmarketing-my.sharepoint.com/a?sourcedoc={535121b9-ed93-447b-9f89-7e8d575d03e4}'}
             bridge.atomic_json(root / 'request.json',request)
             stdin,stdout=io.BytesIO(),io.BytesIO()
-            receipt={'type':'result','success':True,'scriptVersion':3,**registration,'row':123,'status':'registered'}
+            receipt={'type':'result','success':True,'scriptVersion':4,'worksheetName':'Salg ÆØÅ','worksheetId':'sheet-1',**registration,'row':123,'status':'registered'}
             for message in [{'type':'poll'}, {**receipt,'registrationId':'wrong'}, receipt]: bridge.write_frame(stdin,message)
             stdin.seek(0)
             with patch.object(bridge,'root',return_value=root),patch.object(bridge,'prepare_native_stdio'), \
@@ -112,7 +113,7 @@ class ChromeBridgeTests(unittest.TestCase):
             def respond(_):
                 envelope=bridge.read_json(Path(folder)/'request.json')
                 self.assertEqual(envelope['requestId'],request_id)
-                bridge.atomic_json(Path(folder)/'response.json',{'success':True,'status':'checked','row':0,'orderNumber':'','registrationId':'','scriptVersion':3,'requestId':request_id})
+                bridge.atomic_json(Path(folder)/'response.json',{'success':True,'status':'checked','row':0,'orderNumber':'','registrationId':'','scriptVersion':4,'worksheetName':'Salg ÆØÅ','worksheetId':'sheet-1','requestId':request_id})
             with patch.object(bridge.time,'sleep',side_effect=respond):
                 result=bridge.run_registration({'action':'chrome-setup','workbookUrl':'https://5rmarketing-my.sharepoint.com/a?sourcedoc={535121b9-ed93-447b-9f89-7e8d575d03e4}', 'registration':{'requestId':request_id}})
             self.assertTrue(result['success'])

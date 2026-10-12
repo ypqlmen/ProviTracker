@@ -46,7 +46,10 @@ function sleeping(job, tab) {
   finish(job,{success:false,status:'chrome-sleeping',error:'Chrome har sat masterarket i dvale. Salget afventer automatisk. Tilføj 5rmarketing-my.sharepoint.com under Chrome → Indstillinger → Ydeevne → Hold altid disse websites aktive, og åbn masterark-fanen én gang.'});
   return true;
 }
-async function confirmWorkbook(job) {
+function validSheetName(name) {
+  return typeof name==='string' && name.trim().length>0 && name.length<=31 && !/[\x00-\x1f]/.test(name) && name!=='_ProviTrackerReg';
+}
+async function confirmWorkbook(job, sheetName) {
   try {
     const tab = await chrome.tabs.get(job.tabId);
     if (pending !== job) return;
@@ -55,8 +58,14 @@ async function confirmWorkbook(job) {
       return;
     }
     if (sleeping(job, tab)) return;
-    if (job.type==='probe') finish(job, {success:true, status:'chrome-connected', background:!tab.active});
-    else if (!job.connected) { job.connected=true; job.phase='open'; }
+    if (!validSheetName(sheetName)) return;
+    if (job.type==='probe') finish(job, {success:true, status:'chrome-connected', worksheetName:sheetName, background:!tab.active});
+    else if (!job.connected) {
+      if (job.registration.worksheetName && job.registration.worksheetName!==sheetName) {
+        finish(job,{success:false,error:'Salget tilhører arkfanen '+job.registration.worksheetName+'. Vælg den før genforsøg.'});return;
+      }
+      job.registration.worksheetName=sheetName;job.connected=true;job.phase='open';
+    }
   } catch { finish(job, {success:false, error:'Masterarket blev lukket under kontrollen.'}); }
 }
 async function scanWorkbook(job) {
@@ -78,7 +87,7 @@ async function scanWorkbook(job) {
         if (!result || !('sheet' in result)) continue;
         job.heard = true;
         if (result.origin === workbookOrigins[1]) job.excelRead = true;
-        if (result.sheet === 'Ark1') { await confirmWorkbook(job); return; }
+        if (validSheetName(result.sheet) && result.origin===workbookOrigins[1]) { await confirmWorkbook(job,result.sheet); return; }
       }
     }
     // Compatibility with an already attached content script. Direct frame results
@@ -175,7 +184,7 @@ function finish(job, result) {
   clearTimeout(job.timeout);
   pending = null;
   status = result.success ? (job.type==='probe' ? 'Forbindelsen til masterarket virker.' : 'Excel har bekræftet registreringen.') : result.error;
-  port?.postMessage({type:'result', requestId:job.requestId, ...result});
+  port?.postMessage({type:'result', requestId:job.requestId, worksheetName:job.registration?.worksheetName, ...result});
   reloadWhenIdle();
 }
 function connect() {
@@ -217,13 +226,13 @@ function connect() {
       // after the first scan. Never activate or reload the workbook tab.
       job.poll = setInterval(() => scan(job), 500);
       job.timeout = setTimeout(() => finish(job, {success:false, error:job.connected
-        ? (job.officeBlocked ? 'Chrome-udvidelsen mangler adgang til Excels scriptpanel. Genindlæs udvidelsen i Chrome, og prøv igen.' : (['parameter','submit','run'].includes(job.phase) ? 'Excel stoppede ved scriptets parametre. Luk parametervinduet, kontrollér at Chrome-udvidelsen er opdateret, og prøv igen fra Ordrer.' : 'Excel bekræftede ikke registreringen. Åbn ProviTrackerSalesRegistrationV3 i kodeeditoren via Automatiser. Kontrollér arket før genforsøg.'))
+        ? (job.officeBlocked ? 'Chrome-udvidelsen mangler adgang til Excels scriptpanel. Genindlæs udvidelsen i Chrome, og prøv igen.' : (['parameter','submit','run'].includes(job.phase) ? 'Excel stoppede ved scriptets parametre. Luk parametervinduet, kontrollér at Chrome-udvidelsen er opdateret, og prøv igen fra Ordrer.' : 'Excel bekræftede ikke registreringen. Åbn ProviTrackerSalesRegistrationV4 i kodeeditoren via Automatiser. Kontrollér arket før genforsøg.'))
         : job.excelBlocked && !job.excelRead
         ? 'Chrome-udvidelsen har ikke adgang til Excel-rammen. Kontrollér udvidelsens webstedsadgang til euc-excel.officeapps.live.com i Chrome, og prøv igen.'
         : job.heard && !job.excelRead
         ? 'Chrome svarede fra SharePoint, men selve Excel-arket svarede ikke. Genindlæs masterarket i Chrome, kontrollér login, og prøv igen.'
         : job.heard
-        ? 'Chrome svarede, men fanen Ark1 blev ikke fundet i Excel. Kontrollér at masterarket er færdigindlæst og viser Ark1, og prøv igen.'
+        ? 'Chrome svarede, men den valgte arkfane blev ikke fundet i Excel. Kontrollér at masterarket er færdigindlæst, vælg salgsarket, og prøv igen.'
         : 'Udvidelsen svarede ikke fra masterarket. Genindlæs Provi Tracker-udvidelsen under chrome://extensions og derefter masterarket.'}), message.type==='probe' ? 22000 : 150000);
       await scan(job);
     } catch {
@@ -238,8 +247,8 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
   if (message?.type !== 'probe-result' || !job || job.connected || sender.tab?.id !== job.tabId ||
       message.requestId !== job.requestId || workbookIdentity(sender.tab.url) !== job.identity) return;
   job.heard = true;
-  if (message.sheet !== 'Ark1') return;
-  confirmWorkbook(job);
+  if (!validSheetName(message.sheet) || originOf(sender.url)!==workbookOrigins[1]) return;
+  confirmWorkbook(job,message.sheet);
 });
 chrome.tabs.onUpdated.addListener((id, change, tab) => {
   if (change.url) releaseWorkbook(id,tab).catch(()=>{});

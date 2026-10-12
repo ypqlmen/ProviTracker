@@ -41,7 +41,7 @@ await busy.native({type:'probe',requestId:'fresh',workbookUrl:url});
 assert.deepEqual(busy.injected.map(x=>x.target.frameIds[0]),[0,1,3],'include blank Excel children but exclude unrelated-origin children');
 await busy.native({type:'reload-extension',version:upgraded});
 assert.equal(busy.calls.filter(x=>x==='reload').length,0,'finish current work first');
-busy.runtime({type:'probe-result',requestId:'fresh',sheet:'Ark1'},{tab:{id:7,url}});
+busy.runtime({type:'probe-result',requestId:'fresh',sheet:'Ark1'},{url:'https://euc-excel.officeapps.live.com/x',tab:{id:7,url}});
 await flush();
 assert.equal(busy.calls.at(-2).type,'result','send the receipt before reload');
 assert.equal(busy.calls.at(-1),'reload');

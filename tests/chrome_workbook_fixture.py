@@ -17,22 +17,22 @@ def open_workbook(context):
     def document(route):
         if route.request.url.startswith(EXCEL_URL):
             # Matches the live Excel sheet control, including its authoritative title.
-            body = '<a role="tab" aria-label="Regneark Ark1" aria-selected="true"><span sheet-title="Ark1">Ark1</span></a>'
+            body = '<a role="tab" aria-label="Regneark Salg ÆØÅ" aria-selected="true"><span sheet-title="Salg ÆØÅ">Salg ÆØÅ</span></a>'
             body += '<button id="Automate" aria-selected="false" onclick="this.setAttribute(\'aria-selected\',\'true\')">Automatiser</button>'
             body += '<button id="AutomateGroupViewScripts" aria-expanded="false" onclick="this.setAttribute(\'aria-expanded\',\'true\');document.getElementById(\'recent\').hidden=false">Få vist scripts</button>'
             body += '<button id="recent" hidden role="menuitem" onclick="this.hidden=true;document.getElementById(\'pane\').src='+repr(OFFICE_INDEX)+'">Seneste scripts</button><iframe id="pane"></iframe>'
             body += '<script>addEventListener("message",e=>{if(e.origin!=='+json.dumps(OFFICE_ORIGIN)+')return;if(e.data.type==="parameters"){const f=document.createElement("iframe");f.id="dialog";f.src='+json.dumps(OFFICE_DIALOG)+';document.body.append(f)}if(e.data.type==="payload"){document.getElementById("pane").contentWindow.postMessage(e.data,'+json.dumps(OFFICE_ORIGIN)+');document.getElementById("dialog").remove()}})</script>'
         elif route.request.url.startswith(OFFICE_INDEX):
-            # Transport fixture only: V3 workbook logic is tested independently in Node.
-            body = '''<div><span>ProviTrackerSalesRegistrationV3</span><button id="edit" onclick="document.getElementById('editor').hidden=false;document.getElementById('run').hidden=false;this.hidden=true">Rediger</button></div>
+            # Transport fixture only: V4 workbook logic is tested independently in Node.
+            body = '''<div><span>ProviTrackerSalesRegistrationV4</span><button id="edit" onclick="document.getElementById('editor').hidden=false;document.getElementById('run').hidden=false;this.hidden=true">Rediger</button></div>
 <textarea id="editor" aria-label="editor" hidden></textarea><button id="run" hidden onclick="parent.postMessage({type:'parameters'},'https://euc-excel.officeapps.live.com')">Kør</button><ul id="output"></ul>
 <script>window.sales=[];window.preview=null;window.months=[];addEventListener('message',e=>{if(e.origin!=='https://euc-excel.officeapps.live.com'||e.data.type!=='payload')return;const p=e.data.payload;let row=0,status='checked';
 if(!p.isTest){const old=sales.find(x=>x.registrationId===p.registrationId);status=old?'already_registered':'registered';if(old)row=old.row;else{const month=p.date.slice(3);if(months.at(-1)!==month)months.push(month);row=122+sales.length+months.length;preview=p;sales.push({...p,row})}}
-const r={success:true,status,scriptVersion:3,row,orderNumber:p.isTest?'':p.orderNumber,registrationId:p.isTest?'':p.registrationId,requestId:p.requestId};const li=document.createElement('li');li.setAttribute('role','listitem');li.textContent='Oplysninger: PROVITRACKER_RESULT:'+JSON.stringify(r);document.getElementById('output').append(li)})</script>'''
+const r={success:true,status,scriptVersion:4,worksheetName:p.worksheetName,worksheetId:"fixture-sheet",row,orderNumber:p.isTest?'':p.orderNumber,registrationId:p.isTest?'':p.registrationId,requestId:p.requestId};const li=document.createElement('li');li.setAttribute('role','listitem');li.textContent='Oplysninger: PROVITRACKER_RESULT:'+JSON.stringify(r);document.getElementById('output').append(li)})</script>'''
         elif route.request.url.startswith(OFFICE_DIALOG):
             # Default test payload, implicit text type, accessible parameter label,
             # and a controlled field that asynchronously reverts its first edit.
-            body = '''<div>Angiv parametre for ProviTrackerSalesRegistrationV3</div><label for="payload">payloadJson *</label><input id="payload" value='{"isTest":true}' oninput="const value=this.value;Promise.resolve().then(()=>{if(!window.reverted){window.reverted=true;this.value=JSON.stringify({isTest:true})}else{window.payload=value;document.getElementById('submit').disabled=false}})"><button id="submit" disabled onclick="parent.postMessage({type:'payload',payload:JSON.parse(window.payload)},'https://euc-excel.officeapps.live.com')">Kør</button>'''
+            body = '''<div>Angiv parametre for ProviTrackerSalesRegistrationV4</div><label for="payload">payloadJson *</label><input id="payload" value='{"isTest":true}' oninput="const value=this.value;Promise.resolve().then(()=>{if(!window.reverted){window.reverted=true;this.value=JSON.stringify({isTest:true})}else{window.payload=value;document.getElementById('submit').disabled=false}})"><button id="submit" disabled onclick="parent.postMessage({type:'payload',payload:JSON.parse(window.payload)},'https://euc-excel.officeapps.live.com')">Kør</button>'''
         else:
             # SharePoint starts with an empty source and loads Excel asynchronously.
             body = '<iframe id="WacFrame_Excel_0" src=""></iframe><script>setTimeout(()=>document.querySelector("iframe").src='+json.dumps(EXCEL_URL)+',500)</script>'
@@ -42,7 +42,7 @@ const r={success:true,status,scriptVersion:3,row,orderNumber:p.isTest?'':p.order
     context.route(OFFICE_ORIGIN+'/**', document)
     workbook = context.new_page()
     workbook.goto(WORKBOOK_URL)
-    workbook.frame_locator('#WacFrame_Excel_0').get_by_role('tab', name='Regneark Ark1', exact=True).wait_for()
+    workbook.frame_locator('#WacFrame_Excel_0').get_by_role('tab', name='Regneark Salg ÆØÅ', exact=True).wait_for()
     assert workbook.evaluate('document.querySelector("iframe").contentDocument === null'), 'Fixture must be cross-origin'
     workbook.evaluate('window.proviUntouched = "keep-workbook"')
     return workbook
@@ -79,7 +79,7 @@ def check_native_workbook(context, worker, extension_id):
             assert workbook.evaluate('window.proviUntouched') == 'keep-workbook', 'Probe must preserve the workbook'
             print('Native background workbook probe passed.',flush=True)
             check_native_sales(context, worker, workbook, foreground)
-            print('Actual Chromium/native-host workbook probe passed: cross-origin Ark1, background tab, extension reload')
+            print('Actual Chromium/native-host workbook probe passed: cross-origin selected sheet, background tab, extension reload')
         finally:
             if process.poll() is None:
                 process.kill()

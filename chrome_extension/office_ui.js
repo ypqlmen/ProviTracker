@@ -1,7 +1,7 @@
 // Operate visible Office Scripts controls only. No cookies, tokens or private page APIs.
 // Serialized by executeScript: all helpers deliberately live inside this function.
 export function officeStep(phase, payloadJson) {
-  const scriptName = 'ProviTrackerSalesRegistrationV3';
+  const scriptName = 'ProviTrackerSalesRegistrationV4';
   const text = el => (el.getAttribute('aria-label') || el.textContent || '').replace(/\s+/g,' ').trim();
   const usable = el => !el.disabled && !el.closest('[aria-hidden="true"],[hidden]')
     && getComputedStyle(el).display !== 'none' && getComputedStyle(el).visibility !== 'hidden';
@@ -30,7 +30,7 @@ export function officeStep(phase, payloadJson) {
   }
   if (location.origin !== 'https://fa000000043.mro1cdnstorage.public.onecdn.static.microsoft') return null;
   if (phase === 'open' && /\/index\.html$/.test(location.pathname)) {
-    if (editor && usable(editor)) return named ? {ready:true} : {error:'Et andet script er åbent i Excel. Åbn ProviTrackerSalesRegistrationV3 i kodeeditoren, og prøv igen.'};
+    if (editor && usable(editor)) return named ? {ready:true} : {error:'Et andet script er åbent i Excel. Åbn ProviTrackerSalesRegistrationV4 i kodeeditoren, og prøv igen.'};
     if (named) {
       for (let ancestor=named.parentElement, depth=0; ancestor && depth<7; ancestor=ancestor.parentElement,depth++) {
         const edit = [...ancestor.querySelectorAll('button,[role="button"]')].filter(el=>usable(el)&&['Rediger','Edit'].includes(text(el)));

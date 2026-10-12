@@ -4964,8 +4964,10 @@ QTableWidget::item {
 
     void prepareMasterRegistration(Order& order) {
         const QString identity = order.masterRegistration.value("registrationId").toString();
+        const QString worksheetName = order.masterRegistration.value("worksheetName").toString();
         order.masterRegistration = makeSalesRegistration(order, repo.products);
         order.masterRegistration["registrationId"] = identity.isEmpty() ? QUuid::createUuid().toString(QUuid::WithoutBraces) : identity;
+        if (!worksheetName.isEmpty()) order.masterRegistration["worksheetName"] = worksheetName;
         order.masterRegistrationState = "pending";
         order.masterRegistrationError.clear();
         order.masterWorkbookUrl = repo.settings.masterWorkbookUrl.trimmed();
@@ -4980,11 +4982,11 @@ QTableWidget::item {
         auto* text = new QLabel("<b>Opsætning én gang pr. arbejdskonto</b><br><br>"
             "1. Åbn dit masterark i <b>Chrome</b>, og log ind.<br>"
             "2. Vælg <b>Automatiser → Nyt script → Opret i Kodeeditor</b>.<br>"
-            "3. Omdøb det nye script til <b>ProviTrackerSalesRegistrationV3</b>.<br>"
+            "3. Omdøb det nye script til <b>ProviTrackerSalesRegistrationV4</b>.<br>"
             "4. Kopier scriptet med knappen nedenfor. Markér hele teksten i kodeeditoren, indsæt og gem.<br>"
             "5. I Chrome: <b>Indstillinger → Ydeevne → Hold altid disse websites aktive</b>. Tilføj <b>5rmarketing-my.sharepoint.com</b> én gang, så Chrome ikke sætter masterarket i dvale.<br>"
             "6. Lad kodeeditoren være åben, og vælg <b>Kontrollér opsætning</b>.<br><br>"
-            "Findes V3-scriptet allerede, skal du blot åbne det i kodeeditoren."
+            "Har du V3-scriptet, opret et nyt V4-script med den kopierede kode. Vælg den arkfane, salget skal registreres i. Arkets navn er valgfrit."
             "<br>Kontrollen tilføjer ingen salg. Bagefter kan masterarket ligge i en baggrundsfane.");
         text->setWordWrap(true);
         layout->addWidget(text);
@@ -5004,7 +5006,7 @@ QTableWidget::item {
                 QMessageBox::information(&dialog, "Hold masterarket aktivt", "Åbn chrome://settings/performance i Chrome. Tilføj det kopierede webstedsnavn under Hold altid disse websites aktive.");
         });
         connect(copy, &QPushButton::clicked, &dialog, [this, &dialog]() {
-            QFile file(QFileInfo(intramanagerWorkerPath()).absolutePath() + "/_internal/chrome_extension/excel_online_sales_registration_v3.ts");
+            QFile file(QFileInfo(intramanagerWorkerPath()).absolutePath() + "/_internal/chrome_extension/excel_online_sales_registration_v4.ts");
             if (!file.open(QIODevice::ReadOnly)) {
                 QMessageBox::warning(&dialog, "Excel-script", "Scriptet mangler. Geninstaller den nyeste testversion.");
                 return;
@@ -5065,8 +5067,9 @@ QTableWidget::item {
         const auto finish = [this, process, setup, registrationId, orderNumber, requestId, url](QJsonObject result) {
             masterRegistrationRunning = false;
             const QString status = result.value("status").toString();
-            const bool ok = result.value("success").toBool() && result.value("scriptVersion").toInt() == 3
+            const bool ok = result.value("success").toBool() && result.value("scriptVersion").toInt() == 4
                 && result.value("requestId").toString() == requestId
+                && !result.value("worksheetName").toString().isEmpty() && !result.value("worksheetId").toString().isEmpty()
                 && (setup ? (status == "checked" && result.value("row").toInt() == 0 && result.value("orderNumber").toString().isEmpty())
                     : ((status == "registered" || status == "already_registered")
                     && result.value("orderNumber").toString() == orderNumber && result.value("registrationId").toString() == registrationId
@@ -5075,6 +5078,8 @@ QTableWidget::item {
             if (!setup) {
                 const int index = salesRegistrationIndex(repo.orders, registrationId);
                 if (index >= 0) {
+                    const QString worksheetName = result.value("worksheetName").toString();
+                    if (ok && !worksheetName.isEmpty()) repo.orders[index].masterRegistration["worksheetName"] = worksheetName;
                     repo.orders[index].masterRegistrationState = ok ? "registered" : status == "chrome-sleeping" ? "waiting-browser" : "error";
                     repo.orders[index].masterRegistrationError = ok ? QString() : error;
                 }

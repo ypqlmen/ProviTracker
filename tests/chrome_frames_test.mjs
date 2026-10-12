@@ -44,14 +44,16 @@ const moved=background();moved.excel();moved.ready();moved.navigate();
 await moved.native({type:'probe',requestId:'moved',workbookUrl:url});
 assert.equal(moved.results.at(-1).success,false,'revalidate the current workbook after a direct frame result');
 function inspect({title,label='Regneark Ark1',painted=true}) {
-  const control={querySelector:()=>title===undefined?null:{getAttribute:()=>title},getAttribute:()=>label,
+  const control={querySelector:()=>title===undefined?null:{getAttribute:()=>title},getAttribute:name=>name==='aria-selected'?'true':label,
     getClientRects:()=>painted?[{}]:[]};
   return vm.runInNewContext(probe,{Set,document:{location:{origin:excel},querySelectorAll:selector=>selector==='[role="tab"]'?[control]:[]},
     chrome:{runtime:{onMessage:event(),sendMessage:async()=>{}}}});
 }
 assert.equal(inspect({title:'Ark1',painted:false}).sheet,'Ark1','actual Excel sheet-title works without background paint');
-assert.equal(inspect({title:'Other',label:'Regneark Ark1'}).sheet,null,'real sheet-title takes precedence over a stale label');
+assert.equal(inspect({title:'Other',label:'Regneark Ark1'}).sheet,'Other','real sheet-title takes precedence over a stale label');
 assert.equal(inspect({label:'Regneark\u00a0Ark1'}).sheet,'Ark1');
 assert.equal(inspect({painted:false}).sheet,null,'a hidden generic tab does not prove workbook readiness');
 assert.equal(inspect({label:'Ark10'}).sheet,null,'do not accept partial sheet-name matches');
+assert.equal(inspect({title:'September ÆØÅ',painted:false}).sheet,'September ÆØÅ');
+assert.equal(inspect({label:'Hjem'}).sheet,null,'selected ribbon tab is not a worksheet');
 console.log('Direct cross-origin frame, late-frame, access denial, navigation and actual Excel sheet-title checks passed');

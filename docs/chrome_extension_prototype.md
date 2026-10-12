@@ -1,4 +1,4 @@
-# Salgsregistrering i Chrome – testversion 0.1.6
+# Salgsregistrering i Chrome – testversion 0.1.7
 
 Provi Tracker overfører nye salgsregistreringer gennem brugerens eksisterende Chrome-login. Ordrekøen bruger Chrome i stedet for en separat Microsoft-browser. Funktionen er endnu kun i testversionen; den offentlige opdateringskanal ændres ikke af Windows-prøvebygningen.
 
@@ -6,9 +6,9 @@ Provi Tracker overfører nye salgsregistreringer gennem brugerens eksisterende C
 
 1. Installer den nye Windows-testversion. Åbn **Indstillinger → Salgsregistrering** i Provi Tracker.
 2. Gem sælgerinitialer og det direkte masterark-link med `sourcedoc`. Åbn dette masterark én gang i Chrome, og log ind.
-3. Vælg **Installer Chrome-udvidelse**. Følg programmets guide: åbn `chrome://extensions`, behold **Udviklertilstand** aktiveret, og vælg **Indlæs udpakket** med den mappesti, programmet kopierer. Det kræver ingen administratorinstallation. Hvis udvidelsen allerede er installeret, bruges samme mappe og samme udvidelses-ID. Kontrollér version **0.1.6** og adgang til Excel og scriptpanelet; Chrome kan bede om ny webstedsadgang ved denne opdatering.
-4. Vælg **Forbind masterark**. Her ligger guiden og knappen **Kopier Excel-script**. Opret et nyt Office-script via **Automatiser → Nyt script → Opret i Kodeeditor**, og omdøb det til **ProviTrackerSalesRegistrationV3**. Markér hele standardkoden, indsæt den kopierede kode, og gem. Bevar eventuelle tidligere scripts.
-5. Lad V3-scriptet være åbent i kodeeditoren. Vælg **Kontrollér opsætning** i programmets guide. Denne kontrol skal bekræftes af Excel og tilføjer ingen salg.
+3. Vælg **Installer Chrome-udvidelse**. Følg programmets guide: åbn `chrome://extensions`, behold **Udviklertilstand** aktiveret, og vælg **Indlæs udpakket** med den mappesti, programmet kopierer. Det kræver ingen administratorinstallation. Hvis udvidelsen allerede er installeret, bruges samme mappe og samme udvidelses-ID. Kontrollér version **0.1.7** og adgang til Excel og scriptpanelet; Chrome kan bede om ny webstedsadgang ved denne opdatering.
+4. Vælg **Forbind masterark**. Her ligger guiden og knappen **Kopier Excel-script**. Opret et nyt Office-script via **Automatiser → Nyt script → Opret i Kodeeditor**, og omdøb det til **ProviTrackerSalesRegistrationV4**. Markér hele standardkoden, indsæt den kopierede kode, og gem. Bevar eventuelle tidligere scripts.
+5. Lad V4-scriptet være åbent i kodeeditoren. Vælg først den ønskede arkfane nederst i Excel. Vælg derefter **Kontrollér opsætning** i programmets guide. Denne kontrol skal bekræftes af Excel og tilføjer ingen salg.
 6. I Chrome → **Indstillinger → Ydeevne → Hold altid disse websites aktive**: tilføj **5rmarketing-my.sharepoint.com** én gang. Det undtager masterarket fra både hukommelsesbesparelse og Chromes frysning under energibesparelse. En allerede sovende fane skal åbnes én gang. Derefter kan du arbejde i en anden fane.
 7. Slå **Registrer automatisk i masterarket** til, og gem indstillingerne. Gem den næste nye ordre med alle kundedata og produkter. Kontrollér **Registreret i masterark** på Ordrer og de to placeringer i Excel.
 
@@ -16,7 +16,7 @@ Excel-scriptet skal oprettes én gang pr. arbejdskonto. Brugeren får hjælp ind
 
 ## Arkets struktur og skrivning
 
-V3 kræver fanen Ark1, de kendte overskrifter i række 2, seneste salg i række 3 og en eksisterende historik med månedsmarkeringer længere nede. Ukendte eller manglende kolonner stopper registreringen.
+V4 bruger den valgte arkfane med valgfrit navn. Det kræver de kendte overskrifter i række 2, seneste salg i række 3 og en eksisterende historik med månedsmarkeringer længere nede. Ukendte eller manglende kolonner stopper registreringen.
 
 Et nyt salg udfylder først række 3 og arkiveres derefter nederst. Ved første salg i en nyere måned indsættes en særskilt række med månedens første dato, formateret som `dd.mm.yyyy`; rækken kopierer farve og øvrige formater fra arkets eksisterende månedsmarkering. Arkivrækken kopierer salgsformaterne fra række 3. Eksisterende historik og blankområdet mellem række 3 og historikken bevares. Der indsættes ingen tomme måneder uden salg. Salg fra en tidligere måned kræver manuel registrering i den korrekte del af historikken.
 
@@ -24,7 +24,7 @@ Produkterne bruger præcise katalog-nøgler og de respektive produktkolonner. Ti
 
 ## Kvitteringer og genforsøg
 
-Hvert salgs-snapshot har et stabilt registreringsnummer (UUID), og hvert forsøg har et nyt kontrolnummer. OSE er et forretningsnummer og kan gentages i forskellige ordrer. En fuld, frisk V3-kvittering med begge korrekte numre og den korrekte OSE er nødvendig, før programmet gemmer status som registreret. Et tjek af Chrome-forbindelsen alene er utilstrækkeligt.
+Hvert salgs-snapshot har et stabilt registreringsnummer (UUID), og hvert forsøg har et nyt kontrolnummer. OSE er et forretningsnummer og kan gentages i forskellige ordrer. En fuld, frisk V4-kvittering med begge korrekte numre og den korrekte OSE er nødvendig, før programmet gemmer status som registreret. Et tjek af Chrome-forbindelsen alene er utilstrækkeligt.
 
 Et meget skjult journalark `_ProviTrackerReg` reserverer historikrække og indhold før skrivningen. Genforsøg kontrollerer og genbruger denne reservation. En fuldt skrevet række efter et afbrudt forsøg bekræftes uden ny kopi og uden at overskrive seneste salg øverst. Delvis eller manuelt flyttet historik, ændrede salgsdata og uafsluttede reservationer kræver handling; appen gætter ikke på en ny række. Journalen er til genforsøg, ikke en transaktionel lås mellem flere samtidige computere. Brug én Provi Tracker-instans pr. masterark.
 
@@ -42,8 +42,8 @@ Forberedelsen kopierer filerne til `%LOCALAPPDATA%/ProviTrackerChromeBridge/exte
 
 Node-prøver kontrollerer produktkatalog, øverste række, historik, måned/årsskifte, formater og afbrudte/genoptagne registreringer. Python- og C++-prøver kontrollerer ordrenumre, stabile registreringsnumre, kvitteringer, kø og native transport. En isoleret Chromium-prøve betjener de faktiske udvidelsesfunktioner mod syntetiske Office-kontroller uden Microsoft-login eller kundedata. Windows-forløbet bruger det installerede hjælpeprogram, HKCU, opdatering/genindlæsning og kvitteringer fra det syntetiske panel.
 
-En skrivefri kørsel af V3 i brugerens rigtige Excel validerer kompilering, kolonner og historik. Den endelige afprøvning af et autentificeret salg fra brugerens Windows-program i en baggrundsfane sker hos brugeren, før fuld udgivelse. Microsoft kan ændre kontrollernes struktur; løsningen skal i så fald opdateres og afprøves igen.
+En skrivefri kørsel af V4 i brugerens rigtige Excel skal validere kompilering, kolonner og historik. Den endelige afprøvning af et autentificeret salg fra brugerens Windows-program i en baggrundsfane sker hos brugeren, før fuld udgivelse. Microsoft kan ændre kontrollernes struktur; løsningen skal i så fald opdateres og afprøves igen.
 
 ## Parametervinduet
 
-Udvidelsen genkender `payloadJson` via feltets label, navn eller tilgængelighedstekst. Den ældre hjælpetekst er kun en fallback. Et allerede åbent V3-parametervindue genbruges før kodeeditorens Kør-knap. Salgsdata erstatter den indledende `{"isTest":true}`-værdi; kun en fuld identisk værdi må sendes. Hvis Excel nulstiller et styret felt, udfyldes det igen højst tre gange. Et vindue, som et tidligere forsøg allerede har sendt, kræver kontrol før genbrug. Scriptet i Excel er uændret.
+Udvidelsen genkender `payloadJson` via feltets label, navn eller tilgængelighedstekst. Den ældre hjælpetekst er kun en fallback. Et allerede åbent V4-parametervindue genbruges før kodeeditorens Kør-knap. Salgsdata erstatter den indledende `{"isTest":true}`-værdi; kun en fuld identisk værdi må sendes. Hvis Excel nulstiller et styret felt, udfyldes det igen højst tre gange. Et vindue, som et tidligere forsøg allerede har sendt, kræver kontrol før genbrug. Opret det nye V4-script én gang fra programmets guide; bevar det gamle V3-script. Genforsøg bindes til den oprindelige arkfane via dens ID. Eksisterende V3-journalrækker behandles som registreringer i Ark1.

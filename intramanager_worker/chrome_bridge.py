@@ -13,7 +13,7 @@ from urllib.parse import urlparse, parse_qs
 
 HOST = 'dk.provitracker.masterark'
 LIMIT = 16384
-EXTENSION_FILES = ('manifest.json', 'background.js', 'identity.js', 'probe.js', 'popup.html', 'popup.js', 'office_ui.js', 'receipt.js', 'excel_online_sales_registration_v3.ts')
+EXTENSION_FILES = ('manifest.json', 'background.js', 'identity.js', 'probe.js', 'popup.html', 'popup.js', 'office_ui.js', 'receipt.js', 'excel_online_sales_registration_v3.ts', 'excel_online_sales_registration_v4.ts')
 
 def version_tuple(value):
     parts = str(value).split('.')
@@ -185,7 +185,11 @@ def sync_installed_extension():
     return install_extension(only_existing=True)
 
 def valid_receipt(value, registration):
-    if not isinstance(value, dict) or value.get('success') is not True or value.get('scriptVersion') != 3 or value.get('requestId') != registration.get('requestId'):
+    if not isinstance(value, dict) or value.get('success') is not True or value.get('scriptVersion') != 4 or value.get('requestId') != registration.get('requestId'):
+        return False
+    if not isinstance(value.get('worksheetName'), str) or not value['worksheetName'].strip() or not isinstance(value.get('worksheetId'), str) or not value['worksheetId']:
+        return False
+    if registration.get('worksheetName') and value['worksheetName'] != registration['worksheetName']:
         return False
     if registration.get('isTest') is True:
         return value.get('status') == 'checked' and value.get('orderNumber') == '' and value.get('registrationId') == '' and type(value.get('row')) is int and value.get('row') == 0
@@ -281,7 +285,7 @@ def native_main(origin):
                 result = {'requestId':last_id,'success':success,'status':'chrome-connected' if success else ('chrome-sleeping' if message.get('status') == 'chrome-sleeping' else 'error')}
             else:
                 success = valid_receipt(message, request.get('registration', {}))
-                result = {key:message.get(key) for key in ['requestId','scriptVersion','registrationId','orderNumber','row','status']}
+                result = {key:message.get(key) for key in ['requestId','scriptVersion','registrationId','orderNumber','row','status','worksheetName','worksheetId']}
                 result['success'] = success
             result['background'] = message.get('background') is True
             if not success: result['error'] = str(message.get('error', 'Excel bekræftede ikke salget. Kontrollér masterarket før genforsøg.'))[:500]
