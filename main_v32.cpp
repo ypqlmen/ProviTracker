@@ -5080,7 +5080,7 @@ QTableWidget::item {
                 if (index >= 0) {
                     const QString worksheetName = result.value("worksheetName").toString();
                     if (ok && !worksheetName.isEmpty()) repo.orders[index].masterRegistration["worksheetName"] = worksheetName;
-                    repo.orders[index].masterRegistrationState = ok ? "registered" : status == "chrome-sleeping" ? "waiting-browser" : "error";
+                    repo.orders[index].masterRegistrationState = ok ? "registered" : (status == "chrome-sleeping" || status == "chrome-login-required") ? "waiting-browser" : "error";
                     repo.orders[index].masterRegistrationError = ok ? QString() : error;
                 }
                 repo.saveOrders();

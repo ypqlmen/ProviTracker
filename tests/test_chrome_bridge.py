@@ -77,6 +77,27 @@ class ChromeBridgeTests(unittest.TestCase):
                 self.assertEqual(result['requestId'],'sleep')
                 self.assertEqual(result['error'],'Masterarket er i dvale.')
 
+    def test_login_wait_is_never_a_registration_receipt(self):
+        for kind in ['probe', 'setup', 'register']:
+            with self.subTest(kind=kind), tempfile.TemporaryDirectory() as folder:
+                root=Path(folder)
+                request={'type':kind,'requestId':'sleep','expiresAt':time.time()+30,
+                    'registration':{'requestId':'sleep','registrationId':'sale','orderNumber':'TEST'},
+                    'workbookUrl':'https://5rmarketing-my.sharepoint.com/a?sourcedoc={535121b9-ed93-447b-9f89-7e8d575d03e4}'}
+                bridge.atomic_json(root/'request.json',request)
+                stdin,stdout=io.BytesIO(),io.BytesIO()
+                for message in [{'type':'poll'},{'type':'result','requestId':'sleep','success':False,'status':'chrome-login-required','error':'Microsoft kræver login.'}]:
+                    bridge.write_frame(stdin,message)
+                stdin.seek(0)
+                with patch.object(bridge,'root',return_value=root),patch.object(bridge,'prepare_native_stdio'), \
+                    patch.object(bridge.sys,'stdin',SimpleNamespace(buffer=stdin)),patch.object(bridge.sys,'stdout',SimpleNamespace(buffer=stdout)):
+                    bridge.native_main('chrome-extension://'+bridge.extension_id()+'/')
+                result=bridge.read_json(root/'response.json')
+                self.assertFalse(result['success'])
+                self.assertEqual(result['status'],'chrome-login-required')
+                self.assertEqual(result['requestId'],'sleep')
+                self.assertEqual(result['error'],'Microsoft kræver login.')
+
     def test_registration_receipt_is_bound_to_request_and_sale(self):
         registration = {'requestId':'request', 'registrationId':'sale', 'orderNumber':'BISS'}
         receipt = {'success':True, 'scriptVersion':4,'worksheetName':'Salg ÆØÅ','worksheetId':'sheet-1', 'requestId':'request', 'registrationId':'sale', 'orderNumber':'BISS', 'status':'registered', 'row':123}

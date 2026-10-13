@@ -282,7 +282,8 @@ def native_main(origin):
         elif message.get('type') == 'result' and live and message.get('requestId') == last_id == request.get('requestId'):
             if request.get('type') == 'probe':
                 success = message.get('success') is True and message.get('status') == 'chrome-connected'
-                result = {'requestId':last_id,'success':success,'status':'chrome-connected' if success else ('chrome-sleeping' if message.get('status') == 'chrome-sleeping' else 'error')}
+                waiting_status = message.get('status') if message.get('status') in {'chrome-sleeping', 'chrome-login-required'} else 'error'
+                result = {'requestId':last_id,'success':success,'status':'chrome-connected' if success else waiting_status}
             else:
                 success = valid_receipt(message, request.get('registration', {}))
                 result = {key:message.get(key) for key in ['requestId','scriptVersion','registrationId','orderNumber','row','status','worksheetName','worksheetId']}

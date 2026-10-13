@@ -26,7 +26,7 @@ function background() {
   });
   return {calls,injected,timers,native:m=>native(m),runtime:(m,s)=>runtime(m,s,()=>{})};
 }
-const flush=async()=>{await Promise.resolve();await Promise.resolve()};
+const flush=async()=>{for(let i=0;i<20;i++)await Promise.resolve()};
 const idle=background();
 assert.equal(idle.calls[0].extensionVersion,version,'report the version actually running');
 for (const candidate of ['0.1.1',version,version+'.0','bad','0.1.65536',null]) {

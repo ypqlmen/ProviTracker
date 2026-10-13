@@ -66,6 +66,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Chrome identity tests failed' }
           node tests/chrome_probe_test.mjs
           if ($LASTEXITCODE -ne 0) { throw 'Chrome probe tests failed' }
+          node tests/chrome_open_test.mjs
+          if ($LASTEXITCODE -ne 0) { throw 'Chrome automatic workbook opening tests failed' }
           node tests/chrome_frames_test.mjs
           if ($LASTEXITCODE -ne 0) { throw 'Chrome frame tests failed' }
           node tests/chrome_update_test.mjs

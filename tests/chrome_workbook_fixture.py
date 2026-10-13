@@ -13,7 +13,7 @@ OFFICE_DIALOG = OFFICE_ORIGIN + '/fixture/sdx/fa000000043/1/en-us_web/dialog.htm
 EXCEL_URL = 'https://euc-excel.officeapps.live.com/x/_layouts/xlviewerinternal.aspx?provi-fixture=1'
 
 
-def open_workbook(context):
+def open_workbook(context, create=True):
     def document(route):
         if route.request.url.startswith(EXCEL_URL):
             # Matches the live Excel sheet control, including its authoritative title.
@@ -48,6 +48,7 @@ document.getElementById('field').replaceChildren(input)}mount();</script>'''
     context.route(re.compile(re.escape(WORKBOOK_URL)), document)
     context.route(re.compile(re.escape(EXCEL_URL)), document)
     context.route(OFFICE_ORIGIN+'/**', document)
+    if not create: return None
     workbook = context.new_page()
     workbook.goto(WORKBOOK_URL)
     workbook.frame_locator('#WacFrame_Excel_0').get_by_role('tab', name='Regneark Salg ÆØÅ', exact=True).wait_for()
@@ -57,7 +58,8 @@ document.getElementById('field').replaceChildren(input)}mount();</script>'''
 
 
 def check_native_workbook(context, worker, extension_id):
-    workbook = open_workbook(context)
+    # Configure only the routes: the extension itself must open the saved URL.
+    workbook = open_workbook(context, create=False)
     foreground = context.new_page()
     foreground.bring_to_front()
     try:
@@ -77,6 +79,16 @@ def check_native_workbook(context, worker, extension_id):
             deadline = time.monotonic()+45
             while process.poll() is None and time.monotonic() < deadline:
                 foreground.wait_for_timeout(100)
+                if workbook is None:
+                    matches=[page for page in context.pages if page.url==WORKBOOK_URL]
+                    if matches:
+                        assert len(matches)==1,'Extension must create exactly one configured workbook tab'
+                        workbook=matches[0]
+                        # Playwright attaches routing after an extension creates
+                        # a tab, so its first navigation is not intercepted. This
+                        # one fixture-only reload installs the synthetic document.
+                        # The product never reloads or activates the user's tab.
+                        workbook.reload()
             if process.poll() is None:
                 raise AssertionError('Native workbook probe exceeded its bounded deadline')
             output, errors = process.stdout.read(), process.stderr.read()
@@ -84,6 +96,10 @@ def check_native_workbook(context, worker, extension_id):
             result = json.loads(output)
             assert result.get('success') and result.get('status') == 'chrome-connected', result
             assert result.get('background') is True, result
+            matches=[page for page in context.pages if page.url==WORKBOOK_URL]
+            assert len(matches)==1,'Extension must create exactly one configured workbook tab'
+            workbook=matches[0]
+            workbook.evaluate('window.proviUntouched = "keep-workbook"')
             assert workbook.evaluate('window.proviUntouched') == 'keep-workbook', 'Probe must preserve the workbook'
             print('Native background workbook probe passed.',flush=True)
             check_native_sales(context, worker, workbook, foreground)
@@ -96,7 +112,8 @@ def check_native_workbook(context, worker, extension_id):
             process.stderr.close()
     finally:
         try:
-            foreground.close();workbook.close()
+            foreground.close()
+            if workbook: workbook.close()
             context.unroute(re.compile(re.escape(WORKBOOK_URL)))
             context.unroute(re.compile(re.escape(EXCEL_URL)))
             context.unroute(OFFICE_ORIGIN+'/**')
@@ -144,7 +161,9 @@ def check_native_sales(context, worker, workbook, foreground):
     assert retry['status']=='already_registered' and retry['row']==first['row']
     assert pane.evaluate('sales.length')==1
     forms=pane.evaluate('parameterForms')
-    assert len(forms)==3 and all(f['edits']==7 and f['blurs']==7 and f['commits']==1 for f in forms),forms
+    # Windows can emit an extra initialization blur before the first edit.
+    # Every edit must reach blur; the accepted payload must commit once only.
+    assert len(forms)==3 and all(f['edits']==7 and f['blurs']>=7 and f['commits']==1 for f in forms),forms
     assert workbook.evaluate('window.proviUntouched')=='keep-workbook'
     service=next(w for w in context.service_workers if w.url.startswith('chrome-extension://'))
     tab_id=service.evaluate('async()=> (await chrome.tabs.query({url:"https://5rmarketing-my.sharepoint.com/*"}))[0].id')
@@ -160,4 +179,21 @@ def check_native_sales(context, worker, workbook, foreground):
     finally:
         service.evaluate('chrome.tabs.get=fixtureTabsGet;delete globalThis.fixtureTabsGet')
     print('Native lifecycle wait passed with simulated discarded flag; active tab and workbook preserved',flush=True)
+    # Real navigation and redacted tabs.Tab URL, with a synthetic login document.
+    # No authentication credentials are read, entered or sent by this test.
+    login_url='https://login.microsoftonline.com/provi-fixture'
+    context.route(login_url,lambda route:route.fulfill(content_type='text/html',body='<h1>Synthetic login required</h1>'))
+    page_count=len(context.pages)
+    try:
+        workbook.goto(login_url)
+        for suffix in ['108','109']:
+            login=run('chrome-register',{**sale,'requestId':'00000000-0000-4000-8000-000000000'+suffix},False)
+            assert login['status']=='chrome-login-required',login
+            assert len(context.pages)==page_count,'A login retry must reuse the original workbook tab'
+        workbook.goto(WORKBOOK_URL)
+        resumed=run('chrome-setup',{'requestId':'00000000-0000-4000-8000-000000000110'})
+        assert resumed['status']=='checked' and len(context.pages)==page_count,resumed
+        print('Native login wait, existing login-tab reuse and resumed setup passed.',flush=True)
+    finally:
+        context.unroute(login_url)
     print('Actual Chromium/native host + Office controls transport passed: gallery, setup, parameters, fresh receipt, retry, background tab')

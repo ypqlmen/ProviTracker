@@ -8,8 +8,53 @@ let reloadRequested = false;
 let reloadTarget = null;
 let status = 'Åbn Provi Tracker, og vælg Kontrollér Chrome.';
 const workbookOrigins = ['https://5rmarketing-my.sharepoint.com', 'https://euc-excel.officeapps.live.com'];
+const loginOrigins = ['https://login.microsoftonline.com','https://login.microsoft.com','https://login.live.com'];
 function originOf(url) {
   try { return new URL(url).origin; } catch { return null; }
+}
+const launchKey=identity=>'masterLaunch.'+identity;
+async function tabUrl(tab) {
+  if(tab.url) return tab.url;
+  // Host permissions deliberately exclude login pages. Read only the main
+  // navigation address to recognize a login redirect; never inject there.
+  const frames=await chrome.webNavigation.getAllFrames({tabId:tab.id}) || [];
+  return frames.find(frame=>frame.frameId===0)?.url;
+}
+async function selectWorkbook(job,url) {
+  const tabs=(await chrome.tabs.query({})).filter(tab=>workbookIdentity(tab.url)===job.identity || workbookIdentity(tab.pendingUrl)===job.identity);
+  if(tabs.length>1) { finish(job,{success:false,error:'Masterarket er åbent flere gange. Lad kun én fane være åben.'});return null; }
+  let tab=tabs[0];
+  const key=launchKey(job.identity);
+  if(!tab) {
+    const saved=(await chrome.storage.session.get(key))[key];
+    if(saved && Number.isInteger(saved.tabId)) {
+      try {
+        const previous=await chrome.tabs.get(saved.tabId),address=await tabUrl(previous);
+        if(workbookIdentity(address)===job.identity || workbookIdentity(previous.pendingUrl)===job.identity || loginOrigins.includes(originOf(address))) tab=previous;
+      } catch { /* The previously opened tab was closed. */ }
+      if(!tab) await chrome.storage.session.remove(key);
+    }
+  }
+  if(!tab) { tab=await chrome.tabs.create({url,active:false});job.created=true; }
+  if(pending!==job) return null;
+  await chrome.storage.session.set({[key]:{tabId:tab.id}});
+  return tab;
+}
+async function workbookAvailable(job,tab) {
+  const address=await tabUrl(tab);
+  if(pending!==job) return false;
+  if(loginOrigins.includes(originOf(address))) {
+    finish(job,{success:false,status:'chrome-login-required',error:'Microsoft kræver login i masterark-fanen i Chrome. Salget afventer. Log ind og godkend; automatisk registrering prøver derefter igen.'});return false;
+  }
+  const next=workbookIdentity(tab.pendingUrl);
+  if(next && next!==job.identity) { finish(job,{success:false,error:'Chrome-fanen skiftede masterark. Kontrollér arket før genforsøg.'});return false; }
+  if(workbookIdentity(address)===job.identity) {
+    if(!job.protected) { await protectWorkbook(tab,job.identity);job.protected=true; }
+    return true;
+  }
+  // A newly created tab can still report about:blank while its saved URL loads.
+  if(!job.connected && (next===job.identity || (job.created && tab.status==='loading' && (!address || address==='about:blank')))) return false;
+  finish(job,{success:false,error:'Chrome-fanen skiftede til et andet ark under kontrollen. Prøv igen.'});return false;
 }
 function workbookFrames(frames) {
   const byId = new Map(frames.map(frame => [frame.frameId, frame]));
@@ -39,6 +84,7 @@ async function releaseWorkbook(id, tab) {
   const saved=(await chrome.storage.session.get(key))[key];
   if (!saved || (tab && workbookIdentity(tab.url)===saved.identity)) return;
   await chrome.storage.session.remove(key);
+  if(!tab || (tab.url && !loginOrigins.includes(originOf(tab.url)))) await chrome.storage.session.remove(launchKey(saved.identity));
   if (tab) await chrome.tabs.update(id,{autoDiscardable:saved.autoDiscardable}).catch(()=>{});
 }
 function sleeping(job, tab) {
@@ -53,10 +99,7 @@ async function confirmWorkbook(job, sheetName) {
   try {
     const tab = await chrome.tabs.get(job.tabId);
     if (pending !== job) return;
-    if (workbookIdentity(tab.url) !== job.identity) {
-      finish(job, {success:false, error:'Chrome-fanen skiftede til et andet ark under kontrollen. Prøv igen.'});
-      return;
-    }
+    if (!await workbookAvailable(job,tab)) return;
     if (sleeping(job, tab)) return;
     if (!validSheetName(sheetName)) return;
     if (job.type==='probe') finish(job, {success:true, status:'chrome-connected', worksheetName:sheetName, background:!tab.active});
@@ -109,7 +152,7 @@ async function scanOffice(job) {
   job.scanning=true;
   try {
     const tab=await chrome.tabs.get(job.tabId);
-    if(workbookIdentity(tab.url)!==job.identity) { finish(job,{success:false,error:'Chrome-fanen skiftede masterark. Registreringen er stoppet; kontrollér arket før genforsøg.'});return; }
+    if(!await workbookAvailable(job,tab)) return;
     if (sleeping(job, tab)) return;
     const frames=await chrome.webNavigation.getAllFrames({tabId:job.tabId}) || [];
     const office=officeFrames(frames);
@@ -146,7 +189,7 @@ async function scanOffice(job) {
         if(result.submitted) { job.phase='receipt';return; }
         if(result.receipt && validReceipt(result.receipt,job.registration)) {
           const current=await chrome.tabs.get(job.tabId);
-          if(workbookIdentity(current.url)!==job.identity) { finish(job,{success:false,error:'Masterarket skiftede under registreringen. Kontrollér salget manuelt.'});return; }
+          if(!await workbookAvailable(job,current)) return;
           finish(job,{...result.receipt,background:!current.active});return;
         }
       }
@@ -159,9 +202,7 @@ async function scan(job) {
   try {
     const tab=await chrome.tabs.get(job.tabId);
     if (pending!==job) return;
-    if (workbookIdentity(tab.url)!==job.identity) {
-      finish(job,{success:false,error:'Chrome-fanen skiftede masterark. Kontrollér arket før genforsøg.'});return;
-    }
+    if (!await workbookAvailable(job,tab)) return;
     // Check outside the injection lock: a suspended injected call can stay pending.
     if (sleeping(job,tab)) return;
     return job.connected ? scanOffice(job) : scanWorkbook(job);
@@ -219,16 +260,9 @@ function connect() {
     if(message.type==='register' && (!registration || registration.requestId!==message.requestId || typeof registration.registrationId!=='string' || registration.isTest===true)) return;
     const job = pending = {requestId:message.requestId, identity, heard:false,type:message.type,registration};
     try {
-      const tabs = (await chrome.tabs.query({url:'https://5rmarketing-my.sharepoint.com/*'}))
-        .filter(tab => workbookIdentity(tab.url) === identity);
-      if (pending !== job) return;
-      if (tabs.length !== 1) {
-        finish(job, {success:false, error:tabs.length ? 'Masterarket er åbent flere gange. Lad kun én fane være åben.' : 'Åbn det gemte masterark i Chrome, og log ind.'});
-        return;
-      }
-      job.tabId = tabs[0].id;
-      await protectWorkbook(tabs[0],identity);
-      if (pending!==job || sleeping(job,await chrome.tabs.get(job.tabId))) return;
+      const tab=await selectWorkbook(job,message.workbookUrl);
+      if (pending !== job || !tab) return;
+      job.tabId = tab.id;
       // Re-read the current frames while Excel boots, including frames created
       // after the first scan. Never activate or reload the workbook tab.
       job.poll = setInterval(() => scan(job), 500);
