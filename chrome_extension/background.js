@@ -118,24 +118,31 @@ async function scanOffice(job) {
     const dialogs=office.filter(frame=>/\/dialog\.html(?:[?#]|$)/i.test(frame.url));
     const parameterPhase=['open','run','parameter','submit'].includes(job.phase);
     const targets=parameterPhase && dialogs.length ? dialogs : office.length ? office : job.phase==='open' ? excel : [];
+    job.officeMissing=targets.length===0;
     for(const frame of targets) {
       if(pending!==job) return;
       let readings;
       try { readings=await chrome.scripting.executeScript({target:{tabId:job.tabId,frameIds:[frame.frameId]},func:officeStep,args:[job.phase,JSON.stringify(job.registration)]}); }
       catch { job.officeBlocked=true;continue; }
+      job.officeBlocked=false;
       for(const item of readings) {
         const result=item.result;
         if(!result) continue;
         if(result.error) { finish(job,{success:false,error:result.error});return; }
         if(result.parameters) { job.phase='parameter';return; }
+        if(result.waiting) { job.waiting=result.waiting;return; }
+        job.waiting=null;
         if(result.refill) {
-          job.refills=(job.refills || 0)+1;
-          if(job.refills>3) { finish(job,{success:false,error:'Excel beholdt ikke salgsdataene i payloadJson-feltet. Salget er ikke bekræftet; luk parametervinduet og prøv igen fra Ordrer.'});return; }
+          // Hydration/recreated controls can reset the default several times.
+          // Bound recovery by time, not three half-second scans. Never run a
+          // field that still contains the default or another attempt's payload.
+          job.parameterSince ??= Date.now();
+          if(Date.now()-job.parameterSince>15000) { finish(job,{success:false,error:'Excel nulstiller stadig payloadJson-feltet. Salget er ikke bekræftet. Genindlæs masterarket, og prøv samme ordre igen.'});return; }
           job.phase='parameter';return;
         }
         if(result.ready) { job.phase='run';return; }
         if(result.started) { job.phase='parameter';return; }
-        if(result.filled) { job.phase='submit';return; }
+        if(result.filled) { job.parameterSince ??= Date.now();job.phase='submit';return; }
         if(result.submitted) { job.phase='receipt';return; }
         if(result.receipt && validReceipt(result.receipt,job.registration)) {
           const current=await chrome.tabs.get(job.tabId);
@@ -184,7 +191,7 @@ function finish(job, result) {
   clearTimeout(job.timeout);
   pending = null;
   status = result.success ? (job.type==='probe' ? 'Forbindelsen til masterarket virker.' : 'Excel har bekræftet registreringen.') : result.error;
-  port?.postMessage({type:'result', requestId:job.requestId, worksheetName:job.registration?.worksheetName, ...result});
+  port?.postMessage({type:'result', requestId:job.requestId, worksheetName:job.registration?.worksheetName, extensionVersion:loadedVersion, ...result});
   reloadWhenIdle();
 }
 function connect() {
@@ -226,7 +233,7 @@ function connect() {
       // after the first scan. Never activate or reload the workbook tab.
       job.poll = setInterval(() => scan(job), 500);
       job.timeout = setTimeout(() => finish(job, {success:false, error:job.connected
-        ? (job.officeBlocked ? 'Chrome-udvidelsen mangler adgang til Excels scriptpanel. Genindlæs udvidelsen i Chrome, og prøv igen.' : (['parameter','submit','run'].includes(job.phase) ? 'Excel stoppede ved scriptets parametre. Luk parametervinduet, kontrollér at Chrome-udvidelsen er opdateret, og prøv igen fra Ordrer.' : 'Excel bekræftede ikke registreringen. Åbn ProviTrackerSalesRegistrationV4 i kodeeditoren via Automatiser. Kontrollér arket før genforsøg.'))
+        ? (job.officeBlocked ? 'Chrome-udvidelsen mangler adgang til Excels scriptpanel. Genindlæs udvidelsen i Chrome, og prøv igen.' : job.officeMissing ? 'Excels scriptvindue blev ikke fundet. Åbn ProviTrackerSalesRegistrationV4 i kodeeditoren, og prøv igen.' : job.waiting==='parameter-field' ? 'Excel viser parametervinduet, men payloadJson-feltet er ikke klar til indtastning. Genindlæs masterarket, og prøv igen.' : job.waiting==='parameter-run' ? 'Salgsdataene er indsat, men Excel har ikke aktiveret Kør. Genindlæs masterarket, og prøv samme ordre igen.' : (['parameter','submit','run'].includes(job.phase) ? 'Excel stoppede ved scriptets parametre. Luk parametervinduet, kontrollér at Chrome-udvidelsen er opdateret, og prøv igen fra Ordrer.' : 'Excel bekræftede ikke registreringen. Åbn ProviTrackerSalesRegistrationV4 i kodeeditoren via Automatiser. Kontrollér arket før genforsøg.'))
         : job.excelBlocked && !job.excelRead
         ? 'Chrome-udvidelsen har ikke adgang til Excel-rammen. Kontrollér udvidelsens webstedsadgang til euc-excel.officeapps.live.com i Chrome, og prøv igen.'
         : job.heard && !job.excelRead

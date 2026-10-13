@@ -26,13 +26,21 @@ def open_workbook(context):
             # Transport fixture only: V4 workbook logic is tested independently in Node.
             body = '''<div><span>ProviTrackerSalesRegistrationV4</span><button id="edit" onclick="document.getElementById('editor').hidden=false;document.getElementById('run').hidden=false;this.hidden=true">Rediger</button></div>
 <textarea id="editor" aria-label="editor" hidden></textarea><button id="run" hidden onclick="parent.postMessage({type:'parameters'},'https://euc-excel.officeapps.live.com')">Kør</button><ul id="output"></ul>
-<script>window.sales=[];window.preview=null;window.months=[];addEventListener('message',e=>{if(e.origin!=='https://euc-excel.officeapps.live.com'||e.data.type!=='payload')return;const p=e.data.payload;let row=0,status='checked';
+<script>window.sales=[];window.parameterForms=[];window.preview=null;window.months=[];addEventListener('message',e=>{if(e.origin!=='https://euc-excel.officeapps.live.com'||e.data.type!=='payload')return;window.parameterForms.push(e.data.metrics);const p=e.data.payload;let row=0,status='checked';
 if(!p.isTest){const old=sales.find(x=>x.registrationId===p.registrationId);status=old?'already_registered':'registered';if(old)row=old.row;else{const month=p.date.slice(3);if(months.at(-1)!==month)months.push(month);row=122+sales.length+months.length;preview=p;sales.push({...p,row})}}
 const r={success:true,status,scriptVersion:4,worksheetName:p.worksheetName,worksheetId:"fixture-sheet",row,orderNumber:p.isTest?'':p.orderNumber,registrationId:p.isTest?'':p.registrationId,requestId:p.requestId};const li=document.createElement('li');li.setAttribute('role','listitem');li.textContent='Oplysninger: PROVITRACKER_RESULT:'+JSON.stringify(r);document.getElementById('output').append(li)})</script>'''
         elif route.request.url.startswith(OFFICE_DIALOG):
-            # Default test payload, implicit text type, accessible parameter label,
-            # and a controlled field that asynchronously reverts its first edit.
-            body = '''<div>Angiv parametre for ProviTrackerSalesRegistrationV4</div><label for="payload">payloadJson *</label><input id="payload" value='{"isTest":true}' oninput="const value=this.value;Promise.resolve().then(()=>{if(!window.reverted){window.reverted=true;this.value=JSON.stringify({isTest:true})}else{window.payload=value;document.getElementById('submit').disabled=false}})"><button id="submit" disabled onclick="parent.postMessage({type:'payload',payload:JSON.parse(window.payload)},'https://euc-excel.officeapps.live.com')">Kør</button>'''
+            # Live Office uses an unassociated label and localized placeholder.
+            # This form commits on blur after focus + a complete replacement input
+            # event, and recreates the control six times during initialization.
+            # The former no-focus/no-blur writer cannot commit; the three-refill
+            # recovery also gives up too early. Run must never use the test default.
+            body = '''<div>Angiv parametre for ProviTrackerSalesRegistrationV4</div><div>payloadJson*</div><span id="field"></span><button id="submit" disabled onclick="parent.postMessage({type:'payload',payload:JSON.parse(window.payload),metrics:{edits:window.edits,blurs:window.blurs,commits:window.commits}},'https://euc-excel.officeapps.live.com')">Kør</button>
+<script>window.resets=0;window.edits=0;window.commits=0;
+function mount(){const input=document.createElement('input');input.id='payload';input.placeholder='Angiv en streng (f.eks. abcd)';input.value=JSON.stringify({isTest:true});
+input.addEventListener('input',e=>{window.eventInfo={active:document.activeElement===input,typed:e instanceof InputEvent,inputType:e.inputType,dataMatches:e.data===input.value};if(document.activeElement!==input||!(e instanceof InputEvent)||e.data!==input.value||e.inputType!=='insertReplacementText'){Promise.resolve().then(()=>{input.value=JSON.stringify({isTest:true})});return}input.pendingValue=input.value;window.edits++});
+input.addEventListener('blur',()=>{window.blurs=(window.blurs||0)+1;const value=input.pendingValue;if(!value)return;Promise.resolve().then(()=>{if(window.resets++<6){mount()}else{window.payload=value;window.commits++;document.getElementById('submit').disabled=false}})});
+document.getElementById('field').replaceChildren(input)}mount();</script>'''
         else:
             # SharePoint starts with an empty source and loads Excel asynchronously.
             body = '<iframe id="WacFrame_Excel_0" src=""></iframe><script>setTimeout(()=>document.querySelector("iframe").src='+json.dumps(EXCEL_URL)+',500)</script>'
@@ -127,7 +135,7 @@ def check_native_sales(context, worker, workbook, foreground):
     # A prior attempt can leave a dialog open with the test default. The next
     # sale must reuse that dialog, replace the default and submit only its data.
     pane.evaluate("document.getElementById('run').click()")
-    workbook.frame_locator('#WacFrame_Excel_0').frame_locator('#dialog').get_by_label('payloadJson *',exact=True).wait_for()
+    workbook.frame_locator('#WacFrame_Excel_0').frame_locator('#dialog').get_by_placeholder('Angiv en streng (f.eks. abcd)',exact=True).wait_for()
     first=run('chrome-register',sale)
     assert first['status']=='registered' and first['registrationId']==sale['registrationId']
     assert pane.evaluate('sales.length')==1
@@ -135,6 +143,8 @@ def check_native_sales(context, worker, workbook, foreground):
     retry=run('chrome-register',{**sale,'requestId':'00000000-0000-4000-8000-000000000104'})
     assert retry['status']=='already_registered' and retry['row']==first['row']
     assert pane.evaluate('sales.length')==1
+    forms=pane.evaluate('parameterForms')
+    assert len(forms)==3 and all(f['edits']==7 and f['blurs']==7 and f['commits']==1 for f in forms),forms
     assert workbook.evaluate('window.proviUntouched')=='keep-workbook'
     service=next(w for w in context.service_workers if w.url.startswith('chrome-extension://'))
     tab_id=service.evaluate('async()=> (await chrome.tabs.query({url:"https://5rmarketing-my.sharepoint.com/*"}))[0].id')

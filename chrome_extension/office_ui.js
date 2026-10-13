@@ -62,7 +62,7 @@ export function officeStep(phase, payloadJson) {
     const inputs=namedFields.length ? namedFields : fields.filter(el=>/^(Angiv en streng|Enter a string)/.test(el.placeholder || ''));
     const run=button(['Kør','Run']);
     if (inputs.length>1) return {error:'Excel viser flere mulige payloadJson-felter. Registreringen er stoppet.'};
-    if (inputs.length!==1) return null;
+    if (inputs.length!==1) return {waiting:'parameter-field'};
     const input=inputs[0],request=JSON.parse(payloadJson);
     // A previous attempt can leave this dialog open. Resume its parameter step
     // instead of clicking the editor's Run button behind the modal a second time.
@@ -76,16 +76,33 @@ export function officeStep(phase, payloadJson) {
       // A controlled field can revert while the page applies its state update.
       // Return to filling; never submit the default test value or an older sale.
       if (input.value!==payloadJson) return {refill:true};
-      if (!run) return null;
+      if (!run) return {waiting:'parameter-run'};
       globalThis.proviScriptSubmitted=request.requestId;
       run.click();
       return {submitted:true};
     }
+    if (input.readOnly) return {waiting:'parameter-field'};
+    // Fluent's parameter form can appear before its controlled input has finished
+    // initializing. Use the normal focus/edit/blur sequence; the background job
+    // checks the value again on a later scan before choosing Run.
+    const focusControl=focused=>{
+      const types=focused ? ['focus','focusin'] : ['blur','focusout'];
+      const seen=new Set(),observe=event=>seen.add(event.type);
+      types.forEach(type=>input.addEventListener(type,observe));
+      if(focused) input.focus({preventScroll:true});else input.blur();
+      types.forEach(type=>input.removeEventListener(type,observe));
+      // In an inactive tab Chrome changes activeElement without emitting these
+      // events. Commit the same form lifecycle without activating the browser
+      // tab, and avoid double events when the native focus/blur did emit them.
+      for(const type of types) if(!seen.has(type)) input.dispatchEvent(new FocusEvent(type,{bubbles:type==='focusin'||type==='focusout',composed:true}));
+    };
+    focusControl(true);
     const prototype=input.tagName==='TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
     const setter=Object.getOwnPropertyDescriptor(prototype,'value').set;
     setter.call(input,payloadJson);
-    input.dispatchEvent(new Event('input',{bubbles:true}));
+    input.dispatchEvent(new InputEvent('input',{bubbles:true,composed:true,inputType:'insertReplacementText',data:payloadJson}));
     input.dispatchEvent(new Event('change',{bubbles:true}));
+    focusControl(false);
     if (input.value!==payloadJson) return {refill:true};
     return {filled:true};
   }
