@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import {workbookIdentity} from '../chrome_extension/identity.js';
+import {traceStep,diagnosticReport,failureReason} from '../chrome_extension/diagnostics.js';
 import {officeStep} from '../chrome_extension/office_ui.js';
 import {validReceipt} from '../chrome_extension/receipt.js';
 const url='https://5rmarketing-my.sharepoint.com/a?sourcedoc={00000000-0000-4000-8000-000000000001}';
@@ -13,7 +14,7 @@ const receipt={success:true,status:'registered',scriptVersion:4,worksheetName:'S
 assert(validReceipt(receipt,registration));
 for(const [key,value] of [['requestId','stale'],['registrationId','sale-b'],['orderNumber','other'],['row',3],['row',1.5],['scriptVersion',2],['scriptVersion',3],['worksheetName',''],['worksheetId',''],['success',1]]) assert(!validReceipt({...receipt,[key]:value},registration));
 const source=fs.readFileSync('chrome_extension/background.js','utf8').replace(/^import .*;$/gm,'');
-function fixture({existingDialog=false,reverts=0,wrongDialog=false,waiting=null}={}){
+function fixture({existingDialog=false,reverts=0,wrongDialog=false,waiting=null,injectionError=false,hangAt=null}={}){
  const calls=[],phases=[],intervals=[],timeouts=[];let native,currentUrl=url,nextReceipt=receipt,frozen=false,discarded=false,updated,removed;const stored={};let dialog=existingDialog,remainingReverts=reverts;
  const event=()=>({addListener(){}});
  const port={postMessage:m=>calls.push(m),onDisconnect:event(),onMessage:{addListener:fn=>native=fn}};
@@ -22,18 +23,20 @@ function fixture({existingDialog=false,reverts=0,wrongDialog=false,waiting=null}
  {frameId:3,parentFrameId:1,url:'https://fa000000043.mro1cdnstorage.public.onecdn.static.microsoft/x/sdx/fa000000043/1/en-us_web/dialog.html'},
  {frameId:4,parentFrameId:0,url:'https://fa000000043.mro1cdnstorage.public.onecdn.static.microsoft/x/sdx/fa000000043/1/en-us_web/index.html'}];
  let clock=0;
- vm.runInNewContext(source,{workbookIdentity,officeStep,validReceipt,URL,Date:{now:()=>clock},
+ vm.runInNewContext(source,{workbookIdentity,traceStep,diagnosticReport,failureReason,officeStep,validReceipt,URL,Date:{now:()=>clock},
  setInterval:fn=>{intervals.push(fn);return fn},clearInterval(){},setTimeout:fn=>{timeouts.push(fn);return fn},clearTimeout(){},
  chrome:{runtime:{getManifest:()=>({version}),reload:()=>calls.push('reload'),connectNative:()=>port,onMessage:event(),onStartup:event(),onInstalled:event()},
- storage:{session:{get:async key=>({[key]:stored[key]}),set:async values=>Object.assign(stored,values),remove:async key=>delete stored[key]}},
+ storage:{local:{set:async data=>Object.assign(stored,data)},session:{get:async key=>({[key]:stored[key]}),set:async values=>Object.assign(stored,values),remove:async key=>delete stored[key]}},
  tabs:{onUpdated:{addListener:fn=>updated=fn},onRemoved:{addListener:fn=>removed=fn},query:async()=>[{id:7,url,autoDiscardable:true,frozen,discarded}],get:async()=>({id:7,url:currentUrl,active:false,frozen,discarded}),sendMessage:async()=>{},update:async(id,value)=>{assert.equal(id,7);assert.equal(Object.keys(value).join(','),'autoDiscardable','never activate, reload or navigate the workbook');calls.push({protection:value.autoDiscardable});}},
  webNavigation:{getAllFrames:async()=>frames.filter(f=>f.frameId!==3 || dialog)},scripting:{executeScript:async input=>{
  if(input.files)return [{result:{sheet:'Salg ÆØÅ',origin:'https://euc-excel.officeapps.live.com'}}];
  assert.equal(input.func,officeStep);assert(!input.target.frameIds.includes(4),'pane outside verified Excel parent excluded');
- const phase=input.args[0],request=JSON.parse(input.args[1]);assert.equal(request.worksheetName,'Salg ÆØÅ');phases.push(phase);
+ const phase=input.args[0],request=JSON.parse(input.args[1]);
+ if(phase===hangAt)return await new Promise(()=>{});
+ if(injectionError && phase==='parameter')throw Error('Cannot access frame: https://private.example/?token=SECRET');assert.equal(request.worksheetName,'Salg ÆØÅ');phases.push(phase);
  if(input.target.frameIds.includes(3) && wrongDialog)return [{result:{error:'Wrong script'}}];
  if(phase==='open')return [{result:dialog?{parameters:true}:{ready:true}}];if(phase==='run'){dialog=true;return [{result:{started:true}}];}
- if(phase==='parameter')return [{result:waiting?{waiting}:{filled:true}}];if(phase==='submit'){if(remainingReverts-->0)return [{result:{refill:true}}];dialog=false;return [{result:{submitted:true}}];}
+ if(phase==='parameter')return [{result:waiting?{waiting,controls:{fields:1,matches:1,matched:false,defaultTest:true,payload:'SECRET',url:'SECRET'}}:{filled:true}}];if(phase==='submit'){if(remainingReverts-->0)return [{result:{refill:true}}];dialog=false;return [{result:{submitted:true}}];}
  return [{result:{receipt:request.isTest?{success:true,status:'checked',scriptVersion:4,worksheetName:request.worksheetName,worksheetId:'sheet-1',row:0,orderNumber:'',registrationId:'',requestId:request.requestId}:nextReceipt}}];
  }},alarms:{onAlarm:event(),create(){}}}});
  return {calls,phases,timeouts,native:m=>native(m),tick:async()=>{clock+=500;intervals.at(-1)();for(let i=0;i<20;i++)await Promise.resolve()},navigate:()=>currentUrl=url.replace('000000000001','000000000002'),receipt:r=>nextReceipt=r,
@@ -50,7 +53,7 @@ f=fixture();await f.native({type:'register',requestId:'request-a',workbookUrl:ur
 f=fixture();f.freeze();await f.native({type:'register',requestId:'request-a',workbookUrl:url,registration});assert.equal(f.calls.at(-1).status,'chrome-sleeping');assert.equal(f.phases.length,0);assert.equal(f.calls.at(-1).success,false);
 f.resume();await f.native({type:'register',requestId:'request-a',workbookUrl:url,registration});for(let i=0;i<5;i++)await f.tick();assert.equal(f.calls.at(-1).status,'registered');
 f=fixture();await f.native({type:'register',requestId:'request-a',workbookUrl:url,registration});await f.tick();f.freeze();await f.tick();assert.equal(f.calls.at(-1).status,'chrome-sleeping');assert(!f.phases.includes('submit'));
-f=fixture();f.discard();await f.native({type:'probe',requestId:'request-a',workbookUrl:url});assert.equal(f.calls.at(-1).status,'chrome-sleeping');assert.match(f.calls.at(-1).error,/dvale/);await f.leave();assert.equal(f.calls.at(-1).protection,true);assert.equal(Object.keys(f.stored).length,0);
+f=fixture();f.discard();await f.native({type:'probe',requestId:'request-a',workbookUrl:url});assert.equal(f.calls.at(-1).status,'chrome-sleeping');assert.match(f.calls.at(-1).error,/dvale/);await f.leave();assert.equal(f.calls.at(-1).protection,true);assert.deepEqual(Object.keys(f.stored),['lastFailure']);
 f=fixture({existingDialog:true});await f.native({type:'register',requestId:'request-a',workbookUrl:url,registration});for(let i=0;i<5;i++)await f.tick();assert.deepEqual(f.phases,['open','parameter','submit','receipt']);assert.equal(f.calls.at(-1).status,'registered');
 f=fixture({reverts:1});await f.native({type:'register',requestId:'request-a',workbookUrl:url,registration});for(let i=0;i<7;i++)await f.tick();assert.deepEqual(f.phases,['open','run','parameter','submit','parameter','submit','receipt']);assert.equal(f.calls.at(-1).status,'registered');
 f=fixture({reverts:6});await f.native({type:'register',requestId:'request-a',workbookUrl:url,registration});for(let i=0;i<17;i++)await f.tick();assert.equal(f.calls.at(-1).status,'registered','slow control initialization must survive more than three reverts');
@@ -58,4 +61,15 @@ f=fixture({reverts:100});await f.native({type:'register',requestId:'request-a',w
 for(const waiting of ['parameter-field','parameter-run']){f=fixture({waiting});await f.native({type:'setup',requestId:'setup-a',workbookUrl:url});for(let i=0;i<5;i++)await f.tick();f.timeouts.at(-1)();assert.match(f.calls.at(-1).error,waiting==='parameter-field'?/ikke klar/:/ikke aktiveret Kør/);assert.equal(f.calls.at(-1).extensionVersion,version);}
 f=fixture({existingDialog:true,wrongDialog:true});await f.native({type:'register',requestId:'request-a',workbookUrl:url,registration});await f.tick();assert.equal(f.calls.at(-1).error,'Wrong script');assert.deepEqual(f.phases,['open']);
 f=fixture();await f.native({type:'register',requestId:'request-a',workbookUrl:url,registration:{...registration,worksheetName:'Another'}});assert.equal(f.calls.at(-1).success,false);assert.equal(f.phases.length,0,'a saved sale cannot move to another sheet');
+f=fixture({injectionError:true});await f.native({type:'register',requestId:'request-a',workbookUrl:url,registration});for(let i=0;i<5;i++)await f.tick();f.timeouts.at(-1)();
+assert(f.stored.lastFailure.events.some(e=>e.event==='rejected' && e.reason==='permission'));
+assert(!JSON.stringify(f.stored.lastFailure).includes('SECRET'));
+f=fixture({hangAt:'parameter'});await f.native({type:'register',requestId:'request-a',workbookUrl:url,registration});for(let i=0;i<5;i++)await f.tick();f.timeouts.at(-1)();
+assert(f.stored.lastFailure.events.some(e=>e.event==='injection' && e.phase==='parameter'));
+assert(f.stored.lastFailure.events.some(e=>e.event==='finished' && e.locked && e.inflight===1));
+assert(!f.phases.includes('submit'),'a hung injection must not trigger another run');
+f=fixture({waiting:'parameter-field'});await f.native({type:'register',requestId:'request-a',workbookUrl:url,registration});for(let i=0;i<5;i++)await f.tick();f.timeouts.at(-1)();
+assert(f.stored.lastFailure.events.some(e=>e.defaultTest===true && e.fields===1));
+assert(!JSON.stringify(f.stored.lastFailure).includes('SECRET'));
+const failedLog=JSON.stringify(f.stored.lastFailure);await f.native({type:'probe',requestId:'read-only',workbookUrl:url});assert.equal(JSON.stringify(f.stored.lastFailure),failedLog,'successful probes preserve failure evidence');
 console.log('Chrome sale transport: setup, fresh receipt identity, background tab, changed workbook, permitted pane and deferred updates passed.');

@@ -13,7 +13,7 @@ from urllib.parse import urlparse, parse_qs
 
 HOST = 'dk.provitracker.masterark'
 LIMIT = 16384
-EXTENSION_FILES = ('manifest.json', 'background.js', 'identity.js', 'probe.js', 'popup.html', 'popup.js', 'office_ui.js', 'receipt.js', 'excel_online_sales_registration_v3.ts', 'excel_online_sales_registration_v4.ts')
+EXTENSION_FILES = ('manifest.json', 'background.js', 'diagnostics.js', 'identity.js', 'probe.js', 'popup.html', 'popup.js', 'office_ui.js', 'receipt.js', 'excel_online_sales_registration_v3.ts', 'excel_online_sales_registration_v4.ts')
 
 def version_tuple(value):
     parts = str(value).split('.')

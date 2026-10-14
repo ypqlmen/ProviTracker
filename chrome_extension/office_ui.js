@@ -62,26 +62,29 @@ export function officeStep(phase, payloadJson) {
     const inputs=namedFields.length ? namedFields : fields.filter(el=>/^(Angiv en streng|Enter a string)/.test(el.placeholder || ''));
     const run=button(['Kør','Run']);
     if (inputs.length>1) return {error:'Excel viser flere mulige payloadJson-felter. Registreringen er stoppet.'};
-    if (inputs.length!==1) return {waiting:'parameter-field'};
+    if (inputs.length!==1) return {waiting:'parameter-field',controls:{scriptMatched:true,fields:fields.length,matches:inputs.length}};
     const input=inputs[0],request=JSON.parse(payloadJson);
+    const report=result=>({...result,controls:{scriptMatched:true,fields:fields.length,matches:inputs.length,
+      matched:input.value===payloadJson,defaultTest:input.value==='{}' || /^\s*\{\s*"isTest"\s*:\s*true\s*\}\s*$/.test(input.value),
+      attached:input.isConnected,readOnly:input.readOnly,disabled:input.disabled,runEnabled:!!run}});
     // A previous attempt can leave this dialog open. Resume its parameter step
     // instead of clicking the editor's Run button behind the modal a second time.
     if (['open','run'].includes(phase)) {
       if (globalThis.proviScriptSubmitted && globalThis.proviScriptSubmitted!==request.requestId)
         return {error:'Et tidligere Excel-forsøg har allerede valgt Kør. Kontrollér salget og luk parametervinduet før genforsøg.'};
-      return {parameters:true};
+      return report({parameters:true});
     }
-    if (globalThis.proviScriptSubmitted===request.requestId) return {submitted:true};
+    if (globalThis.proviScriptSubmitted===request.requestId) return report({submitted:true});
     if (phase==='submit') {
       // A controlled field can revert while the page applies its state update.
       // Return to filling; never submit the default test value or an older sale.
-      if (input.value!==payloadJson) return {refill:true};
-      if (!run) return {waiting:'parameter-run'};
+      if (input.value!==payloadJson) return report({refill:true});
+      if (!run) return report({waiting:'parameter-run'});
       globalThis.proviScriptSubmitted=request.requestId;
       run.click();
-      return {submitted:true};
+      return report({submitted:true});
     }
-    if (input.readOnly) return {waiting:'parameter-field'};
+    if (input.readOnly) return report({waiting:'parameter-field'});
     // Fluent's parameter form can appear before its controlled input has finished
     // initializing. Use the normal focus/edit/blur sequence; the background job
     // checks the value again on a later scan before choosing Run.
@@ -103,8 +106,8 @@ export function officeStep(phase, payloadJson) {
     input.dispatchEvent(new InputEvent('input',{bubbles:true,composed:true,inputType:'insertReplacementText',data:payloadJson}));
     input.dispatchEvent(new Event('change',{bubbles:true}));
     focusControl(false);
-    if (input.value!==payloadJson) return {refill:true};
-    return {filled:true};
+    if (input.value!==payloadJson) return report({refill:true});
+    return report({filled:true});
   }
   if (phase === 'receipt' && /\/index\.html$/.test(location.pathname) && named) {
     for (const item of document.querySelectorAll('[role="listitem"]')) {

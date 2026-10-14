@@ -1,6 +1,7 @@
 import {workbookIdentity} from './identity.js';
 import {officeStep} from './office_ui.js';
 import {validReceipt} from './receipt.js';
+import {traceStep,diagnosticReport,failureReason} from './diagnostics.js';
 let port = null;
 let pending = null;
 const loadedVersion = chrome.runtime.getManifest().version;
@@ -118,9 +119,13 @@ async function scanWorkbook(job) {
     const frames = await chrome.webNavigation.getAllFrames({tabId:job.tabId});
     if (pending !== job) return;
     const allowed = workbookFrames(frames || []);
+    traceStep(job,'workbook-frames',{frames:(frames || []).length,targets:allowed.length});
+    job.inflight=allowed.length;
     const readings = await Promise.allSettled(allowed.map(frame => chrome.scripting.executeScript({
       target:{tabId:job.tabId,frameIds:[frame.frameId]},files:['probe.js']})));
+    job.inflight=0;
     if (pending !== job) return;
+    readings.forEach((reading,i)=>{if(reading.status==='rejected')traceStep(job,'rejected',{phase:'probe',frame:allowed[i].frameId,reason:failureReason(reading.reason)});});
     job.excelBlocked = readings.some((reading, i) => reading.status === 'rejected'
       && originOf(allowed[i].url) === workbookOrigins[1]);
     for (const reading of readings) {
@@ -136,7 +141,7 @@ async function scanWorkbook(job) {
     // Compatibility with an already attached content script. Direct frame results
     // above do not depend on the page's content-message listeners surviving reload.
     chrome.tabs.sendMessage(job.tabId, {type:'probe', requestId:job.requestId}).catch(() => {});
-  } catch { /* Frames can change during Excel boot; retry until the bounded deadline. */ }
+  } catch(error) { traceStep(job,'scan-error',{phase:'probe',reason:failureReason(error)}); }
   finally { job.scanning = false; }
 }
 const officeOrigin = 'https://fa000000043.mro1cdnstorage.public.onecdn.static.microsoft';
@@ -162,14 +167,20 @@ async function scanOffice(job) {
     const parameterPhase=['open','run','parameter','submit'].includes(job.phase);
     const targets=parameterPhase && dialogs.length ? dialogs : office.length ? office : job.phase==='open' ? excel : [];
     job.officeMissing=targets.length===0;
+    traceStep(job,'office-frames',{phase:job.phase,frames:frames.length,office:office.length,dialogs:dialogs.length,targets:targets.length});
     for(const frame of targets) {
       if(pending!==job) return;
       let readings;
+      traceStep(job,'injection',{phase:job.phase,frame:frame.frameId});
+      job.inflight=1;
       try { readings=await chrome.scripting.executeScript({target:{tabId:job.tabId,frameIds:[frame.frameId]},func:officeStep,args:[job.phase,JSON.stringify(job.registration)]}); }
-      catch { job.officeBlocked=true;continue; }
+      catch(error) { job.inflight=0;traceStep(job,'rejected',{phase:job.phase,frame:frame.frameId,reason:failureReason(error)});job.officeBlocked=true;continue; }
+      job.inflight=0;
       job.officeBlocked=false;
       for(const item of readings) {
         const result=item.result;
+        const outcome=!result?'none':result.error?'error':result.waiting?'waiting':result.receipt?'receipt':['parameters','refill','ready','started','filled','submitted'].find(key=>result[key]) || 'other';
+        traceStep(job,'injected',{phase:job.phase,frame:frame.frameId,outcome,reason:result?.waiting,...result?.controls});
         if(!result) continue;
         if(result.error) { finish(job,{success:false,error:result.error});return; }
         if(result.parameters) { job.phase='parameter';return; }
@@ -194,7 +205,7 @@ async function scanOffice(job) {
         }
       }
     }
-  } catch { /* Frame recreation and transient Excel navigation are retried within the deadline. */ }
+  } catch(error) { traceStep(job,'scan-error',{phase:job.phase,reason:failureReason(error)}); }
   finally { job.scanning=false; }
 }
 async function scan(job) {
@@ -202,6 +213,7 @@ async function scan(job) {
   try {
     const tab=await chrome.tabs.get(job.tabId);
     if (pending!==job) return;
+    traceStep(job,'tab',{active:tab.active===true,discarded:tab.discarded===true,frozen:tab.frozen===true,locked:job.scanning===true,inflight:job.inflight || 0});
     if (!await workbookAvailable(job,tab)) return;
     // Check outside the injection lock: a suspended injected call can stay pending.
     if (sleeping(job,tab)) return;
@@ -230,6 +242,8 @@ function finish(job, result) {
   if (pending !== job) return;
   clearInterval(job.poll);
   clearTimeout(job.timeout);
+  traceStep(job,'finished',{phase:job.phase,outcome:result.success?'result':'error',locked:job.scanning===true,inflight:job.inflight || 0});
+  if(!result.success) chrome.storage.local.set({lastFailure:diagnosticReport(job,loadedVersion)}).catch(()=>{});
   pending = null;
   status = result.success ? (job.type==='probe' ? 'Forbindelsen til masterarket virker.' : 'Excel har bekræftet registreringen.') : result.error;
   port?.postMessage({type:'result', requestId:job.requestId, worksheetName:job.registration?.worksheetName, extensionVersion:loadedVersion, ...result});
@@ -258,7 +272,8 @@ function connect() {
     if (!identity) return;
     const registration=message.type==='setup' ? {isTest:true,requestId:message.requestId} : message.registration;
     if(message.type==='register' && (!registration || registration.requestId!==message.requestId || typeof registration.registrationId!=='string' || registration.isTest===true)) return;
-    const job = pending = {requestId:message.requestId, identity, heard:false,type:message.type,registration};
+    const job = pending = {requestId:message.requestId, identity, heard:false,type:message.type,registration,startedAt:Date.now(),trace:[]};
+    traceStep(job,'start',{phase:message.type});
     try {
       const tab=await selectWorkbook(job,message.workbookUrl);
       if (pending !== job || !tab) return;
@@ -283,7 +298,7 @@ function connect() {
   poll();
 }
 chrome.runtime.onMessage.addListener((message, sender, reply) => {
-  if (message?.type === 'status' && !sender.tab) { reply({status}); connect(); return; }
+  if (message?.type === 'status' && !sender.tab) { reply({status,extensionVersion:loadedVersion}); connect(); return; }
   const job = pending;
   if (message?.type !== 'probe-result' || !job || job.connected || sender.tab?.id !== job.tabId ||
       message.requestId !== job.requestId || workbookIdentity(sender.tab.url) !== job.identity) return;

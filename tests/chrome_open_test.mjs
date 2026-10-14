@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import {workbookIdentity} from '../chrome_extension/identity.js';
+import {traceStep,diagnosticReport,failureReason} from '../chrome_extension/diagnostics.js';
 const url='https://5rmarketing-my.sharepoint.com/personal/test/_layouts/15/doc2.aspx?sourcedoc={00000000-0000-4000-8000-000000000001}';
 const source=fs.readFileSync('chrome_extension/background.js','utf8').replace(/^import .*;$/gm,'');
 const version=JSON.parse(fs.readFileSync('chrome_extension/manifest.json','utf8')).version;
@@ -15,10 +16,10 @@ function fixture({existing=false,pendingTab=false,duplicate=false}={}) {
   if(existing)add({id:7,url,active:false,autoDiscardable:true});
   if(pendingTab)add({id:7,url:'about:blank',pendingUrl:url,status:'loading',active:false});
   if(duplicate)add({id:8,url,active:false});
-  vm.runInNewContext(source,{workbookIdentity,URL,
+  vm.runInNewContext(source,{workbookIdentity,traceStep,diagnosticReport,failureReason,URL,
     setInterval:fn=>{intervals.push(fn);return fn},clearInterval(){},setTimeout:()=>1,clearTimeout(){},
     chrome:{runtime:{getManifest:()=>({version}),reload(){},connectNative:()=>port,onMessage:event(),onStartup:event(),onInstalled:event()},
-    storage:{session:{get:async key=>({[key]:stored[key]}),set:async obj=>Object.assign(stored,obj),remove:async key=>delete stored[key]}},
+    storage:{local:{set:async data=>Object.assign(stored,data)},session:{get:async key=>({[key]:stored[key]}),set:async obj=>Object.assign(stored,obj),remove:async key=>delete stored[key]}},
     tabs:{onUpdated:event(),onRemoved:event(),query:async()=>[...tabs.values()],get:async id=>{if(!tabs.has(id))throw Error('Closed');return {...tabs.get(id)}},
       create:async options=>{assert.equal(options.url,url);assert.equal(options.active,false,'opening must preserve foreground');created.push(options);return add({id:nextId++,url:'about:blank',pendingUrl:options.url,status:'loading',active:false,autoDiscardable:true})},
       update:async(id,value)=>{assert.equal(Object.keys(value).join(','),'autoDiscardable');Object.assign(tabs.get(id),value)},sendMessage:async()=>{}},

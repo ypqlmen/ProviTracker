@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import {workbookIdentity} from '../chrome_extension/identity.js';
+import {traceStep,diagnosticReport,failureReason} from '../chrome_extension/diagnostics.js';
 const url = 'https://5rmarketing-my.sharepoint.com/a?sourcedoc={535121b9-ed93-447b-9f89-7e8d575d03e4}';
 const excel = 'https://euc-excel.officeapps.live.com';
 const version = JSON.parse(fs.readFileSync('chrome_extension/manifest.json','utf8')).version;
@@ -12,10 +13,10 @@ function background() {
   let native, frames=[{frameId:0,parentFrameId:-1,url}], blocked=false, ready=false,currentUrl=url;
   const results=[],timers=[],intervals=[],injected=[];
   const port={postMessage:m=>results.push(m),onDisconnect:event(),onMessage:{addListener:fn=>native=fn}};
-  vm.runInNewContext(source, {workbookIdentity,URL,setTimeout:fn=>{timers.push(fn);return fn},clearTimeout:()=>{},
+  vm.runInNewContext(source, {workbookIdentity,traceStep,diagnosticReport,failureReason,URL,setTimeout:fn=>{timers.push(fn);return fn},clearTimeout:()=>{},
     setInterval:fn=>{intervals.push(fn);return fn},clearInterval:()=>{},
     chrome:{runtime:{getManifest:()=>({version}),reload:()=>{},connectNative:()=>port,onMessage:event(),onStartup:event(),onInstalled:event()},
-      storage:{session:{get:async()=>({}),set:async()=>{},remove:async()=>{}}},
+      storage:{local:{set:async data=>{}},session:{get:async()=>({}),set:async()=>{},remove:async()=>{}}},
     tabs:{onUpdated:event(),onRemoved:event(),update:async(id,value)=>{assert.equal(Object.keys(value).join(','),'autoDiscardable');},query:async()=>[{id:7,url}],get:async()=>({id:7,url:currentUrl,active:false}),sendMessage:async()=>{}},
       webNavigation:{getAllFrames:async()=>frames},scripting:{executeScript:async ({target})=>{
         const id=target.frameIds[0];injected.push(id);

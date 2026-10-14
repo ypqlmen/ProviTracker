@@ -257,7 +257,10 @@ class ChromeBridgeTests(unittest.TestCase):
             bridge.install_extension()
             version = bridge.ready_package()['version']
             stdin, stdout = io.BytesIO(), io.BytesIO()
-            for loaded in ['0.1.1', version, '0.1.9', 'bad', None]:
+            newer_parts=[int(part) for part in version.split('.')]
+            newer_parts[-1]+=1
+            newer='.'.join(map(str,newer_parts))
+            for loaded in ['0.1.1', version, newer, 'bad', None]:
                 bridge.write_frame(stdin, {'type':'poll', 'extensionVersion':loaded})
             stdin.seek(0)
             with patch.object(bridge, 'prepare_native_stdio'), \

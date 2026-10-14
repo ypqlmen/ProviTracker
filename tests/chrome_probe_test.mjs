@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import {workbookIdentity} from '../chrome_extension/identity.js';
+import {traceStep,diagnosticReport,failureReason} from '../chrome_extension/diagnostics.js';
 const url = 'https://5rmarketing-my.sharepoint.com/a?sourcedoc={535121b9-ed93-447b-9f89-7e8d575d03e4}';
 const tab = {getAttribute:name=> name==='aria-selected'?'true':'Regneark Ark1', getClientRects:()=>[{}],querySelector:()=>null};
 const sheet = {querySelectorAll:selector=>selector==='[role="tab"]'?[tab]:[]};
@@ -20,12 +21,12 @@ const results=[];const timers=[];const intervals=[];let nativeHandler, runtimeHa
 const event=()=>({addListener:()=>{}});
 const port={postMessage:value=>results.push(value),onDisconnect:event(),onMessage:{addListener:fn=>nativeHandler=fn}};
 vm.runInNewContext(fs.readFileSync('chrome_extension/background.js','utf8').replace(/^import .*;$/gm,''),{
-  workbookIdentity,
+  workbookIdentity,traceStep,diagnosticReport,failureReason,
   setTimeout:fn=>{timers.push(fn);return fn},clearTimeout:()=>{},
   setInterval:fn=>{intervals.push(fn);return fn},clearInterval:()=>{},
   URL,
   chrome:{runtime:{getManifest:()=>({version:'0.1.2'}),reload:()=>{},connectNative:()=>port,onMessage:{addListener:fn=>runtimeHandler=fn},onStartup:event(),onInstalled:event()},
-    storage:{session:{get:async()=>({}),set:async()=>{},remove:async()=>{}}},
+    storage:{local:{set:async data=>{}},session:{get:async()=>({}),set:async()=>{},remove:async()=>{}}},
     tabs:{onUpdated:event(),onRemoved:event(),update:async(id,value)=>{assert.equal(Object.keys(value).join(','),'autoDiscardable');},query:async()=>[{id:7,url}],get:async()=>({id:7,url:currentUrl,active:false}),sendMessage:async(id,msg)=>probes.push(msg)},
     webNavigation:{getAllFrames:async()=>[{frameId:0,url}]},scripting:{executeScript:async()=>{}},
     alarms:{onAlarm:event(),create:()=>{}}}

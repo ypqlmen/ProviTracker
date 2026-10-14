@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import {workbookIdentity} from '../chrome_extension/identity.js';
+import {traceStep,diagnosticReport,failureReason} from '../chrome_extension/diagnostics.js';
 const source = fs.readFileSync('chrome_extension/background.js','utf8').replace(/^import .*;$/gm,'');
 const version = JSON.parse(fs.readFileSync('chrome_extension/manifest.json','utf8')).version;
 const next = version.split('.'); next[next.length-1]=Number(next.at(-1))+1;
@@ -13,11 +14,11 @@ function background() {
   const event=()=>({addListener:()=>{}});
   const port={postMessage:m=>calls.push(m),onDisconnect:event(),onMessage:{addListener:fn=>native=fn}};
   vm.runInNewContext(source, {
-    workbookIdentity,URL,
+    workbookIdentity,traceStep,diagnosticReport,failureReason,URL,
     setInterval:()=>1,clearInterval:()=>{},setTimeout:fn=>{timers.push(fn);return 1},clearTimeout:()=>{},
     chrome:{runtime:{getManifest:()=>({version}),reload:()=>calls.push('reload'),connectNative:()=>port,
       onMessage:{addListener:fn=>runtime=fn},onStartup:event(),onInstalled:event()},
-      storage:{session:{get:async()=>({}),set:async()=>{},remove:async()=>{}}},
+      storage:{local:{set:async data=>{}},session:{get:async()=>({}),set:async()=>{},remove:async()=>{}}},
     tabs:{onUpdated:event(),onRemoved:event(),update:async(id,value)=>{assert.equal(Object.keys(value).join(','),'autoDiscardable');},query:async()=>[{id:7,url}],get:async()=>({id:7,url,active:false}),sendMessage:async()=>{}},
       webNavigation:{getAllFrames:async()=>[{frameId:0,parentFrameId:-1,url},{frameId:1,parentFrameId:0,url:'https://euc-excel.officeapps.live.com/x'},
         {frameId:2,parentFrameId:0,url:'https://unrelated.example/x'},{frameId:3,parentFrameId:1,url:'about:blank'},

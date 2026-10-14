@@ -62,6 +62,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Excel V3 registration tests failed' }
           node tests/chrome_sales_test.mjs
           if ($LASTEXITCODE -ne 0) { throw 'Chrome registration tests failed' }
+          node tests/chrome_diagnostics_test.mjs
+          if ($LASTEXITCODE -ne 0) { throw 'Chrome diagnostic privacy and stall tests failed' }
           node tests/chrome_identity_test.mjs
           if ($LASTEXITCODE -ne 0) { throw 'Chrome identity tests failed' }
           node tests/chrome_probe_test.mjs

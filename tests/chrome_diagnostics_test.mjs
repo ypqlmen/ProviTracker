@@ -1,0 +1,18 @@
+import assert from 'node:assert/strict';
+import {traceStep,diagnosticReport,failureReason,structuralInfo} from '../chrome_extension/diagnostics.js';
+const privateInfo={url:'https://private/?token=SECRET',payload:'SECRET',error:'SECRET',worksheetName:'SECRET',orderNumber:'SECRET',name:'SECRET',phase:'parameter',fields:1,matched:false,defaultTest:true};
+assert.deepEqual(structuralInfo(privateInfo),{matched:false,defaultTest:true,fields:1,phase:'parameter'});
+const job={startedAt:Date.now(),type:'register',phase:'parameter',trace:[]};
+for(let i=0;i<500;i++)traceStep(job,'injected',privateInfo);
+assert.equal(job.trace.length,1);assert.equal(job.trace[0].repeats,500);
+for(let i=0;i<500;i++)traceStep(job,'injected',{fields:i,phase:'parameter'});
+assert.equal(job.trace.length,120,'diagnostics must be bounded during repeated failures');
+const report=diagnosticReport(job,'0.1.10');
+assert(!JSON.stringify(report).includes('SECRET'));
+assert(report.events.every(e=>!('signature' in e)));
+assert.equal(failureReason(Error('Cannot access contents of https://private/?token=SECRET')),'permission');
+assert.equal(failureReason(Error('No frame with id 123')),'frame-gone');
+assert.equal(failureReason(Error('Extension context invalidated')),'context-gone');
+assert.equal(failureReason(Error('SECRET')),'other');
+assert.deepEqual(structuralInfo({phase:'SECRET',frame:Infinity,fields:-1,matched:'SECRET'}),{});
+console.log('Bounded structural failure diagnostics exclude URLs, payloads, identities and raw errors.');
