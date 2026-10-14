@@ -42,6 +42,11 @@ function mount(){const input=document.createElement('input');input.id='payload';
 input.addEventListener('input',e=>{window.eventInfo={active:document.activeElement===input,typed:e instanceof InputEvent,inputType:e.inputType,dataMatches:e.data===input.value};if(document.activeElement!==input||!(e instanceof InputEvent)||e.data!==input.value||e.inputType!=='insertReplacementText'){Promise.resolve().then(()=>{input.value=JSON.stringify({isTest:true})});return}input.pendingValue=input.value;window.edits++});
 input.addEventListener('blur',()=>{window.blurs=(window.blurs||0)+1;const value=input.pendingValue;if(!value)return;Promise.resolve().then(()=>{if(window.resets++<6){mount()}else{window.payload=value;window.commits++;document.getElementById('submit').disabled=false}})});
 document.getElementById('field').replaceChildren(input)}mount();</script>'''
+            # The real frame can exist before React renders its script title.
+            # Keep the document blank for three scans, then render the same form.
+            # This reproduces the earlier false 'different script' abort.
+            encoded=json.dumps(body).replace('</','<\\/')
+            body='<script>setTimeout(()=>{document.open();document.write('+encoded+');document.close();},1800)</script>'
         else:
             # SharePoint starts with an empty source and loads Excel asynchronously.
             body = '<iframe id="WacFrame_Excel_0" src=""></iframe><script>setTimeout(()=>document.querySelector("iframe").src='+json.dumps(EXCEL_URL)+',500)</script>'

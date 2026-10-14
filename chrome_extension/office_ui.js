@@ -51,7 +51,17 @@ export function officeStep(phase, payloadJson) {
     return {started:true};
   }
   if (['open','run','parameter','submit'].includes(phase) && /\/dialog\.html$/.test(location.pathname)) {
-    if (!document.body.textContent.includes(scriptName)) return {error:'Excel åbnede parametre til et andet script. Registreringen er stoppet.'};
+    if (!document.body.textContent.includes(scriptName)) {
+      // A discovered dialog frame can precede its asynchronously rendered form.
+      // Absence of a name does not identify a different script. Wait without
+      // touching any input; reject only an explicitly rendered different title.
+      const title=[...document.querySelectorAll('span,div,p,h1,h2,h3')]
+        .filter(el=>el.children.length===0 && usable(el))
+        .map(text).find(value=>/^(Angiv parametre for|Enter parameters for)\s+/.test(value));
+      const controls={scriptMatched:false,titleKnown:!!title};
+      if(title) return {error:'Excel åbnede parametre til et andet script. Registreringen er stoppet.',controls};
+      return {waiting:'parameter-script',controls};
+    }
     const fields=[...document.querySelectorAll('input,textarea')].filter(el=>usable(el)
       && (el.tagName==='TEXTAREA' || el.type==='text'));
     const parameterName=value=>/^payloadJson\s*\*?$/.test((value || '').trim());
