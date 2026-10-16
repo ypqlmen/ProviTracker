@@ -669,7 +669,7 @@ public:
                 border-radius: 14px;
                 padding: 9px 12px;
                 min-height: 22px;
-                selection-background-color: #78ADFF;
+                selection-background-color: #286BCE;
                 selection-color: #F7FAFF;
             }
             QLineEdit:focus {
@@ -971,7 +971,7 @@ QTableWidget::item:selected {
     background: %1;
     color: %2;
 }
-)").arg(allowSelection ? "#78ADFF" : "transparent", allowSelection ? "#F7FAFF" : "#D8DEE8"));
+)").arg(allowSelection ? "#286BCE" : "transparent", allowSelection ? "#F7FAFF" : "#D8DEE8"));
 }
 
 static bool confirmQuestion(QWidget* parent, const QString& title, const QString& message)
@@ -1525,7 +1525,7 @@ QComboBox::drop-down {
 QComboBox QAbstractItemView {
     color: #D8DEE8;
     background: #24282F;
-    selection-background-color: #78ADFF;
+    selection-background-color: #286BCE;
     selection-color: #F7FAFF;
     border-radius: 12px;
 }
@@ -1547,7 +1547,7 @@ QComboBox {
 QComboBox QAbstractItemView {
     background: #24282F;
     color: #D8DEE8;
-    selection-background-color: #78ADFF;
+    selection-background-color: #286BCE;
     selection-color: #F7FAFF;
     border-radius: 12px;
 }
@@ -3272,7 +3272,7 @@ private:
         auto* sideLayout = new QVBoxLayout(sidebar); sideLayout->setContentsMargins(16,24,16,20); sideLayout->setSpacing(10);
         auto* brand = new QLabel("provi"); brand->setStyleSheet("font-size:30px; font-weight:700; color:#F2F4F7; padding:0 10px;");
         sideLayout->addWidget(brand);
-        auto* caption = new QLabel("DIT ARBEJDSRUM"); caption->setStyleSheet("font-size:10px; font-weight:600; color:#9AA5B5; padding:18px 10px 6px;");
+        auto* caption = new QLabel("Victor er farmand"); caption->setStyleSheet("font-size:10px; font-weight:600; color:#9AA5B5; padding:18px 10px 6px;");
         sideLayout->addWidget(caption);
         auto* navigation = new QListWidget; navigation->setObjectName("navigation");
         navigation->addItems({"Overblik", "Ordrer", "Rapporter", "Kontakter", "Indstillinger"});
@@ -5512,6 +5512,7 @@ int main(int argc, char *argv[]) {
         return 0;
     }
 
+    applyMidnightPalette(app);
     MainWindow w;
     if (w.startupWasAborted()) {
         return 0;

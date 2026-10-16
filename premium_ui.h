@@ -41,6 +41,26 @@ protected:
     }
 };
 
+static void applyMidnightPalette(QApplication& app) {
+    QPalette palette;
+    palette.setColor(QPalette::Window,QColor("#181B20"));
+    palette.setColor(QPalette::WindowText,QColor("#F2F4F7"));
+    palette.setColor(QPalette::Base,QColor("#24282F"));
+    palette.setColor(QPalette::AlternateBase,QColor("#272C34"));
+    palette.setColor(QPalette::Text,QColor("#D8DEE8"));
+    palette.setColor(QPalette::Button,QColor("#24282F"));
+    palette.setColor(QPalette::ButtonText,QColor("#F2F4F7"));
+    palette.setColor(QPalette::Highlight,QColor("#286BCE"));
+    palette.setColor(QPalette::HighlightedText,QColor("#F7FAFF"));
+    palette.setColor(QPalette::PlaceholderText,QColor("#9AA5B5"));
+    palette.setColor(QPalette::ToolTipBase,QColor("#343C49"));
+    palette.setColor(QPalette::ToolTipText,QColor("#F2F4F7"));
+    palette.setColor(QPalette::Link,QColor("#A8CBFF"));
+    palette.setColor(QPalette::Disabled,QPalette::Text,QColor("#8994A5"));
+    palette.setColor(QPalette::Disabled,QPalette::ButtonText,QColor("#8994A5"));
+    app.setPalette(palette);
+}
+
 static QString premiumStyle() {
     return QStringLiteral(R"(
 QWidget { color:#F2F4F7; font-size:13px; }
