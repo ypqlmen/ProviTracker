@@ -8,12 +8,14 @@ import struct
 import sys
 import time
 import uuid
+import math
+from datetime import datetime
 from contextlib import contextmanager
 from urllib.parse import urlparse, parse_qs
 
 HOST = 'dk.provitracker.masterark'
 LIMIT = 16384
-EXTENSION_FILES = ('manifest.json', 'background.js', 'diagnostics.js', 'identity.js', 'probe.js', 'popup.html', 'popup.js', 'office_ui.js', 'receipt.js', 'excel_online_sales_registration_v3.ts', 'excel_online_sales_registration_v4.ts')
+EXTENSION_FILES = ('manifest.json', 'background.js', 'diagnostics.js', 'intramanager.js', 'identity.js', 'probe.js', 'popup.html', 'popup.js', 'office_ui.js', 'receipt.js', 'excel_online_sales_registration_v3.ts', 'excel_online_sales_registration_v4.ts')
 
 def version_tuple(value):
     parts = str(value).split('.')
@@ -202,9 +204,34 @@ def probe(payload):
 def run_registration(payload):
     return request_chrome(payload, 'setup' if payload.get('action') == 'chrome-setup' else 'register')
 
+def valid_intramanager_request(value):
+    if value.get('type')!='intramanager' or value.get('workbookUrl')!='https://5r.intramanager.com/reports/history/': return False
+    if value.get('operation')=='profile': return True
+    if value.get('operation')!='hours' or not isinstance(value.get('expectedProfile'),str) or not 3<=len(value['expectedProfile'])<=140: return False
+    try:
+        start=datetime.strptime(value['fromDate'],'%d-%m-%Y')
+        end=datetime.strptime(value['toDate'],'%d-%m-%Y')
+        return 0<=(end-start).days<=370
+    except (ValueError,TypeError,KeyError): return False
+
+def valid_intramanager_result(value, query):
+    if value.get('success') is not True or not isinstance(value.get('profileName'),str) or not 3<=len(value['profileName'])<=140: return False
+    if query.get('operation')=='profile': return True
+    normalize=lambda text:' '.join(text.casefold().split())
+    if normalize(value['profileName'])!=normalize(query.get('expectedProfile','')): return False
+    if value.get('periodFrom')!=query.get('fromDate') or value.get('periodTo')!=query.get('toDate') or value.get('payrollSchema')!=2: return False
+    for key in ['hours','phoneHours','sickHours','sickPay','cancellations']:
+        n=value.get(key)
+        if type(n) not in (int,float) or not math.isfinite(n) or abs(n)>10000000: return False
+        if key in ['hours','phoneHours','sickHours'] and n<0: return False
+    return True
+
+def request_intramanager(payload):
+    return request_chrome({**payload,'workbookUrl':'https://5r.intramanager.com/reports/history/'},'intramanager')
+
 def request_chrome(payload, kind):
     url = payload.get('workbookUrl', '')
-    if not valid_workbook(url): raise ValueError('Gem et direkte link til masterarket med sourcedoc i adressen.')
+    if kind!='intramanager' and not valid_workbook(url): raise ValueError('Gem et direkte link til masterarket med sourcedoc i adressen.')
     register_host()
     folder = root()
     request_id = str(uuid.uuid4())
@@ -220,9 +247,12 @@ def request_chrome(payload, kind):
         request_id = registration['requestId']
         if registration.get('isTest') is True or not isinstance(registration.get('orderNumber'), str) or not registration['orderNumber'].strip():
             raise ValueError('Ugyldig salgsregistrering.')
-    duration = 35 if kind == 'probe' else 180
+    duration = 60 if kind=='intramanager' else 35 if kind == 'probe' else 180
     envelope = {'type': kind, 'requestId': request_id, 'workbookUrl': url, 'expiresAt': time.time()+duration}
-    if kind != 'probe': envelope['registration'] = registration
+    if kind not in {'probe','intramanager'}: envelope['registration'] = registration
+    if kind=='intramanager':
+        envelope.update({key:payload.get(key) for key in ['operation','fromDate','toDate','expectedProfile']})
+        if not valid_intramanager_request(envelope): raise ValueError('Kontrollér kontonavn og periode for Intramanager i Chrome.')
     if len(json.dumps(envelope, ensure_ascii=False).encode('utf-8')) > LIMIT:
         raise ValueError('Salgsregistreringen er for lang til Chrome. Forkort bemærkningerne og prøv igen.')
     request = folder / 'request.json'
@@ -236,7 +266,7 @@ def request_chrome(payload, kind):
         while time.monotonic() < deadline:
             result = read_json(response)
             if result.get('requestId') == request_id:
-                if kind=='probe' or result.get('success') is not True or valid_receipt(result, registration): return result
+                if kind=='probe' or result.get('success') is not True or (valid_intramanager_result(result,envelope) if kind=='intramanager' else valid_receipt(result, registration)): return result
                 return {'success':False,'error':'Excel returnerede en forkert kvittering. Kontrollér salget før genforsøg.'}
             time.sleep(.2)
         return {'success':False, 'error':'Chrome svarede ikke. Åbn Chrome og masterarket, og klik på Provi Tracker-udvidelsen. Prøv derefter igen.'}
@@ -276,11 +306,15 @@ def native_main(origin):
                                 atomic_json(root() / 'loaded.json', {'version': loaded, 'checkedAt': time.time()})
                 except (OSError, ValueError, RuntimeError) as exc:
                     write_frame(sys.stdout.buffer, {'type': 'extension-update-error', 'error': str(exc)[:500]})
-            if live and request.get('requestId') != last_id and valid_workbook(request.get('workbookUrl', '')):
+            if live and request.get('requestId') != last_id and (valid_intramanager_request(request) if request.get('type')=='intramanager' else valid_workbook(request.get('workbookUrl', ''))):
                 last_id = request['requestId']
                 write_frame(sys.stdout.buffer, request)
         elif message.get('type') == 'result' and live and message.get('requestId') == last_id == request.get('requestId'):
-            if request.get('type') == 'probe':
+            if request.get('type')=='intramanager':
+                success=valid_intramanager_result(message,request)
+                result={key:message.get(key) for key in ['profileName','periodFrom','periodTo','payrollSchema','hours','phoneHours','sickHours','sickPay','cancellations']}
+                result.update({'requestId':last_id,'success':success})
+            elif request.get('type') == 'probe':
                 success = message.get('success') is True and message.get('status') == 'chrome-connected'
                 waiting_status = message.get('status') if message.get('status') in {'chrome-sleeping', 'chrome-login-required'} else 'error'
                 result = {'requestId':last_id,'success':success,'status':'chrome-connected' if success else waiting_status}

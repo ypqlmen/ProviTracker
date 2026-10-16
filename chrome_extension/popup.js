@@ -13,3 +13,9 @@ chrome.storage.local.get('lastFailure').then(({lastFailure})=>{
     setTimeout(()=>URL.revokeObjectURL(address),10000);
   });
 });
+
+document.getElementById('intramanager').addEventListener('click',async()=>{
+  const granted=await chrome.permissions.request({origins:['https://5r.intramanager.com/*']});
+  document.getElementById('intramanager-status').textContent=granted?'Adgang givet. Log ind i Intramanager, og forbind kontoen i Provi Tracker.':'Adgang blev ikke givet. Din nuværende forbindelse er uændret.';
+  if(granted) await chrome.tabs.create({url:'https://5r.intramanager.com/reports/history/',active:true});
+});

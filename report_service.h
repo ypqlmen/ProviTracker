@@ -3,6 +3,7 @@
 #include <QtWidgets>
 #include <QtPrintSupport>
 #include "commission.h"
+#include "payroll_tax_estimate.h"
 
 // ============================================================
 // Reports / snapshots
@@ -29,11 +30,12 @@ public:
         if (!salary.usesPaymentMonthRules) {
             salary.baseSalary = workedHours * hourlyRate;
             salary.totalProvision = m.totalCommission;
-            salary.totalSalary = salary.baseSalary + salary.sickPay + salary.totalProvision;
+            salary.totalSalary = salary.baseSalary + salary.sickPay + salary.totalProvision + salary.cancellations;
         }
-        salary.taxConfigured = repo.settings.taxRatePercent > 0.0;
+        salary.taxConfigured = effectiveTaxRate(repo,s.id,QDate::currentDate()) > 0.0;
         salary.taxDeduction = repo.settings.taxDeduction;
-        salary.taxRatePercent = repo.settings.taxRatePercent;
+        salary.taxRatePercent = effectiveTaxRate(repo,s.id,QDate::currentDate());
+        salary.automaticTaxEstimate = repo.settings.automaticTaxEstimate;
         const SalaryTaxEstimate taxEstimate = estimateSalaryTax(
             salary.totalSalary,
             salary.taxDeduction,
@@ -49,21 +51,21 @@ public:
         ts << "<!DOCTYPE html><html><head><meta charset=\"utf-8\">"
            << "<title>Salgsrapport - " << label.toHtmlEscaped() << "</title>"
            << "<style>"
-           << "body{font-family:Segoe UI,Arial,sans-serif;margin:18px;color:#E6EEF8;line-height:1.45;background:#0F172A;}"
-           << "h1,h2{margin-bottom:8px;color:#F8FBFF;}"
-           << "h1{font-size:22px;margin-top:0;}h2{font-size:15px;margin-top:18px;color:#9CC7E8;text-transform:none;}"
-           << "table{border-collapse:collapse;width:100%;margin-top:12px;background:#0F1A2E;border-radius:14px;overflow:hidden;}"
-           << "th,td{border:1px solid #22304A;padding:10px 12px;text-align:left;vertical-align:top;}"
-           << "th{background:#13203A;color:#DDEBFB;}"
-           << ".meta{margin-bottom:18px;color:#BFD7EE;}"
+           << "body{font-family:Segoe UI,Arial,sans-serif;margin:18px;color:#F2F4F7;line-height:1.45;background:#181B20;}"
+           << "h1,h2{margin-bottom:8px;color:#F2F4F7;}"
+           << "h1{font-size:22px;margin-top:0;}h2{font-size:15px;margin-top:18px;color:#AAB3C0;text-transform:none;}"
+           << "table{border-collapse:collapse;width:100%;margin-top:12px;background:#24282F;border-radius:14px;overflow:hidden;}"
+           << "th,td{border:1px solid #3B434F;padding:10px 12px;text-align:left;vertical-align:top;}"
+           << "th{background:#2B3039;color:#AAB3C0;}"
+           << ".meta{margin-bottom:18px;color:#AAB3C0;}"
            << ".card-table{width:100%;border-collapse:separate;border-spacing:12px;margin:12px -12px;background:transparent;}"
-           << ".card-table td{width:33%;border:1px solid #223556;border-radius:18px;padding:14px 16px;background:#111B2E;vertical-align:top;}"
-           << ".card-label{color:#9CC7E8;font-size:12px;font-weight:800;margin-bottom:8px;}"
-           << ".card-value{font-size:20px;font-weight:900;color:#FFFFFF;}"
-           << ".section{border:1px solid #223556;border-radius:18px;padding:16px;background:#111B2E;box-shadow:0 10px 24px rgba(0,0,0,0.18);}"
-           << ".section-title{display:block;color:#9CC7E8;font-size:12px;font-weight:800;margin-bottom:6px;}"
+           << ".card-table td{width:33%;border:1px solid #373E49;border-radius:18px;padding:14px 16px;background:#24282F;vertical-align:top;}"
+           << ".card-label{color:#AAB3C0;font-size:12px;font-weight:800;margin-bottom:8px;}"
+           << ".card-value{font-size:20px;font-weight:900;color:#F2F4F7;}"
+           << ".section{border:1px solid #373E49;border-radius:18px;padding:16px;background:#24282F;box-shadow:0 10px 24px rgba(0,0,0,0.18);}"
+           << ".section-title{display:block;color:#AAB3C0;font-size:12px;font-weight:800;margin-bottom:6px;}"
            << ".section{margin-top:14px;font-size:13px;font-weight:400;}"
-           << ".hint{margin-top:10px;padding:12px 14px;background:#10233B;border:1px solid #24527A;border-radius:14px;color:#D8F5FF;}"
+           << ".hint{margin-top:10px;padding:12px 14px;background:#28364B;border:1px solid #3B506D;border-radius:14px;color:#AAB3C0;}"
            << "</style></head><body>";
 
         ts << R"(
@@ -89,6 +91,7 @@ public:
         addCard("Timer", money(salary.baseSalary) + " kr");
         addCard("Sygeløn", money(salary.sickPay) + " kr");
         addCard("Provision", money(salary.totalProvision) + " kr");
+        addCard("Annulleringer", (salary.cancellationsKnown ? money(salary.cancellations) + " kr" : QString("Afventer Intramanager")));
         addCard("Løn", money(salary.totalSalary) + " kr");
         addCard("Udbetalt", salary.taxConfigured ? money(salary.netSalary) + " kr" : QString("Indstil skat"));
         addCard("Aktive salgsdage", QString::number(activeDays));
@@ -127,10 +130,11 @@ public:
             if (!salary.delayedPeriod.isEmpty()) ts << " (" << salary.delayedPeriod.toHtmlEscaped() << ")";
             ts << "</td></tr>";
         }
+        ts << "<tr><td>Annulleringer</td><td>" << (salary.cancellationsKnown ? money(salary.cancellations) + " kr" : QString("Afventer Intramanager")) << "</td></tr>";
         ts << "<tr><td><strong>Løn</strong></td><td><strong>" << money(salary.totalSalary) << " kr</strong></td></tr>";
         if (salary.taxConfigured) {
             ts << "<tr><td>Skattefradrag</td><td>" << money(salary.taxDeduction) << " kr</td></tr>";
-            ts << "<tr><td>Trækprocent</td><td>" << money(salary.taxRatePercent) << " %</td></tr>";
+            ts << "<tr><td>" << (salary.automaticTaxEstimate ? "Skønnet trækprocent" : "Trækprocent") << "</td><td>" << money(salary.taxRatePercent) << " %</td></tr>";
             ts << "<tr><td>AM-bidrag (8%)</td><td>" << money(salary.amBidrag) << " kr</td></tr>";
             ts << "<tr><td>A-skat</td><td>" << money(salary.aTax) << " kr</td></tr>";
             ts << "<tr><td>Estimeret skat inkl. AM-bidrag</td><td>" << money(salary.taxAmount) << " kr</td></tr>";

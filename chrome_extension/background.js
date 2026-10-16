@@ -1,3 +1,4 @@
+import {startIntramanager} from './intramanager.js';
 import {workbookIdentity} from './identity.js';
 import {officeStep} from './office_ui.js';
 import {validReceipt} from './receipt.js';
@@ -209,6 +210,7 @@ async function scanOffice(job) {
   finally { job.scanning=false; }
 }
 async function scan(job) {
+  if(job.type==='intramanager') return job.scan?.();
   if (pending!==job) return;
   try {
     const tab=await chrome.tabs.get(job.tabId);
@@ -218,7 +220,7 @@ async function scan(job) {
     // Check outside the injection lock: a suspended injected call can stay pending.
     if (sleeping(job,tab)) return;
     return job.connected ? scanOffice(job) : scanWorkbook(job);
-  } catch { finish(job,{success:false,error:'Masterarket blev lukket. Åbn det igen, og prøv fra Ordrer.'}); }
+  } catch { finish(job,{success:false,error:pending.type==='intramanager'?'Intramanager-fanen blev lukket. Prøv forbindelsen igen.':'Masterarket blev lukket. Åbn det igen, og prøv fra Ordrer.'}); }
 }
 function reloadWhenIdle() {
   if (reloadTarget && !pending && !reloadRequested) {
@@ -243,9 +245,9 @@ function finish(job, result) {
   clearInterval(job.poll);
   clearTimeout(job.timeout);
   traceStep(job,'finished',{phase:job.phase,outcome:result.success?'result':'error',locked:job.scanning===true,inflight:job.inflight || 0});
-  if(!result.success) chrome.storage.local.set({lastFailure:diagnosticReport(job,loadedVersion)}).catch(()=>{});
+  if(!result.success && job.type!=='intramanager') chrome.storage.local.set({lastFailure:diagnosticReport(job,loadedVersion)}).catch(()=>{});
   pending = null;
-  status = result.success ? (job.type==='probe' ? 'Forbindelsen til masterarket virker.' : 'Excel har bekræftet registreringen.') : result.error;
+  status = result.success ? (job.type==='intramanager' ? 'Intramanager er opdateret.' : job.type==='probe' ? 'Forbindelsen til masterarket virker.' : 'Excel har bekræftet registreringen.') : result.error;
   port?.postMessage({type:'result', requestId:job.requestId, worksheetName:job.registration?.worksheetName, extensionVersion:loadedVersion, ...result});
   reloadWhenIdle();
 }
@@ -265,6 +267,11 @@ function connect() {
     }
     if (message.type === 'extension-update-error') {
       status = 'Udvidelsen kunne ikke opdateres. Åbn Provi Tracker igen, og prøv Kontrollér Chrome.';
+      return;
+    }
+    if(message.type==='intramanager' && !pending) {
+      const job=pending={...message,startedAt:Date.now(),trace:[]};
+      try {await startIntramanager(job,finish,()=>pending===job);} catch {finish(job,{success:false,error:'Chrome-forbindelsen til Intramanager kunne ikke starte.'});}
       return;
     }
     if (!['probe','setup','register'].includes(message.type) || pending) return;
@@ -312,7 +319,7 @@ chrome.tabs.onUpdated.addListener((id, change, tab) => {
 });
 chrome.tabs.onRemoved.addListener(id => {
   releaseWorkbook(id,null).catch(()=>{});
-  if (pending?.tabId===id) finish(pending,{success:false,error:'Masterarket blev lukket. Åbn det igen, og prøv fra Ordrer.'});
+  if (pending?.tabId===id) finish(pending,{success:false,error:pending.type==='intramanager'?'Intramanager-fanen blev lukket. Prøv forbindelsen igen.':'Masterarket blev lukket. Åbn det igen, og prøv fra Ordrer.'});
 });
 setInterval(poll, 3000);
 chrome.alarms.onAlarm.addListener(() => { connect(); poll(); });

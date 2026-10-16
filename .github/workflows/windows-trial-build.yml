@@ -7,6 +7,13 @@ on:
     paths:
       - '.github/workflows/windows-trial-build.yml'
       - 'updater_script.h'
+      - '**.cpp'
+      - '**.h'
+      - 'CMakeLists.txt'
+      - 'settings_icons.qrc'
+      - 'assets/**'
+      - 'intramanager_worker/**'
+      - 'tests/**'
       - 'chrome_extension/**'
       - 'intramanager_worker/chrome_bridge.py'
       - 'tests/chrome_update_integration.py'
@@ -60,6 +67,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Excel V4 active worksheet tests failed' }
           node tests/excel_sales_registration_v3_test.cjs
           if ($LASTEXITCODE -ne 0) { throw 'Excel V3 registration tests failed' }
+          node tests/chrome_intramanager_test.mjs
+          if ($LASTEXITCODE -ne 0) { throw 'Chrome Intramanager tests failed' }
           node tests/chrome_sales_test.mjs
           if ($LASTEXITCODE -ne 0) { throw 'Chrome registration tests failed' }
           node tests/chrome_diagnostics_test.mjs
@@ -183,6 +192,16 @@ jobs:
           $installer = (Get-ChildItem dist/ProviBeregnerSetup-*.exe).FullName
           python tests/chrome_update_integration.py --worker "$worker" --installer "$installer"
           if ($LASTEXITCODE -ne 0) { throw 'Actual Chrome extension auto-update failed' }
+      - name: Verify background Chrome payroll reader
+        run: |
+          $env:PLAYWRIGHT_BROWSERS_PATH = Join-Path $env:RUNNER_TEMP 'provi-trial-stage/intramanager_worker/b'
+          python tests/chrome_intramanager_integration.py
+          if ($LASTEXITCODE -ne 0) { throw 'Actual Chrome payroll reader failed' }
+      - name: Capture installed Midnight Grey interface with demo data
+        run: |
+          $installed = Join-Path $env:LOCALAPPDATA 'Programs/Provi Tracker/ProvisionTrackerV2.exe'
+          python tests/capture_visual_review.py --app "$installed" --output dist/visual-review
+          if ($LASTEXITCODE -ne 0) { throw 'Installed visual review failed' }
       - name: Verify tracked files are unchanged
         run: |
           git diff --exit-code

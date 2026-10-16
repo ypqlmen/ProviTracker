@@ -7,7 +7,7 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
 
-find_package(Qt6 REQUIRED COMPONENTS Widgets Core PrintSupport Network)
+find_package(Qt6 REQUIRED COMPONENTS Widgets Core PrintSupport Network Svg)
 
 add_executable(ProvisionTrackerV2 WIN32
     main_v32.cpp
@@ -25,10 +25,12 @@ target_link_libraries(ProvisionTrackerV2 PRIVATE
     Qt6::Core
     Qt6::PrintSupport
     Qt6::Network
-    crypt32
-    advapi32
-    bcrypt
+    Qt6::Svg
 )
+
+if(WIN32)
+    target_link_libraries(ProvisionTrackerV2 PRIVATE crypt32 advapi32 bcrypt)
+endif()
 
 include(CTest)
 if(BUILD_TESTING)
@@ -41,6 +43,9 @@ if(BUILD_TESTING)
     add_executable(PayrollForecastTests tests/payroll_forecast_test.cpp)
     target_link_libraries(PayrollForecastTests PRIVATE Qt6::Core)
     add_test(NAME PayrollForecastTests COMMAND PayrollForecastTests)
+    add_executable(PayrollAdjustmentsTests tests/payroll_adjustments_test.cpp)
+    target_link_libraries(PayrollAdjustmentsTests PRIVATE Qt6::Core)
+    add_test(NAME PayrollAdjustmentsTests COMMAND PayrollAdjustmentsTests)
     add_executable(IntramanagerCacheTests
         tests/intramanager_cache_test.cpp
         domain.h

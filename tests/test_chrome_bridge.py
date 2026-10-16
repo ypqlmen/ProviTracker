@@ -12,6 +12,30 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'intramanager_worke
 import chrome_bridge as bridge
 
 class ChromeBridgeTests(unittest.TestCase):
+    def test_intramanager_validation_and_native_roundtrip(self):
+        query={'type':'intramanager','requestId':'fresh','expiresAt':time.time()+30,
+            'workbookUrl':'https://5r.intramanager.com/reports/history/','operation':'hours',
+            'expectedProfile':'Sofie Eksempel','fromDate':'21-09-2026','toDate':'20-10-2026'}
+        reply={'type':'result','requestId':'fresh','success':True,'profileName':'Sofie Eksempel',
+            'periodFrom':'21-09-2026','periodTo':'20-10-2026','payrollSchema':2,
+            'hours':7.5,'phoneHours':6,'sickHours':4,'sickPay':800.44,'cancellations':-380.40}
+        self.assertTrue(bridge.valid_intramanager_request(query))
+        self.assertTrue(bridge.valid_intramanager_result(reply,query))
+        for change in [{'profileName':'Anden Person'},{'periodFrom':'01-09-2026'},{'sickPay':float('nan')},{'hours':True},{'payrollSchema':1}]:
+            self.assertFalse(bridge.valid_intramanager_result({**reply,**change},query))
+        self.assertFalse(bridge.valid_intramanager_request({**query,'workbookUrl':'https://5r.intramanager.com.evil.test/'}))
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder);bridge.atomic_json(root/'request.json',query)
+            stdin,stdout=io.BytesIO(),io.BytesIO()
+            bridge.write_frame(stdin,{'type':'poll'});bridge.write_frame(stdin,reply);stdin.seek(0)
+            with patch.object(bridge,'root',return_value=root),patch.object(bridge,'prepare_native_stdio'), \
+                 patch.object(bridge.sys,'stdin',SimpleNamespace(buffer=stdin)),patch.object(bridge.sys,'stdout',SimpleNamespace(buffer=stdout)):
+                self.assertEqual(bridge.native_main('chrome-extension://'+bridge.extension_id()+'/'),0)
+            stdout.seek(0);self.assertEqual(bridge.read_frame(stdout),query)
+            result=bridge.read_json(root/'response.json')
+            self.assertTrue(result['success']);self.assertEqual(result['cancellations'],-380.40)
+            self.assertEqual(result['sickPay'],800.44)
+
     def test_framing_unicode(self):
         stream = io.BytesIO()
         bridge.write_frame(stream, {'message': 'Åbent masterark'})

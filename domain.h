@@ -118,6 +118,8 @@ struct IntramanagerHoursEntry {
     double phoneHours = 0.0;
     double sickHours = 0.0;
     double sickPay = 0.0;
+    double cancellations = 0.0;
+    int payrollSchema = 2;
     QString syncedAt;
 };
 
@@ -126,7 +128,7 @@ static bool intramanagerHoursEntryCompletesRange(
     const QDateTime& rangeEnd
     ) {
     const QDateTime synced = QDateTime::fromString(entry.syncedAt, Qt::ISODate);
-    return synced.isValid() && synced > rangeEnd;
+    return entry.payrollSchema >= 2 && synced.isValid() && synced > rangeEnd;
 }
 
 struct IntramanagerPunchState {
@@ -148,6 +150,11 @@ struct AppSettings {
     double hourlyRate = 0.0;
     double taxDeduction = 0.0;
     double taxRatePercent = 0.0;
+    bool automaticTaxEstimate = true;
+    double municipalTaxPercent = 25.0;
+    double churchTaxPercent = 0.0;
+    bool intramanagerViaChrome = false;
+    QString intramanagerBrowserProfile;
     QString intramanagerUsername;
     bool intramanagerEnabled = false;
 
@@ -351,7 +358,10 @@ static QJsonObject toJson(const IntramanagerHoursEntry& e) {
         {"hours", e.hours},
         {"phoneHours", e.phoneHours},
         {"sickHours", e.sickHours},
-        {"sickPay", e.sickPay},
+        {"sickPay", e.sickPay / 2.0},
+        {"sickPayFull", e.sickPay},
+        {"cancellations", e.cancellations},
+        {"payrollSchema", e.payrollSchema},
         {"syncedAt", e.syncedAt}
     };
 }
@@ -363,7 +373,10 @@ static IntramanagerHoursEntry fromIntramanagerHoursJson(const QJsonObject& o) {
     e.hours = o.value("hours").toDouble(0.0);
     e.phoneHours = o.value("phoneHours").toDouble(0.0);
     e.sickHours = o.value("sickHours").toDouble(0.0);
-    e.sickPay = o.value("sickPay").toDouble(0.0);
+    e.payrollSchema = o.value("payrollSchema").toInt(1);
+    e.sickPay = o.value("sickPayFull").toDouble(o.value("sickPay").toDouble(0.0) * 2.0);
+    e.cancellations = o.value("cancellations").toDouble(0.0);
+    // Keep the old sickPay field halved for older clients; sickPayFull is authoritative.
     e.syncedAt = o.value("syncedAt").toString();
     return e;
 }
@@ -407,6 +420,11 @@ static QJsonObject toJson(const AppSettings& s) {
         {"hourlyRate", s.hourlyRate},
         {"taxDeduction", s.taxDeduction},
         {"taxRatePercent", s.taxRatePercent},
+        {"automaticTaxEstimate", s.automaticTaxEstimate},
+        {"municipalTaxPercent", s.municipalTaxPercent},
+        {"churchTaxPercent", s.churchTaxPercent},
+        {"intramanagerViaChrome", s.intramanagerViaChrome},
+        {"intramanagerBrowserProfile", s.intramanagerBrowserProfile},
         {"intramanagerUsername", s.intramanagerUsername},
         {"intramanagerEnabled", s.intramanagerEnabled},
         {"defaultSellerInitials", s.defaultSellerInitials},
@@ -433,6 +451,11 @@ static AppSettings fromSettingsJson(const QJsonObject& o) {
     s.hourlyRate = o.value("hourlyRate").toDouble(0.0);
     s.taxDeduction = o.value("taxDeduction").toDouble(0.0);
     s.taxRatePercent = o.value("taxRatePercent").toDouble(0.0);
+    s.automaticTaxEstimate = o.value("automaticTaxEstimate").toBool(true);
+    s.municipalTaxPercent = qBound(0.0, o.value("municipalTaxPercent").toDouble(25.0), 35.0);
+    s.churchTaxPercent = qBound(0.0, o.value("churchTaxPercent").toDouble(0.0), 3.0);
+    s.intramanagerViaChrome = o.value("intramanagerViaChrome").toBool(false);
+    s.intramanagerBrowserProfile = o.value("intramanagerBrowserProfile").toString();
     s.intramanagerUsername = o.value("intramanagerUsername").toString();
     s.intramanagerEnabled = o.value("intramanagerEnabled").toBool(false);
     s.defaultSellerInitials = o.value("defaultSellerInitials").toString();
