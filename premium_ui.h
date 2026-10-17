@@ -32,17 +32,17 @@ static QIcon premiumIcon(const QString& name,const QColor& color=QColor("#A8AFBF
     return QIcon(pixmap);
 }
 
-class PremiumAvatar : public QWidget {
-    QPixmap photo;
+class PremiumAvatar : public QLabel {
 public:
-    PremiumAvatar():photo(":/settings/provi-avatar.jpg"){setFixedSize(44,44);setAccessibleName("Provi profilbillede");}
-protected:
-    void paintEvent(QPaintEvent*)override{
-        QPainter painter(this);painter.setRenderHint(QPainter::Antialiasing);painter.setRenderHint(QPainter::SmoothPixmapTransform);
-        const auto path=continuousCardPath(QRectF(rect()).adjusted(.5,.5,-.5,-.5),14);painter.setClipPath(path);
-        const auto scaled=photo.scaled(size()*devicePixelRatioF(),Qt::KeepAspectRatioByExpanding,Qt::SmoothTransformation);
-        const QRectF source((scaled.width()-width()*devicePixelRatioF())/2,(scaled.height()-height()*devicePixelRatioF())/2,width()*devicePixelRatioF(),height()*devicePixelRatioF());painter.drawPixmap(QRectF(rect()),scaled,source);
-        painter.setClipping(false);painter.setPen(QColor(255,255,255,40));painter.drawPath(path);
+    PremiumAvatar(){
+        setObjectName("brandAvatar");setFixedSize(44,44);setAccessibleName("Provi profilbillede");
+        const QPixmap original(":/settings/provi-avatar.jpg");
+        if(original.isNull()){setText("P");return;}
+        const qreal ratio=qApp->devicePixelRatio();const QSize pixels(qRound(44*ratio),qRound(44*ratio));
+        QPixmap avatar(pixels);avatar.fill(Qt::transparent);QPainter painter(&avatar);painter.setRenderHint(QPainter::Antialiasing);painter.setRenderHint(QPainter::SmoothPixmapTransform);painter.scale(ratio,ratio);
+        const auto path=continuousCardPath(QRectF(.5,.5,43,43),14);painter.setClipPath(path);const auto scaled=original.scaled(pixels,Qt::KeepAspectRatioByExpanding,Qt::SmoothTransformation);
+        painter.drawPixmap(QRectF(0,0,44,44),scaled,QRectF((scaled.width()-pixels.width())/2.0,(scaled.height()-pixels.height())/2.0,pixels.width(),pixels.height()));
+        painter.setClipping(false);painter.setPen(QColor(255,255,255,40));painter.drawPath(path);painter.end();avatar.setDevicePixelRatio(ratio);setPixmap(avatar);
     }
 };
 

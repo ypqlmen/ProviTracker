@@ -1056,6 +1056,12 @@ public:
         show();
         qApp->processEvents();
 
+        const auto* avatar=findChild<QLabel*>("brandAvatar");
+        if(!avatar || avatar->pixmap().isNull())qFatal("Brand photo was not loaded");
+        const QImage windowImage=grab().toImage();const qreal ratio=windowImage.devicePixelRatio();const QPoint origin=avatar->mapTo(this,QPoint());QSet<QRgb> photoColors;
+        for(int y=3;y<41;y+=2)for(int x=3;x<41;x+=2)photoColors.insert(windowImage.pixel(qRound((origin.x()+x)*ratio),qRound((origin.y()+y)*ratio)));
+        if(photoColors.size()<40)qFatal("Brand photo is missing from rendered window");
+
         auto saveWidget = [](QWidget* widget, const QString& path) {
             widget->grab().save(path);
         };
