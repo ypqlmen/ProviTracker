@@ -32,6 +32,20 @@ static QIcon premiumIcon(const QString& name,const QColor& color=QColor("#A8AFBF
     return QIcon(pixmap);
 }
 
+class PremiumAvatar : public QWidget {
+    QPixmap photo;
+public:
+    PremiumAvatar():photo(":/settings/provi-avatar.jpg"){setFixedSize(44,44);setAccessibleName("Provi profilbillede");}
+protected:
+    void paintEvent(QPaintEvent*)override{
+        QPainter painter(this);painter.setRenderHint(QPainter::Antialiasing);painter.setRenderHint(QPainter::SmoothPixmapTransform);
+        const auto path=continuousCardPath(QRectF(rect()).adjusted(.5,.5,-.5,-.5),14);painter.setClipPath(path);
+        const auto scaled=photo.scaled(size()*devicePixelRatioF(),Qt::KeepAspectRatioByExpanding,Qt::SmoothTransformation);
+        const QRectF source((scaled.width()-width()*devicePixelRatioF())/2,(scaled.height()-height()*devicePixelRatioF())/2,width()*devicePixelRatioF(),height()*devicePixelRatioF());painter.drawPixmap(QRectF(rect()),scaled,source);
+        painter.setClipping(false);painter.setPen(QColor(255,255,255,40));painter.drawPath(path);
+    }
+};
+
 class PremiumWorkspace : public QWidget {
 protected:
     void paintEvent(QPaintEvent*)override{
@@ -56,25 +70,25 @@ static QLabel* premiumLabel(const QString& text,const char* role,QWidget* parent
 static QFrame* premiumDivider(bool vertical=false){auto* line=new QFrame;line->setObjectName("divider");if(vertical)line->setFixedWidth(1);else line->setFixedHeight(1);return line;}
 
 class PremiumSalaryCard:public PremiumCard {
-    QLabel *amount,*net,*payout,*forecast;QVector<QLabel*> values;
+    QLabel *amount,*net,*payout,*forecast;QFrame* forecastDivider;QVector<QLabel*> values;
 public:
     explicit PremiumSalaryCard(const QString& title,bool current,QWidget* parent=nullptr):PremiumCard(parent){
         setProperty("hero",current);setMinimumHeight(292);auto* layout=new QVBoxLayout(this);layout->setContentsMargins(26,24,26,22);layout->setSpacing(12);
         auto* top=new QHBoxLayout;auto* icon=new QLabel;icon->setPixmap(premiumIcon("wallet",QColor(current?"#B5C9FA":"#A3ABBA")).pixmap(19,19));
         top->addWidget(icon);top->addSpacing(3);top->addWidget(premiumLabel(title,"cardTitle"));top->addStretch();
-        auto* badge=premiumLabel("Før skat","badge");top->addWidget(badge);layout->addLayout(top);
+        layout->addLayout(top);
         amount=premiumLabel("—","salary");layout->addWidget(amount);
         net=premiumLabel("—","net");layout->addWidget(net);
         payout=premiumLabel("—","muted");layout->addWidget(payout);layout->addSpacing(3);layout->addWidget(premiumDivider());
         auto* details=new QGridLayout;details->setHorizontalSpacing(20);details->setVerticalSpacing(7);
         const QStringList labels={"Løn fra timer","Sygeløn","Provision","Annulleringer"};
         for(int i=0;i<4;++i){auto* cell=new QVBoxLayout;cell->setSpacing(5);cell->addWidget(premiumLabel(labels[i],"caption"));auto* value=premiumLabel("—","detailValue");value->setWordWrap(true);values<<value;cell->addWidget(value);details->addLayout(cell,i/2,i%2);}
-        layout->addLayout(details);layout->addSpacing(2);layout->addWidget(premiumDivider());
+        layout->addLayout(details);layout->addSpacing(2);forecastDivider=premiumDivider();layout->addWidget(forecastDivider);
         forecast=premiumLabel("—","forecast");forecast->setWordWrap(true);layout->addWidget(forecast);layout->addStretch();
     }
     void present(const QString& gross,const QString& takeHome,const QString& payDate,const QStringList& detailValues,const QString& projection){
         amount->setText(gross);net->setText(takeHome);payout->setText(payDate);
-        for(int i=0;i<values.size();++i)values[i]->setText(detailValues.value(i));forecast->setText(projection);
+        for(int i=0;i<values.size();++i)values[i]->setText(detailValues.value(i));forecast->setText(projection);forecast->setVisible(!projection.isEmpty());forecastDivider->setVisible(!projection.isEmpty());
     }
 };
 
@@ -91,11 +105,11 @@ public:
     QLineEdit *name,*company,*website;QPushButton* search;QLabel* status;QTableWidget* results;
     BusinessContactView(){
         auto* root=new QVBoxLayout(this);root->setContentsMargins(0,0,0,0);root->setSpacing(18);auto* card=new PremiumCard;auto* body=new QVBoxLayout(card);body->setContentsMargins(26,24,26,24);body->setSpacing(16);
-        body->addWidget(premiumLabel("Find en erhvervskontakt","sectionTitle"));auto* description=premiumLabel("Søg efter et offentligt angivet arbejdsnummer. Tilføj en virksomhed for et mere præcist match.","muted");description->setWordWrap(true);body->addWidget(description);
+        body->addWidget(premiumLabel("Find en erhvervskontakt","sectionTitle"));
         auto* form=new QGridLayout;form->setHorizontalSpacing(20);form->setVerticalSpacing(16);
         name=new QLineEdit;name->setPlaceholderText("Fornavn og efternavn");name->setMaxLength(100);company=new QLineEdit;company->setPlaceholderText("Virksomhed eller by");company->setMaxLength(140);website=new QLineEdit;website->setPlaceholderText("Virksomhedens hjemmeside");website->setMaxLength(300);
         form->addWidget(premiumLabel("Fuldt navn","caption"),0,0);form->addWidget(premiumLabel("Virksomhed / by · valgfrit","caption"),0,1);form->addWidget(name,1,0);form->addWidget(company,1,1);form->addWidget(premiumLabel("Hjemmeside · valgfrit","caption"),2,0,1,2);form->addWidget(website,3,0,1,2);form->setColumnStretch(0,1);form->setColumnStretch(1,1);body->addLayout(form);
-        auto* actions=new QHBoxLayout;status=premiumLabel("Kun erhvervskontakter. Kontrollér altid kilden.","muted");status->setWordWrap(true);actions->addWidget(status,1);search=new QPushButton("Find kontakt");search->setIcon(premiumIcon("search",Qt::white));search->setProperty("primary",true);actions->addWidget(search);body->addLayout(actions);root->addWidget(card);
+        auto* actions=new QHBoxLayout;status=premiumLabel("","muted");status->setWordWrap(true);actions->addWidget(status,1);search=new QPushButton("Find kontakt");search->setIcon(premiumIcon("search",Qt::white));search->setProperty("primary",true);actions->addWidget(search);body->addLayout(actions);root->addWidget(card);
         auto* resultCard=new PremiumCard;auto* resultLayout=new QVBoxLayout(resultCard);resultLayout->setContentsMargins(24,22,24,22);resultLayout->setSpacing(12);resultLayout->addWidget(premiumLabel("Resultater","cardTitle"));
         results=new BusinessContactsTable(0,3);results->setHorizontalHeaderLabels({"Navn","Direkte arbejdsnummer","Kilde · dobbeltklik for at åbne"});results->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);results->verticalHeader()->hide();results->verticalHeader()->setDefaultSectionSize(52);results->setEditTriggers(QAbstractItemView::NoEditTriggers);results->setSelectionBehavior(QAbstractItemView::SelectRows);results->setShowGrid(false);resultLayout->addWidget(results,1);root->addWidget(resultCard,1);
     }
@@ -136,6 +150,11 @@ QPushButton[primary="true"]{background:#3B6BD2;border:1px solid #6388DC;color:#F
 QPushButton[primary="true"]:hover{background:#4879DF;} QPushButton[destructive="true"]{color:#F2A2A8;}
 QPushButton[quiet="true"]{border:1px solid transparent;background:transparent;color:#AAB5C9;}
 QPushButton[quiet="true"]:hover{background:rgba(255,255,255,11);color:#F1F4FB;}
+QPushButton[catalogItem="true"]{background:#1C2028;border:1px solid #353C49;border-radius:13px;padding:0;text-align:left;}
+QPushButton[catalogItem="true"]:hover{background:#272F3E;border-color:#637EA9;}
+QPushButton[catalogItem="true"]:pressed{background:#303E56;}
+QWidget#selectedProduct{background:#1B1E25;border:1px solid #353C49;border-radius:13px;}
+QPushButton#quantityControl{min-width:30px;max-width:30px;min-height:30px;max-height:30px;padding:0;border-radius:9px;font-size:17px;}
 QPushButton:disabled{color:#656E80;background:rgba(255,255,255,3);border-color:rgba(255,255,255,7);}
 QLineEdit,QComboBox,QDateEdit,QDateTimeEdit,QSpinBox,QDoubleSpinBox{background:#191C23;border:1px solid #383E4B;border-radius:9px;padding:8px 11px;color:#EFF2F8;selection-background-color:#385EA6;selection-color:white;min-height:19px;}
 QLineEdit:hover,QComboBox:hover,QSpinBox:hover,QDoubleSpinBox:hover{border-color:#4C566A;}

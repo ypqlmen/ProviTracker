@@ -17,6 +17,8 @@ add_executable(ProvisionTrackerV2 WIN32
     credentials.h
     repository.h
     commission.h
+    order_product_selection.h
+    order_product_picker.h
     report_view.h
     report_service.h
 )
@@ -34,6 +36,9 @@ endif()
 
 include(CTest)
 if(BUILD_TESTING)
+    add_executable(OrderProductSelectionTests tests/order_product_selection_test.cpp)
+    target_link_libraries(OrderProductSelectionTests PRIVATE Qt6::Core)
+    add_test(NAME OrderProductSelectionTests COMMAND OrderProductSelectionTests)
     add_executable(SingleSellerAccountTests tests/single_seller_account_test.cpp)
     target_link_libraries(SingleSellerAccountTests PRIVATE Qt6::Core)
     add_test(NAME SingleSellerAccountTests COMMAND SingleSellerAccountTests)

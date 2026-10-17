@@ -76,7 +76,7 @@ public:
         const auto cash=[](double value){return money(value)+" kr";};
         period->setText(salesperson.name+" · "+label+" · Timer: "+hoursPeriod);
         salaryCard->present(cash(salary.totalSalary),taxConfigured?"Efter skat · "+cash(tax.netSalary)+" (estimat)":"Angiv fradrag og trækprocent i Indstillinger → Løn",payout,
-            {cash(salary.baseSalary),cash(salary.sickPay),cash(salary.totalProvision),salary.cancellationsKnown?cash(salary.cancellations):QString("Afventer Intramanager")},salary.usesPaymentMonthRules?"Bagbetalt provision fra "+salary.delayedPeriod:"Timer og provision for den valgte periode");
+            {cash(salary.baseSalary),cash(salary.sickPay),cash(salary.totalProvision),salary.cancellationsKnown?cash(salary.cancellations):QString("Afventer Intramanager")},QString());
         const int activeDays=activeDayCount(metrics);const auto best=bestDayByPoints(metrics);
         const QStringList statValues={money(metrics.totalPoints),QString::number(metrics.salesCount),money(hours),money(activeDays?metrics.totalPoints/activeDays:0)};
         for(int i=0;i<statistics.size();++i)statistics[i]->setText(statValues[i]);

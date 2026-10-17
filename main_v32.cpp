@@ -24,6 +24,7 @@
 
 #include "premium_ui.h"
 #include "report_view.h"
+#include "order_product_picker.h"
 #include "feature_access.h"
 #include "updater_script.h"
 #include "sales_registration.h"
@@ -967,409 +968,40 @@ static QWidget* createSettingsButtonGrid(const QVector<QPushButton*>& buttons, i
 
 
 class OrderEditorDialog : public QDialog {
-public:
-    OrderEditorDialog(Repository& repo, const QString& salespersonId, std::optional<Order> existing = std::nullopt, QWidget* parent = nullptr)
-        : QDialog(parent), repo(repo), salespersonId(salespersonId) {
-        setWindowTitle(existing.has_value() ? "Rediger ordre" : "Ny ordre");
-        setMinimumSize(960,600);QSize size(1100,780);if(auto* screen=QGuiApplication::primaryScreen())size=size.boundedTo(screen->availableGeometry().size()-QSize(36,48));resize(size);
-
-        if (existing.has_value()) {
-            order = *existing;
-        } else {
-            order.salespersonId = salespersonId;
-            order.createdAt = QDateTime::currentDateTime();
-            order.sellerInitials = repo.settings.defaultSellerInitials;
-        }
-
-        auto* shell=new QVBoxLayout(this);shell->setContentsMargins(26,24,26,22);shell->setSpacing(18);
-        shell->addWidget(premiumLabel(existing?"Rediger ordre":"Ny ordre","pageTitle"));shell->addWidget(premiumLabel("Ordreoplysninger og produkter. Gem, når alt er klar.","muted"));
-        auto* editorScroll=new QScrollArea;editorScroll->setWidgetResizable(true);editorScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);auto* editorBody=new QWidget;
-        auto* mainLayout=new QVBoxLayout(editorBody);mainLayout->setContentsMargins(0,0,8,0);mainLayout->setSpacing(16);editorScroll->setWidget(editorBody);shell->addWidget(editorScroll,1);
-        auto* detailsGrid = new QGridLayout;
-        detailsGrid->setHorizontalSpacing(12);
-        detailsGrid->setVerticalSpacing(10);
-        idEdit = new QLineEdit(order.id);
-        idEdit->setPlaceholderText("Indtast eller indsæt ordre-ID...");
-        idEdit->setClearButtonEnabled(true);
-        idEdit->setMinimumWidth(0);
-        dateEdit = new QDateTimeEdit(order.createdAt);
-        dateEdit->setCalendarPopup(true);
-        dateEdit->setDisplayFormat("dd-MM-yyyy HH:mm");
-        dateEdit->setLocale(QLocale(QLocale::Danish, QLocale::Denmark));
-        dateEdit->setMinimumWidth(0);
-        dateEdit->setMinimumHeight(42);
-        initialsEdit = new QLineEdit(order.sellerInitials);
-        initialsEdit->setPlaceholderText("Fx 5RVPTN");
-        cvrEdit = new QLineEdit(order.cvrNumber);
-        cvrEdit->setPlaceholderText("CVR-nr.");
-        companyNameEdit = new QLineEdit(order.companyName);
-        companyNameEdit->setPlaceholderText("Firmanavn");
-        phoneEdit = new QLineEdit(order.phoneNumber);
-        phoneEdit->setPlaceholderText("Telefonnummer");
-        noteEdit = new QLineEdit(order.note);
-        noteEdit->setPlaceholderText("Valgfri note til ordren");
-        const QVector<QPair<QString,QWidget*>> fields={{"Dato & tidspunkt",dateEdit},{"Sælgerinitialer",initialsEdit},{"Ordrenummer",idEdit},{"CVR-nummer",cvrEdit},{"Virksomhed",companyNameEdit},{"Telefonnummer",phoneEdit}};
-        for(int i=0;i<fields.size();++i){auto* cell=new QVBoxLayout;cell->setSpacing(7);cell->addWidget(premiumLabel(fields[i].first,"caption"));cell->addWidget(fields[i].second);detailsGrid->addLayout(cell,i/3,i%3);}
-        auto* note=new QVBoxLayout;note->setSpacing(7);note->addWidget(premiumLabel("Note · valgfri","caption"));note->addWidget(noteEdit);detailsGrid->addLayout(note,2,0,1,3);
-        for(int i=0;i<3;++i)detailsGrid->setColumnStretch(i,1);
-        mainLayout->addLayout(detailsGrid);
-
-        auto* quickProducts=new QTabWidget;quickProducts->setObjectName("quickProducts");
-        auto* favoritesPage=new QWidget;auto* favRow=new QHBoxLayout(favoritesPage);favRow->setContentsMargins(0,8,0,8);buildFavoritesBar(favRow);quickProducts->addTab(favoritesPage,"Favoritter");
-        auto* recentPage=new QWidget;auto* recentRow=new QHBoxLayout(recentPage);recentRow->setContentsMargins(0,8,0,8);buildRecentBar(recentRow);quickProducts->addTab(recentPage,"Senest brugte");
-        if(!topFavoriteProductKeys().isEmpty() || !recentProductKeys().isEmpty())mainLayout->addWidget(quickProducts);else quickProducts->hide();
-
-        // ===== TABLE CARD =====
-        auto tableCard = createCard("Produkter");
-        table = new RoundedTableWidget(0, 5);
-        table->setHorizontalHeader(new CleanTableHeaderView(Qt::Horizontal, table));
-        table->setHorizontalHeaderLabels({"Kategori", "Produkt", "Antal", "Info", "Handling"});
-
-        tableCard.second->addWidget(table);
-        mainLayout->addWidget(tableCard.first,1);
-
-        auto* header = table->horizontalHeader();
-
-        header->setSectionResizeMode(0, QHeaderView::Fixed); // Kategori
-        header->setSectionResizeMode(1, QHeaderView::Stretch);          // Produkt
-        header->setSectionResizeMode(2, QHeaderView::Fixed);            // Antal
-        header->setSectionResizeMode(3, QHeaderView::Fixed);            // Info
-        header->setSectionResizeMode(4, QHeaderView::Fixed);            // Handling
-
-        table->setColumnWidth(0,125);
-        table->setColumnWidth(2,80);
-        table->setColumnWidth(3,170);
-        table->setColumnWidth(4,95);
-
-        table->verticalHeader()->setVisible(false);
-        table->verticalHeader()->setDefaultSectionSize(56);
-        table->setWordWrap(true);
-        table->setTextElideMode(Qt::ElideNone);
-        table->setShowGrid(false);
-        table->setAlternatingRowColors(true);
-        table->setSelectionMode(QAbstractItemView::NoSelection);
-        table->setEditTriggers(QAbstractItemView::NoEditTriggers);
-        table->setFocusPolicy(Qt::NoFocus);
-        table->setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);
-        table->setMinimumHeight(170);
-        table->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
-        styleDataTable(table, false);
-
-
-        auto* btnRow = new QHBoxLayout;
-        btnRow->setContentsMargins(0, 0, 0, 0);
-
-        auto* addLineBtn = new QPushButton("Tilføj produkt");
-        auto* duplicateLastBtn = new QPushButton("Gentag sidste produkt");
-        auto* saveBtn = new QPushButton("Gem ordre");saveBtn->setProperty("primary",true);
-        auto* cancelBtn = new QPushButton("Annuller");
-
-        btnRow->addWidget(addLineBtn);
-        btnRow->addWidget(duplicateLastBtn);
-        btnRow->addStretch();
-        btnRow->addWidget(saveBtn);
-        btnRow->addWidget(cancelBtn);
-
-        shell->addWidget(premiumDivider());shell->addLayout(btnRow);
-
-        for (const auto& item : order.items) addRow(item.productKey, item.quantity);
-        if (order.items.isEmpty()) addRow({}, 1);
-
-        connect(addLineBtn, &QPushButton::clicked, this, [this]() { addRow({}, 1); });
-        connect(duplicateLastBtn, &QPushButton::clicked, this, [this]() {
-            if (table->rowCount() == 0) {
-                addRow({}, 1);
-                return;
-            }
-            auto* productCombo = qobject_cast<QComboBox*>(table->cellWidget(table->rowCount() - 1, 1));
-            auto* qtySpin = qobject_cast<QSpinBox*>(table->cellWidget(table->rowCount() - 1, 2));
-            addRow(productCombo ? productCombo->currentData().toString() : QString(), qtySpin ? qtySpin->value() : 1);
-        });
-        connect(cancelBtn, &QPushButton::clicked, this, &QDialog::reject);
-
-        auto* shortcutAdd = new QShortcut(QKeySequence(Qt::CTRL | Qt::Key_N), this);
-        connect(shortcutAdd, &QShortcut::activated, this, [this]() { addRow({}, 1); });
-        auto* shortcutDuplicate = new QShortcut(QKeySequence(Qt::CTRL | Qt::Key_D), this);
-        connect(shortcutDuplicate, &QShortcut::activated, this, [this]() {
-            if (table->rowCount() == 0) {
-                addRow({}, 1);
-                return;
-            }
-            auto* productCombo = qobject_cast<QComboBox*>(table->cellWidget(table->rowCount() - 1, 1));
-            auto* qtySpin = qobject_cast<QSpinBox*>(table->cellWidget(table->rowCount() - 1, 2));
-            addRow(productCombo ? productCombo->currentData().toString() : QString(), qtySpin ? qtySpin->value() : 1);
-        });
-        auto* shortcutSave = new QShortcut(QKeySequence(Qt::CTRL | Qt::Key_S), this);
-        connect(shortcutSave, &QShortcut::activated, saveBtn, &QPushButton::click);
-        auto* shortcutCancel = new QShortcut(QKeySequence(Qt::Key_Escape), this);
-        connect(shortcutCancel, &QShortcut::activated, this, &QDialog::reject);
-
-        connect(saveBtn, &QPushButton::clicked, this, [this]() {
-            order.id = idEdit->text().trimmed();
-            if (order.id.isEmpty()) {
-                QMessageBox::warning(this, "Manglende ordre-ID", "Du skal indtaste eller indsætte et ordre-ID.");
-                return;
-            }
-            order.sellerInitials = initialsEdit->text().trimmed();
-            order.cvrNumber = cvrEdit->text().trimmed();
-            order.companyName = companyNameEdit->text().trimmed();
-            order.phoneNumber = phoneEdit->text().trimmed();
-            if (order.sellerInitials.isEmpty() || order.cvrNumber.isEmpty()
-                || order.companyName.isEmpty() || order.phoneNumber.isEmpty()) {
-                QMessageBox::warning(
-                    this,
-                    "Manglende ordreoplysninger",
-                    "Du skal udfylde initialer, CVR-nr., firmanavn og telefonnummer."
-                    );
-                return;
-            }
-            order.createdAt = dateEdit->dateTime();
-            order.note = noteEdit->text().trimmed();
-            order.items.clear();
-            for (int row = 0; row < table->rowCount(); ++row) {
-                auto* combo = qobject_cast<QComboBox*>(table->cellWidget(row, 1));
-                auto* spin = qobject_cast<QSpinBox*>(table->cellWidget(row, 2));
-                if (!combo || !spin) continue;
-                const QString productKey = combo->currentData().toString();
-                const int qty = spin->value();
-                if (productKey.isEmpty() || qty <= 0) continue;
-                order.items.push_back({productKey, qty});
-            }
-            if (order.items.isEmpty()) {
-                QMessageBox::warning(this, "Tom ordre", "Du skal tilføje mindst ét produkt.");
-                return;
-            }
-            accept();
-        });
-    }
-
-    Order getOrder() const { return order; }
-
-private:
-    Repository& repo;
-    QString salespersonId;
     Order order;
-    QLineEdit* idEdit = nullptr;
-    QDateTimeEdit* dateEdit = nullptr;
-    QLineEdit* initialsEdit = nullptr;
-    QLineEdit* cvrEdit = nullptr;
-    QLineEdit* companyNameEdit = nullptr;
-    QLineEdit* phoneEdit = nullptr;
-    QLineEdit* noteEdit = nullptr;
-    QTableWidget* table = nullptr;
-
-    static QString& rememberedCategoryRef() {
-        static QString category = "Mobil";
-        return category;
+    QLineEdit *idEdit,*initialsEdit,*cvrEdit,*companyNameEdit,*phoneEdit,*noteEdit;
+    QDateTimeEdit* dateEdit;
+    QTabWidget* steps;
+    OrderProductPicker* products;
+    void saveOrder(){
+        const QVector<QPair<QLineEdit*,QString>> required={{idEdit,"ordrenummer"},{initialsEdit,"sælgerinitialer"},{cvrEdit,"CVR-nummer"},{companyNameEdit,"virksomhed"},{phoneEdit,"telefonnummer"}};
+        for(const auto& field:required)if(field.first->text().trimmed().isEmpty()){steps->setCurrentIndex(0);field.first->setFocus();QMessageBox::warning(this,"Manglende ordreoplysninger","Udfyld "+field.second+" for at gemme ordren.");return;}
+        if(products->items().isEmpty()){steps->setCurrentIndex(1);products->focusSearch();QMessageBox::warning(this,"Tom ordre","Tilføj mindst ét produkt.");return;}
+        order.id=idEdit->text().trimmed();order.sellerInitials=initialsEdit->text().trimmed();order.cvrNumber=cvrEdit->text().trimmed();order.companyName=companyNameEdit->text().trimmed();order.phoneNumber=phoneEdit->text().trimmed();order.createdAt=dateEdit->dateTime();order.note=noteEdit->text().trimmed();order.items=products->items();accept();
     }
-
-    QStringList topFavoriteProductKeys(int limit = 3) const {
-        QMap<QString, int> counts;
-        for (const auto& existingOrder : repo.orders) {
-            if (existingOrder.salespersonId != salespersonId) continue;
-            for (const auto& item : existingOrder.items) {
-                counts[item.productKey] += item.quantity;
-            }
-        }
-
-        QVector<QPair<QString, int>> scored;
-        for (auto it = counts.begin(); it != counts.end(); ++it) scored.push_back(qMakePair(it.key(), it.value()));
-        std::sort(scored.begin(), scored.end(), [](const auto& a, const auto& b) {
-            if (a.second != b.second) return a.second > b.second;
-            return a.first < b.first;
-        });
-
-        QStringList out;
-        for (int i = 0; i < scored.size() && i < limit; ++i) out << scored[i].first;
-        return out;
+public:
+    OrderEditorDialog(Repository& repo,const QString& salespersonId,std::optional<Order> existing=std::nullopt,QWidget* parent=nullptr):QDialog(parent){
+        setWindowTitle(existing?"Rediger ordre":"Ny ordre");setMinimumSize(960,600);QSize size(1120,790);if(auto* screen=QGuiApplication::primaryScreen())size=size.boundedTo(screen->availableGeometry().size()-QSize(36,48));resize(size);
+        if(existing)order=*existing;else{order.salespersonId=salespersonId;order.createdAt=QDateTime::currentDateTime();order.sellerInitials=repo.settings.defaultSellerInitials;}
+        auto* shell=new QVBoxLayout(this);shell->setContentsMargins(26,24,26,22);shell->setSpacing(18);shell->addWidget(premiumLabel(existing?"Rediger ordre":"Ny ordre","pageTitle"));
+        steps=new QTabWidget;steps->setObjectName("orderSteps");auto* detailsScroll=new QScrollArea;detailsScroll->setWidgetResizable(true);auto* detailsBody=new QWidget;auto* detailsLayout=new QVBoxLayout(detailsBody);detailsLayout->setContentsMargins(0,18,8,8);detailsLayout->setSpacing(18);
+        auto* details=new PremiumCard;auto* card=new QVBoxLayout(details);card->setContentsMargins(24,22,24,24);card->setSpacing(18);card->addWidget(premiumLabel("Ordreoplysninger","sectionTitle"));auto* grid=new QGridLayout;grid->setHorizontalSpacing(16);grid->setVerticalSpacing(18);
+        idEdit=new QLineEdit(order.id);idEdit->setPlaceholderText("Ordrenummer");idEdit->setClearButtonEnabled(true);idEdit->setObjectName("orderId");
+        dateEdit=new QDateTimeEdit(order.createdAt);dateEdit->setCalendarPopup(true);dateEdit->setDisplayFormat("dd-MM-yyyy HH:mm");dateEdit->setLocale(QLocale(QLocale::Danish,QLocale::Denmark));
+        initialsEdit=new QLineEdit(order.sellerInitials);initialsEdit->setObjectName("orderInitials");initialsEdit->setPlaceholderText("Fx 5RVPTN");cvrEdit=new QLineEdit(order.cvrNumber);cvrEdit->setObjectName("orderCvr");cvrEdit->setPlaceholderText("CVR-nummer");companyNameEdit=new QLineEdit(order.companyName);companyNameEdit->setObjectName("orderCompany");companyNameEdit->setPlaceholderText("Virksomhedens navn");phoneEdit=new QLineEdit(order.phoneNumber);phoneEdit->setObjectName("orderPhone");phoneEdit->setPlaceholderText("Telefonnummer");noteEdit=new QLineEdit(order.note);noteEdit->setPlaceholderText("Valgfri note til ordren");
+        const QVector<QPair<QString,QWidget*>> fields={{"Ordrenummer",idEdit},{"Dato & tidspunkt",dateEdit},{"Sælgerinitialer",initialsEdit},{"Virksomhed",companyNameEdit},{"CVR-nummer",cvrEdit},{"Telefonnummer",phoneEdit}};
+        for(int i=0;i<fields.size();++i){auto* cell=new QVBoxLayout;cell->setSpacing(8);cell->addWidget(premiumLabel(fields[i].first,"caption"));cell->addWidget(fields[i].second);grid->addLayout(cell,i/3,i%3);}for(int i=0;i<3;++i)grid->setColumnStretch(i,1);card->addLayout(grid);
+        card->addWidget(premiumLabel("Note · valgfri","caption"));card->addWidget(noteEdit);detailsLayout->addWidget(details);detailsLayout->addStretch();detailsScroll->setWidget(detailsBody);steps->addTab(detailsScroll,"1  Ordreoplysninger");
+        auto* productPage=new QWidget;auto* productBody=new QVBoxLayout(productPage);productBody->setContentsMargins(0,18,0,0);products=new OrderProductPicker(repo,salespersonId);products->setItems(order.items);productBody->addWidget(products);steps->addTab(productPage,"2  Produkter");shell->addWidget(steps,1);
+        shell->addWidget(premiumDivider());auto* footer=new QHBoxLayout;footer->setSpacing(12);auto* summary=premiumLabel(products->summary(),"detailValue");footer->addWidget(summary,1);
+        auto* back=new QPushButton("Tilbage");back->setAutoDefault(false);footer->addWidget(back);back->hide();auto* cancel=new QPushButton("Annuller");cancel->setAutoDefault(false);footer->addWidget(cancel);auto* next=new QPushButton("Vælg produkter");next->setObjectName("orderNext");next->setAutoDefault(false);next->setProperty("primary",true);footer->addWidget(next);shell->addLayout(footer);
+        products->selectionChanged=[this,summary](){summary->setText(products->summary());};
+        connect(steps,&QTabWidget::currentChanged,this,[back,next](int index){back->setVisible(index==1);next->setText(index==1?"Gem ordre":"Vælg produkter");});connect(back,&QPushButton::clicked,this,[this](){steps->setCurrentIndex(0);});connect(next,&QPushButton::clicked,this,[this](){if(steps->currentIndex()==0){steps->setCurrentIndex(1);products->focusSearch();}else saveOrder();});connect(cancel,&QPushButton::clicked,this,&QDialog::reject);
+        auto* add=new QShortcut(QKeySequence(Qt::CTRL|Qt::Key_N),this);connect(add,&QShortcut::activated,this,[this](){steps->setCurrentIndex(1);products->focusSearch();});
+        auto* duplicate=new QShortcut(QKeySequence(Qt::CTRL|Qt::Key_D),this);connect(duplicate,&QShortcut::activated,this,[this](){const auto selected=products->items();if(!selected.isEmpty())products->addProduct(selected.last().productKey,selected.last().quantity);});
+        auto* save=new QShortcut(QKeySequence(Qt::CTRL|Qt::Key_S),this);connect(save,&QShortcut::activated,this,[this](){saveOrder();});
     }
-
-    QStringList recentProductKeys(int limit = 3) const {
-        QStringList out;
-        QSet<QString> seen;
-        for (int i = repo.orders.size() - 1; i >= 0 && out.size() < limit; --i) {
-            const auto& existingOrder = repo.orders[i];
-            if (existingOrder.salespersonId != salespersonId) continue;
-            for (int j = existingOrder.items.size() - 1; j >= 0 && out.size() < limit; --j) {
-                const QString key = existingOrder.items[j].productKey;
-                if (!seen.contains(key)) {
-                    seen.insert(key);
-                    out << key;
-                }
-            }
-        }
-        return out;
-    }
-
-    void addFavoriteProduct(const QString& productKey) {
-        if (productKey.isEmpty()) return;
-        addRow(productKey, 1);
-        table->scrollToBottom();
-    }
-
-    void buildFavoritesBar(QHBoxLayout* layout) {
-        const auto favorites = topFavoriteProductKeys();
-        if (favorites.isEmpty()) {
-            auto* label = new QLabel("Ingen favoritter endnu. De mest solgte produkter dukker op her.");
-            label->setWordWrap(true);
-            layout->addWidget(label);
-            layout->addStretch();
-            return;
-        }
-
-        for (const auto& productKey : favorites) {
-            const auto* p = repo.findProduct(productKey);
-            if (!p) continue;
-            auto* btn = new QPushButton;btn->setText(btn->fontMetrics().elidedText(p->displayName,Qt::ElideRight,200));btn->setMaximumWidth(250);btn->setProperty("quiet",true);btn->setIcon(premiumIcon("plus"));
-            btn->setToolTip(QString("Tilføj %1").arg(p->displayName));
-            layout->addWidget(btn);
-            connect(btn, &QPushButton::clicked, this, [this, productKey]() { addFavoriteProduct(productKey); });
-        }
-        layout->addStretch();
-    }
-
-    void buildRecentBar(QHBoxLayout* layout) {
-        const auto recent = recentProductKeys();
-        if (recent.isEmpty()) {
-            auto* label = new QLabel("Dine senest brugte produkter vises her.");
-            label->setWordWrap(true);
-            layout->addWidget(label);
-            layout->addStretch();
-            return;
-        }
-
-        for (const auto& productKey : recent) {
-            const auto* p = repo.findProduct(productKey);
-            if (!p) continue;
-            auto* btn = new QPushButton;btn->setText(btn->fontMetrics().elidedText(p->displayName,Qt::ElideRight,200));btn->setMaximumWidth(250);btn->setProperty("quiet",true);btn->setIcon(premiumIcon("plus"));
-            btn->setToolTip(QString("Tilføj %1 igen").arg(p->displayName));
-            layout->addWidget(btn);
-            connect(btn, &QPushButton::clicked, this, [this, productKey]() { addFavoriteProduct(productKey); });
-        }
-        layout->addStretch();
-    }
-
-    QStringList categories() const {
-        QSet<QString> seen;
-        QStringList out;
-        for (const auto& p : repo.products) {
-            if (!seen.contains(p.category)) {
-                seen.insert(p.category);
-                out << p.category;
-            }
-        }
-        std::sort(out.begin(), out.end(), [](const QString& a, const QString& b) {
-            if (a == "Mobil") return true;
-            if (b == "Mobil") return false;
-            if (a == "Fiber") return true;
-            if (b == "Fiber") return false;
-            if (a == "FWA") return true;
-            if (b == "FWA") return false;
-            if (a == "Mobilt bredbånd") return true;
-            if (b == "Mobilt bredbånd") return false;
-            if (a == "Tillæg") return false;
-            if (b == "Tillæg") return true;
-            return a.localeAwareCompare(b) < 0;
-        });
-        return out;
-    }
-
-    QString productInfoText(const Product* p) const {
-        if (!p) return "Vælg produkt";
-        return QString("%1 point | %2").arg(money(p->points), countModeBadge(p->countMode));
-    }
-
-    void fillProductCombo(QComboBox* productCombo, const QString& category, const QString& selectedKey) {
-        QSignalBlocker blocker(productCombo);
-        productCombo->clear();
-        for (const auto& p : repo.products) {
-            if (p.category == category) {
-                productCombo->addItem(QString("%1 (%2 point | %3)").arg(p.displayName, money(p.points), countModeBadge(p.countMode)), p.key);
-            }
-        }
-        int idx = selectedKey.isEmpty() ? -1 : productCombo->findData(selectedKey);
-        if (idx >= 0) productCombo->setCurrentIndex(idx);
-        else if (productCombo->count() > 0) productCombo->setCurrentIndex(0);
-    }
-
-    void syncInfoLabel(int row) {
-        auto* productCombo = qobject_cast<QComboBox*>(table->cellWidget(row, 1));
-        auto* infoLabel = qobject_cast<QLabel*>(table->cellWidget(row, 3));
-        if (!productCombo || !infoLabel) return;
-        const auto* p = repo.findProduct(productCombo->currentData().toString());
-        infoLabel->setText(productInfoText(p));
-    }
-
-    void addRow(const QString& productKey, int quantity) {
-        const Product* existingProduct = productKey.isEmpty() ? nullptr : repo.findProduct(productKey);
-        const QString rememberedCategory = rememberedCategoryRef();
-        const QString initialCategory = existingProduct
-            ? existingProduct->category
-            : (!rememberedCategory.isEmpty() ? rememberedCategory : (categories().isEmpty() ? QString() : categories().first()));
-
-        const int row = table->rowCount();
-        table->insertRow(row);
-
-        auto* categoryCombo = new QComboBox;
-        categoryCombo->addItems(categories());
-        categoryCombo->setMinimumWidth(0);
-        int catIdx = categoryCombo->findText(initialCategory);
-        if (catIdx >= 0) categoryCombo->setCurrentIndex(catIdx);
-
-        auto* productCombo = new QComboBox;
-        productCombo->setEditable(true);
-        productCombo->setMinimumWidth(0);
-        productCombo->setInsertPolicy(QComboBox::NoInsert);
-        fillProductCombo(productCombo, categoryCombo->currentText(), productKey);
-        if (auto* completer = productCombo->completer()) {
-            completer->setCompletionMode(QCompleter::PopupCompletion);
-            completer->setFilterMode(Qt::MatchContains);
-            completer->setCaseSensitivity(Qt::CaseInsensitive);
-        }
-        if (productCombo->lineEdit()) {
-            productCombo->lineEdit()->setStyleSheet("QLineEdit {background:transparent;border:none;padding:0;}");
-            connect(productCombo->lineEdit(), &QLineEdit::returnPressed, this, [this]() { addRow({}, 1); });
-        }
-
-        auto* qtySpin = new QSpinBox;
-        qtySpin->setButtonSymbols(QAbstractSpinBox::NoButtons);
-        qtySpin->setRange(1, 999);
-        qtySpin->setValue(quantity);
-
-        auto* infoLabel = new QLabel;
-        infoLabel->setMinimumWidth(230);
-        infoLabel->setTextInteractionFlags(Qt::NoTextInteraction);
-        const auto* p = repo.findProduct(productCombo->currentData().toString());
-        infoLabel->setText(productInfoText(p));
-
-        auto* removeBtn = new QPushButton("Fjern");
-        connect(removeBtn, &QPushButton::clicked, this, [this, removeBtn]() {
-            for (int r = 0; r < table->rowCount(); ++r) {
-                if (table->cellWidget(r, 4) == removeBtn) {
-                    table->removeRow(r);
-                    if (table->rowCount() == 0) addRow({}, 1);
-                    break;
-                }
-            }
-        });
-
-        connect(categoryCombo, &QComboBox::currentTextChanged, this, [this, productCombo, infoLabel](const QString& category) {
-            rememberedCategoryRef() = category;
-            fillProductCombo(productCombo, category, {});
-            const auto* p = repo.findProduct(productCombo->currentData().toString());
-            infoLabel->setText(productInfoText(p));
-        });
-        connect(productCombo, &QComboBox::currentIndexChanged, this, [this, row](int) {
-            syncInfoLabel(row);
-        });
-
-        table->setCellWidget(row, 0, categoryCombo);
-        table->setCellWidget(row, 1, productCombo);
-        table->setCellWidget(row, 2, qtySpin);
-        table->setCellWidget(row, 3, infoLabel);
-        table->setCellWidget(row, 4, removeBtn);
-        table->setRowHeight(row, 48);
-    }
+    Order getOrder()const{return order;}
 };
 
 // ============================================================
@@ -1467,6 +1099,27 @@ public:
             qApp->processEvents();
             saveWidget(&orderDialog, QDir(outputDir).filePath("06-new-order-dialog.png"));
             orderDialog.resize(960,620);qApp->processEvents();saveWidget(&orderDialog,QDir(outputDir).filePath("15-new-order-compact.png"));
+            if(auto* steps=orderDialog.findChild<QTabWidget*>("orderSteps")){
+                orderDialog.resize(1120,790);steps->setCurrentIndex(1);qApp->processEvents();
+                if(auto* add=orderDialog.findChild<QAbstractButton*>("catalog_mobil_25gb_36"))add->click();
+                if(auto* add=orderDialog.findChild<QAbstractButton*>("catalog_til_datakort"))add->click();
+                if(auto* quantity=orderDialog.findChild<QSpinBox*>("quantity_mobil_25gb_36"))quantity->setValue(8);
+                qApp->processEvents();saveWidget(&orderDialog,QDir(outputDir).filePath("21-product-picker.png"));
+                if(auto* search=orderDialog.findChild<QLineEdit*>("productSearch")){
+                    search->setText("50GB");qApp->processEvents();saveWidget(&orderDialog,QDir(outputDir).filePath("22-product-search.png"));search->setText("ingenprodukt123");qApp->processEvents();saveWidget(&orderDialog,QDir(outputDir).filePath("23-product-empty.png"));search->clear();
+                }
+                orderDialog.resize(960,620);qApp->processEvents();saveWidget(&orderDialog,QDir(outputDir).filePath("24-product-compact.png"));
+            }
+            const QVector<QPair<QString,QString>> demoFields={{"orderId","VISUAL-DEMO-ORDER"},{"orderInitials","DEMO"},{"orderCvr","12345678"},{"orderCompany","Fiktiv virksomhed"},{"orderPhone","12345678"}};
+            for(const auto& field:demoFields){auto* edit=orderDialog.findChild<QLineEdit*>(field.first);if(!edit)qFatal("Order field missing from visual review");edit->setText(field.second);}
+            auto* submit=orderDialog.findChild<QPushButton*>("orderNext");if(!submit)qFatal("Order save control missing");submit->click();
+            const auto saved=orderDialog.getOrder();
+            if(orderDialog.result()!=QDialog::Accepted || saved.items.size()!=2 || saved.items[0].productKey!="mobil_25gb_36" || saved.items[0].quantity!=8 || saved.items[1].productKey!="til_datakort" || saved.items[1].quantity!=1)qFatal("Product picker did not save selected quantities");
+            Order registered=saved;registered.masterRegistrationState="registered";registered.masterRegistration=QJsonObject{{"recordId","fake-demo-record"}};
+            OrderEditorDialog editDialog(repo,s->id,registered,this);editDialog.show();editDialog.findChild<QTabWidget*>("orderSteps")->setCurrentIndex(1);qApp->processEvents();
+            auto* editQuantity=editDialog.findChild<QSpinBox*>("quantity_mobil_25gb_36");if(!editQuantity)qFatal("Existing product missing from editor");editQuantity->setValue(10);qApp->processEvents();saveWidget(&editDialog,QDir(outputDir).filePath("25-edit-order.png"));
+            editDialog.findChild<QPushButton*>("orderNext")->click();registered.items[0].quantity=10;
+            if(editDialog.result()!=QDialog::Accepted || toJson(editDialog.getOrder())!=toJson(registered))qFatal("Editing quantities changed order metadata");
             orderDialog.close();
         }
 
@@ -2897,7 +2550,7 @@ private:
         cloudClient.saveAsync(cloudUsername, cloudToken, payload, [this](ProviCloudClient::Result result) {
             cloudSaveInFlight = false;
             if (result.ok) {
-                cloudStatusText = "Cloud-data er gemt.";
+                cloudStatusText.clear();
             } else {
                 cloudSaveDirty = true;
                 cloudStatusText = result.error.isEmpty() ? "Cloud-gemning fejlede." : result.error;
@@ -2945,7 +2598,7 @@ private:
         cloudSaveAgain = false;
         const auto result = cloudClient.save(cloudUsername, cloudToken, localPayloadForCloudUser(cloudUsername));
         if (result.ok) {
-            cloudStatusText = "Cloud-data er gemt.";
+            cloudStatusText.clear();
             updateCloudAccountStatus();
             return true;
         }
@@ -2972,15 +2625,9 @@ private:
     }
 
     void updateCloudAccountStatus() {
-        if (cloudAccountStatusLabel) {
-            if (cloudUsername.trimmed().isEmpty()) {
-                cloudAccountStatusLabel->setText("Demovisning med fiktive oplysninger.");
-            } else {
-                cloudAccountStatusLabel->setText(
-                    QString("Logget ind som %1. %2").arg(cloudUsername.toHtmlEscaped(), cloudStatusText.toHtmlEscaped())
-                    );
-            }
-        }
+        if(!cloudAccountStatusLabel)return;
+        const bool showError=cloudSaveDirty && !cloudSaveInFlight && !cloudStatusText.isEmpty();
+        cloudAccountStatusLabel->setText(showError?cloudStatusText:QString());cloudAccountStatusLabel->setVisible(showError);
     }
 
     void logoutCloudUser() {
@@ -3008,7 +2655,7 @@ private:
         setMinimumSize(1000,640);QSize size(1280,860);if(auto* screen=QGuiApplication::primaryScreen())size=size.boundedTo(screen->availableGeometry().size()-QSize(36,48));resize(size);setWindowTitle("Provi Tracker");
         auto* central=new PremiumWorkspace;central->setObjectName("workspace");auto* root=new QHBoxLayout(central);root->setContentsMargins(0,0,0,0);root->setSpacing(0);
         auto* sidebar=new QFrame;sidebar->setObjectName("sidebar");sidebar->setFixedWidth(218);auto* side=new QVBoxLayout(sidebar);side->setContentsMargins(18,30,18,20);side->setSpacing(12);
-        auto* brandRow=new QHBoxLayout;auto* mark=new QLabel;mark->setPixmap(premiumIcon("trend",QColor("#D9E6FF")).pixmap(25,25));mark->setStyleSheet("background:#3B5482;border:1px solid #6B81AB;border-radius:12px;padding:8px;");
+        auto* brandRow=new QHBoxLayout;auto* mark=new PremiumAvatar;
         auto* brand=new QLabel("provi");brand->setStyleSheet("font-size:28px;font-weight:600;color:#FAFBFE;");brandRow->addWidget(mark);brandRow->addSpacing(5);brandRow->addWidget(brand);brandRow->addStretch();side->addLayout(brandRow);
         auto* caption=premiumLabel("Victor er farmand","caption");caption->setContentsMargins(3,12,0,12);side->addWidget(caption);
         auto* navigation=new QListWidget;navigation->setObjectName("navigation");navigation->setIconSize(QSize(19,19));navigation->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);navigation->setFocusPolicy(Qt::NoFocus);
@@ -3016,10 +2663,9 @@ private:
         for(const auto& link:links){if(link.first=="Kontakter" && !contactSearchAllowed())continue;new QListWidgetItem(premiumIcon(link.second),link.first,navigation);}
         side->addWidget(navigation,1);side->addWidget(premiumDivider());
         activeSalespersonLabel=premiumLabel("","cardTitle");activeSalespersonLabel->setWordWrap(true);side->addSpacing(8);side->addWidget(activeSalespersonLabel);
-        side->addWidget(premiumLabel("Personlig cloud-konto","caption"));
         side->addWidget(premiumLabel(QString("Provi Tracker · Test %1").arg(APP_VERSION),"caption"));root->addWidget(sidebar);
         auto* content=new QVBoxLayout;content->setContentsMargins(30,27,30,22);content->setSpacing(24);
-        auto* top=new QHBoxLayout;auto* titleBlock=new QVBoxLayout;titleBlock->setSpacing(6);auto* title=premiumLabel("Overblik","pageTitle");auto* subtitle=premiumLabel("Løn, salg og næste milepæl.","muted");titleBlock->addWidget(title);titleBlock->addWidget(subtitle);top->addLayout(titleBlock);top->addStretch();
+        auto* top=new QHBoxLayout;auto* titleBlock=new QVBoxLayout;titleBlock->setSpacing(6);auto* title=premiumLabel("Overblik","pageTitle");auto* subtitle=premiumLabel("","muted");subtitle->hide();titleBlock->addWidget(title);titleBlock->addWidget(subtitle);top->addLayout(titleBlock);top->addStretch();
         auto* date=premiumLabel(QLocale(QLocale::Danish).toString(QDate::currentDate(),"d. MMMM yyyy"),"muted");top->addWidget(date);top->addSpacing(15);
         auto* newOrderBtn=new QPushButton("Ny ordre");newOrderBtn->setIcon(premiumIcon("plus",Qt::white));newOrderBtn->setProperty("primary",true);top->addWidget(newOrderBtn);content->addLayout(top);
         auto* tabs=new QTabWidget;tabs->setObjectName("mainPages");tabs->setFocusPolicy(Qt::NoFocus);tabs->tabBar()->hide();
@@ -3028,7 +2674,7 @@ private:
         connect(navigation,&QListWidget::currentRowChanged,tabs,&QTabWidget::setCurrentIndex);
         connect(tabs,&QTabWidget::currentChanged,navigation,[navigation](int row){navigation->setCurrentRow(row);});
         connect(navigation,&QListWidget::currentRowChanged,this,[title,subtitle,navigation](int row){if(row<0)return;const auto text=navigation->item(row)->text();title->setText(text);
-            const QMap<QString,QString> descriptions={{"Overblik","Løn, salg og næste milepæl."},{"Ordrer","Dine salg. Samlet ét sted."},{"Rapporter","Din løn og dine salg, periode for periode."},{"Kontakter","Find offentlige erhvervskontakter med kilde."},{"Indstillinger","Dit arbejdsrum. Dine indstillinger."}};subtitle->setText(descriptions.value(text));});navigation->setCurrentRow(0);
+            const QMap<QString,QString> descriptions={{"Kontakter","Find offentlige erhvervskontakter med kilde."},{"Indstillinger","Dit arbejdsrum. Dine indstillinger."}};subtitle->setText(descriptions.value(text));subtitle->setVisible(!subtitle->text().isEmpty());});navigation->setCurrentRow(0);
         connect(newOrderBtn,&QPushButton::clicked,this,[this](){createOrder();});qApp->installEventFilter(this);
     }
 
@@ -3088,7 +2734,7 @@ private:
         auto* clock=new QLabel;clock->setPixmap(premiumIcon("clock").pixmap(25,25));clock->setStyleSheet("background:rgba(255,255,255,8);border-radius:12px;padding:10px;");punchRow->addWidget(clock);
         auto* punchText=new QVBoxLayout;punchText->setSpacing(5);intramanagerPunchStatusLabel=premiumLabel("Stempelur","cardTitle");intramanagerPunchDetailLabel=premiumLabel("—","muted");intramanagerPunchDetailLabel->setWordWrap(true);punchText->addWidget(intramanagerPunchStatusLabel);punchText->addWidget(intramanagerPunchDetailLabel);punchRow->addLayout(punchText,1);
         intramanagerPunchButton=new QPushButton("Hent status");punchRow->addWidget(intramanagerPunchButton);layout->addWidget(punch);
-        auto* goalTitle=new QHBoxLayout;goalTitle->addWidget(premiumLabel("Månedens mål & næste bonus","sectionTitle"));goalTitle->addStretch();goalTitle->addWidget(premiumLabel("Ét skridt tættere på næste niveau","caption"));layout->addLayout(goalTitle);
+        auto* goalTitle=new QHBoxLayout;goalTitle->addWidget(premiumLabel("Månedens mål & næste bonus","sectionTitle"));goalTitle->addStretch();layout->addLayout(goalTitle);
         auto* progress=new QGridLayout;progress->setHorizontalSpacing(18);progress->setVerticalSpacing(18);
         progress->addWidget(createProgressCard("Pointmål",&targetProgressBar,&targetProgressHintLabel),0,0);progress->addWidget(createProgressCard("Salgsmål",&salesTargetProgressBar,&salesTargetProgressHintLabel),0,1);
         progress->addWidget(createProgressCard("SIMO-bonus",&simoProgressBar,&simoProgressHintLabel),1,0);progress->addWidget(createProgressCard("VOICE-bonus",&voiceProgressBar,&voiceProgressHintLabel),1,1);layout->addLayout(progress);
@@ -3279,7 +2925,7 @@ private:
             });
         });
         auto payrollCard=createCard("Løn & skat");auto* payrollForm=new QFormLayout;configureSettingsForm(payrollForm);
-        auto* payrollHelp=premiumLabel("Indtast timeløn, månedsfradrag og trækprocent fra dit skattekort. Dine indtastninger bruges til visningen efter skat.","muted");payrollHelp->setWordWrap(true);payrollCard.second->addWidget(payrollHelp);payrollCard.second->addSpacing(12);
+        auto* payrollHelp=premiumLabel("Indtast timeløn, månedsfradrag og trækprocent fra dit skattekort.","muted");payrollHelp->setWordWrap(true);payrollCard.second->addWidget(payrollHelp);payrollCard.second->addSpacing(12);
         payrollForm->addRow("Timeløn",hourlyRateSpin);payrollForm->addRow("Månedsfradrag",taxDeductionSpin);payrollForm->addRow("Trækprocent",taxRateSpin);payrollCard.second->addLayout(payrollForm);
         auto* savePayrollBtn=new QPushButton("Gem lønindstillinger");savePayrollBtn->setProperty("primary",true);payrollCard.second->addSpacing(12);payrollCard.second->addWidget(savePayrollBtn,0,Qt::AlignRight);
         auto* payrollSaved=premiumLabel("","muted");payrollSaved->hide();payrollCard.second->addWidget(payrollSaved);
@@ -3312,7 +2958,7 @@ private:
         auto* installChromeBtn = new QPushButton("Installer Chrome-udvidelse");
         auto* probeChromeBtn = new QPushButton("Kontrollér Chrome");
         auto* salesActionRow = createSettingsButtonGrid(QVector<QPushButton*>{saveSalesRegistrationBtn, testSalesRegistrationBtn, installChromeBtn, probeChromeBtn}, 2);
-        testSalesRegistrationBtn->setProperty("primary",true);saveSalesRegistrationBtn->setProperty("quiet",true);
+        saveSalesRegistrationBtn->setProperty("primary",true);
         connect(installChromeBtn, &QPushButton::clicked, this, [this, installChromeBtn]() {
             installChromeBtn->setEnabled(false);
             auto* installer = new QProcess(this);
@@ -3421,21 +3067,10 @@ private:
         salesRegistrationCard.second->addLayout(salesRegForm);
 
 
-        auto sellerCard=createCard("Konto & sælger");
+        auto sellerCard=createCard("Konto");
         accountIdentityLabel=premiumLabel("","sectionTitle");accountIdentityLabel->setWordWrap(true);sellerCard.second->addWidget(accountIdentityLabel);
-        auto* accountHint=premiumLabel("Du har én sælger, som følger dit cloud-login.","muted");accountHint->setWordWrap(true);sellerCard.second->addWidget(accountHint);
         cloudAccountStatusLabel=premiumLabel("","muted");cloudAccountStatusLabel->setWordWrap(true);sellerCard.second->addWidget(cloudAccountStatusLabel);
         auto* logoutCloudBtn=new QPushButton("Log ud");logoutCloudBtn->setProperty("destructive",true);sellerCard.second->addWidget(logoutCloudBtn,0,Qt::AlignLeft);
-
-        auto backupCard = createCard("Backup");
-        auto* exportBackupBtn = new QPushButton("Eksportér backup");
-        auto* importBackupBtn = new QPushButton("Importér backup");
-        configureSettingsButton(exportBackupBtn);
-        configureSettingsButton(importBackupBtn);
-
-        backupCard.second->addWidget(exportBackupBtn);
-        backupCard.second->addWidget(importBackupBtn);
-
 
         auto* categories=new QTabWidget;categories->setObjectName("settingsTabs");
         const auto addSettingsPage=[categories](const QString& name,const QVector<QFrame*>& cards){
@@ -3444,7 +3079,7 @@ private:
             auto* column=new QWidget;column->setMaximumWidth(820);auto* stack=new QVBoxLayout(column);stack->setContentsMargins(0,0,0,0);stack->setSpacing(18);
             for(auto* card:cards){card->setSizePolicy(QSizePolicy::Expanding,QSizePolicy::Maximum);stack->addWidget(card);}stack->addStretch();row->addWidget(column,1);row->addStretch(0);scroll->setWidget(body);categories->addTab(scroll,name);
         };
-        addSettingsPage("Generelt",{goalCard.first,backupCard.first});addSettingsPage("Løn",{payrollCard.first});
+        addSettingsPage("Generelt",{goalCard.first});addSettingsPage("Løn",{payrollCard.first});
         addSettingsPage("Intramanager",{intramanagerCard.first});addSettingsPage("Masterark",{salesRegistrationCard.first});addSettingsPage("Konto",{sellerCard.first});outerLayout->addWidget(categories);
 
         connect(saveGoalBtn, &QPushButton::clicked, this, [this]() {
@@ -3512,236 +3147,7 @@ private:
             logoutCloudUser();
         });
 
-        connect(exportBackupBtn, &QPushButton::clicked, this, [this]() {
-            const QString path = QFileDialog::getSaveFileName(
-                this,
-                "Eksportér backup",
-                repo.baseDir() + "/backup.json",
-                "JSON files (*.json)"
-                );
-            if (path.isEmpty()) return;
-
-            QJsonObject root;
-            QJsonArray salespeopleJson;
-            for (const auto& s : repo.salespeople) salespeopleJson.append(toJson(s));
-
-            QJsonArray productsJson;
-            for (const auto& p : repo.products) productsJson.append(toJson(p));
-
-            QJsonArray ordersJson;
-            for (const auto& o : repo.orders) ordersJson.append(toJson(o));
-
-            QJsonArray sickPayJson;
-            for (const auto& e : repo.sickPayEntries) sickPayJson.append(toJson(e));
-
-            root["salespeople"] = salespeopleJson;
-            root["products"] = productsJson;
-            root["orders"] = ordersJson;
-            root["sickPayEntries"] = sickPayJson;
-            root["settings"] = toJson(repo.settings);
-
-            QFile f(path);
-            if (!f.open(QIODevice::WriteOnly)) {
-                QMessageBox::warning(this, "Fejl", "Kunne ikke gemme backup.");
-                return;
-            }
-
-            f.write(QJsonDocument(root).toJson(QJsonDocument::Indented));
-            QMessageBox::information(this, "Backup gemt", "Backup blev eksporteret.");
-        });
-
-        connect(importBackupBtn, &QPushButton::clicked, this, [this]() {
-            const QString path = QFileDialog::getOpenFileName(
-                this,
-                "Importér backup",
-                repo.baseDir(),
-                "JSON files (*.json)"
-                );
-            if (path.isEmpty()) return;
-
-            QFile f(path);
-            if (!f.open(QIODevice::ReadOnly)) {
-                QMessageBox::warning(this, "Fejl", "Kunne ikke åbne backup-filen.");
-                return;
-            }
-
-            const auto doc = QJsonDocument::fromJson(f.readAll());
-            if (!doc.isObject()) {
-                QMessageBox::warning(this, "Fejl", "Backup-filen er ugyldig.");
-                return;
-            }
-
-            const auto rootObj = doc.object();
-
-            QVector<Salesperson> importedSalespeople;
-            for (const auto& v : rootObj["salespeople"].toArray()) {
-                importedSalespeople.push_back(fromSalespersonJson(v.toObject()));
-            }
-
-            QVector<Product> importedProducts;
-            for (const auto& v : rootObj["products"].toArray()) {
-                importedProducts.push_back(fromProductJson(v.toObject()));
-            }
-
-            QVector<Order> importedOrders;
-            for (const auto& v : rootObj["orders"].toArray()) {
-                importedOrders.push_back(fromOrderJson(v.toObject()));
-            }
-
-            QVector<SickPayEntry> importedSickPay;
-            for (const auto& v : rootObj["sickPayEntries"].toArray()) {
-                importedSickPay.push_back(fromSickPayEntryJson(v.toObject()));
-            }
-
-            AppSettings importedSettings = fromSettingsJson(rootObj["settings"].toObject());
-
-            repo.salespeople = importedSalespeople;
-            repo.products = importedProducts;
-            repo.orders = importedOrders;
-            repo.sickPayEntries = importedSickPay;
-            repo.settings = importedSettings;
-            if (repo.cloudPersistenceEnabled) {
-                repo.normalizeForCloudUser(cloudUsername);
-            }
-            repo.saveAll();
-            refreshAll();
-
-            QMessageBox::information(this, "Backup importeret", "Backup blev importeret.");
-        });
-
         return w;
-    }
-
-    bool exportBackup() {
-        const QString defaultPath = repo.baseDir() + "/backup_" + QDateTime::currentDateTime().toString("yyyyMMdd_HHmmss") + ".json";
-        const QString path = QFileDialog::getSaveFileName(this, "Gem backup", defaultPath, "JSON-filer (*.json)");
-        if (path.isEmpty()) return false;
-
-        QJsonArray salespeopleArray;
-        for (const auto& s : repo.salespeople) salespeopleArray.append(toJson(s));
-        QJsonArray productsArray;
-        for (const auto& p : repo.products) productsArray.append(toJson(p));
-        QJsonArray ordersArray;
-        for (const auto& o : repo.orders) ordersArray.append(toJson(o));
-        QJsonArray sickPayArray;
-        for (const auto& e : repo.sickPayEntries) sickPayArray.append(toJson(e));
-
-        QJsonObject root{
-            {"exportedAt", QDateTime::currentDateTime().toString(Qt::ISODate)},
-            {"salespeople", salespeopleArray},
-            {"products", productsArray},
-            {"orders", ordersArray},
-            {"sickPayEntries", sickPayArray},
-            {"settings", toJson(repo.settings)}
-        };
-
-        QFile file(path);
-        if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
-            QMessageBox::warning(this, "Fejl", "Kunne ikke gemme backup-filen.");
-            return false;
-        }
-        file.write(QJsonDocument(root).toJson(QJsonDocument::Indented));
-        QMessageBox::information(this, "Backup gemt", "Backup-filen blev gemt.");
-        return true;
-    }
-
-    bool importBackup() {
-        const QString path = QFileDialog::getOpenFileName(this, "Vælg backup-fil", repo.baseDir(), "JSON-filer (*.json)");
-        if (path.isEmpty()) return false;
-
-        if (!confirmQuestion(this, "Importér backup", "Det her overskriver nuværende lokale data. Vil du fortsætte?")) {
-            return false;
-        }
-
-        QFile file(path);
-        if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
-            QMessageBox::warning(this, "Fejl", "Kunne ikke åbne backup-filen.");
-            return false;
-        }
-
-        QJsonParseError err;
-        const auto doc = QJsonDocument::fromJson(file.readAll(), &err);
-        if (err.error != QJsonParseError::NoError || !doc.isObject()) {
-            QMessageBox::warning(this, "Fejl", "Backup-filen kunne ikke læses.");
-            return false;
-        }
-
-        const QJsonObject root = doc.object();
-        if (!root.contains("salespeople") || !root.contains("products") || !root.contains("orders") || !root.contains("settings")) {
-            QMessageBox::warning(this, "Fejl", "Backup-filen mangler nødvendige felter.");
-            return false;
-        }
-
-        QVector<Salesperson> importedSalespeople;
-        for (const auto& v : root["salespeople"].toArray()) importedSalespeople.push_back(fromSalespersonJson(v.toObject()));
-        QVector<Product> importedProducts;
-        for (const auto& v : root["products"].toArray()) importedProducts.push_back(fromProductJson(v.toObject()));
-        QVector<Order> importedOrders;
-        for (const auto& v : root["orders"].toArray()) importedOrders.push_back(fromOrderJson(v.toObject()));
-        QVector<SickPayEntry> importedSickPay;
-        for (const auto& v : root["sickPayEntries"].toArray()) importedSickPay.push_back(fromSickPayEntryJson(v.toObject()));
-        const auto importedSettings = fromSettingsJson(root["settings"].toObject());
-
-        if (importedSalespeople.isEmpty()) {
-            QMessageBox::warning(this, "Fejl", "Backup-filen indeholder ingen sælgere.");
-            return false;
-        }
-
-        repo.salespeople = importedSalespeople;
-        repo.products = importedProducts;
-        repo.orders = importedOrders;
-        repo.sickPayEntries = importedSickPay;
-        repo.settings = importedSettings;
-        if (repo.cloudPersistenceEnabled) {
-            repo.normalizeForCloudUser(cloudUsername);
-        }
-        if (!repo.findSalesperson(repo.settings.activeSalespersonId)) {
-            repo.settings.activeSalespersonId = repo.salespeople.first().id;
-        }
-        repo.saveAll();
-        refreshAll();
-        QMessageBox::information(this, "Backup importeret", "Backup-filen blev importeret.");
-        return true;
-    }
-
-    void cleanupAutoBackups() {
-        QDir dir(repo.baseDir());
-        const QStringList files = dir.entryList({"auto_backup_*.json"}, QDir::Files, QDir::Time);
-        for (int i = 1; i < files.size(); ++i) {
-            dir.remove(files[i]);
-        }
-    }
-
-    void createAutoBackup() {
-        if (!repo.localPersistenceEnabled) {
-            return;
-        }
-
-        QJsonArray salespeopleArray;
-        for (const auto& s : repo.salespeople) salespeopleArray.append(toJson(s));
-        QJsonArray productsArray;
-        for (const auto& p : repo.products) productsArray.append(toJson(p));
-        QJsonArray ordersArray;
-        for (const auto& o : repo.orders) ordersArray.append(toJson(o));
-        QJsonArray sickPayArray;
-        for (const auto& e : repo.sickPayEntries) sickPayArray.append(toJson(e));
-
-        QJsonObject root{
-            {"exportedAt", QDateTime::currentDateTime().toString(Qt::ISODate)},
-            {"salespeople", salespeopleArray},
-            {"products", productsArray},
-            {"orders", ordersArray},
-            {"sickPayEntries", sickPayArray},
-            {"settings", toJson(repo.settings)}
-        };
-
-        const QString path = repo.baseDir() + "/auto_backup_" + QDateTime::currentDateTime().toString("yyyyMMdd_HHmmss") + ".json";
-        QFile file(path);
-        if (file.open(QIODevice::WriteOnly | QIODevice::Text)) {
-            file.write(QJsonDocument(root).toJson(QJsonDocument::Indented));
-            file.close();
-            cleanupAutoBackups();
-        }
     }
 
     QVector<int> activeOrderIndicesSorted() const {
@@ -4764,7 +4170,6 @@ protected:
         if (repo.cloudPersistenceEnabled && (cloudSaveDirty || cloudSaveInFlight || cloudSaveAgain)) {
             flushCloudSaveSync();
         }
-        createAutoBackup();
         QMainWindow::closeEvent(event);
     }
 };
