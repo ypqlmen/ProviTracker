@@ -24,6 +24,7 @@
 #include "payroll_forecast.h"
 #include "payroll_tax_estimate.h"
 #include "premium_ui.h"
+#include "feature_access.h"
 #include "updater_script.h"
 #include "sales_registration.h"
 
@@ -1690,19 +1691,17 @@ public:
         };
 
         if (auto* tabs = findChild<QTabWidget*>()) {
-            const QStringList tabNames = {
-                "01-dashboard.png",
-                "02-orders.png",
-                "03-reports.png",
-                "04-contacts.png",
-                "05-settings.png"
+            const QMap<QString,QString> tabNames = {
+                {"Overblik","01-dashboard.png"}, {"Ordrer","02-orders.png"},
+                {"Rapporter","03-reports.png"}, {"Kontakter","04-contacts.png"},
+                {"Indstillinger","05-settings.png"}
             };
-            const int count = qMin(tabs->count(), tabNames.size());
+            const int count = tabs->count();
             for (int i = 0; i < count; ++i) {
                 tabs->setCurrentIndex(i);
                 qApp->processEvents();
-                saveWidget(this, QDir(outputDir).filePath(tabNames[i]));
-                if (i == 4) {
+                saveWidget(this, QDir(outputDir).filePath(tabNames.value(tabs->tabText(i))));
+                if (tabs->tabText(i) == "Indstillinger") {
                     if (salesRegistrationEnabledCheck) {
                         const QSignalBlocker blocker(salesRegistrationEnabledCheck);
                         salesRegistrationEnabledCheck->setChecked(true);
@@ -3275,7 +3274,9 @@ private:
         auto* caption = new QLabel("Victor er farmand"); caption->setStyleSheet("font-size:10px; font-weight:600; color:#9AA5B5; padding:18px 10px 6px;");
         sideLayout->addWidget(caption);
         auto* navigation = new QListWidget; navigation->setObjectName("navigation");
-        navigation->addItems({"Overblik", "Ordrer", "Rapporter", "Kontakter", "Indstillinger"});
+        navigation->addItems({"Overblik", "Ordrer", "Rapporter"});
+        if (contactSearchAllowed()) navigation->addItem("Kontakter");
+        navigation->addItem("Indstillinger");
         navigation->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff); navigation->setFocusPolicy(Qt::NoFocus);
         sideLayout->addWidget(navigation,1);
         auto* edition = new QLabel(QString("Provi Tracker<br><span style='color:#9AA5B5'>Trial · %1</span>").arg(APP_VERSION));
@@ -3295,7 +3296,7 @@ private:
         tabs->addTab(buildDashboardTab(), "Overblik");
         tabs->addTab(buildOrdersTab(), "Ordrer");
         tabs->addTab(buildReportsTab(), "Rapporter");
-        tabs->addTab(buildContactsTab(), "Kontakter");
+        if (contactSearchAllowed()) tabs->addTab(buildContactsTab(), "Kontakter");
         tabs->addTab(buildSettingsTab(), "Indstillinger");
         content->addWidget(tabs,1); root->addLayout(content,1); setCentralWidget(central);
         connect(navigation,&QListWidget::currentRowChanged,tabs,&QTabWidget::setCurrentIndex);
@@ -3593,7 +3594,15 @@ private:
         return w;
     }
 
+    bool contactSearchAllowed() const {
+        return canUseBusinessContactSearch(cloudUsername,!cloudToken.isEmpty());
+    }
+
     QWidget* buildContactsTab() {
+        if (!contactSearchAllowed()) {
+            auto* denied = new QLabel("Du har ikke adgang til kontaktsøgning.");
+            return denied;
+        }
         auto* page = new QWidget; auto* layout = new QVBoxLayout(page); layout->setContentsMargins(10,0,10,10); layout->setSpacing(20);
         auto card = createCard("Find en erhvervskontakt");
         auto* description = new QLabel("Søg efter et offentligt angivet, direkte arbejdsnummer på en virksomhedsside. Navne kan tilhøre flere personer; kontrollér altid kilden. Private personregistre indgår ikke.");
@@ -3614,6 +3623,7 @@ private:
             if(source.scheme()=="https") QDesktopServices::openUrl(source);
         });
         connect(search,&QPushButton::clicked,this,[this,name,company,website,search,status,results](){
+            if (!contactSearchAllowed()) {status->setText("Du har ikke adgang til kontaktsøgning.");return;}
             if(name->text().simplified().split(' ').size()<2){ status->setText("Indtast både fornavn og efternavn.");return; }
             auto* process = new QProcess(this);
             const QJsonObject input{{"action","contacts-search"},{"fullName",name->text().trimmed()},{"company",company->text().trimmed()},{"website",website->text().trimmed()}};

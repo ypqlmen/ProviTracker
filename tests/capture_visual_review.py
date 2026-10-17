@@ -19,8 +19,8 @@ def capture(app, output):
         env={**os.environ,'PROVI_DATA_DIR':data,'PROVI_VISUAL_REVIEW_DIR':str(output),'QT_QPA_PLATFORM':'offscreen'}
         subprocess.run([str(app.resolve())],env=env,check=True,timeout=30)
         images=list(output.glob('*.png'))
-        assert len(images)==9 and all(p.stat().st_size>10000 for p in images),[p.name for p in images]
-        print('Nine Midnight Grey native views captured with isolated fictional data.')
+        assert len(images)==8 and all(p.stat().st_size>10000 for p in images),[p.name for p in images]
+        print('Eight Midnight Grey native views captured; contacts are absent for the unauthenticated demo.')
 
 if __name__=='__main__':
     parser=argparse.ArgumentParser();parser.add_argument('--app',type=Path,required=True);parser.add_argument('--output',type=Path,required=True)
