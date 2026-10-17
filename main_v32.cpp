@@ -966,54 +966,6 @@ static QWidget* createSettingsButtonGrid(const QVector<QPushButton*>& buttons, i
 }
 
 
-class SalespersonPickerDialog : public QDialog {
-public:
-    SalespersonPickerDialog(Repository& repo, QWidget* parent = nullptr)
-        : QDialog(parent), repo(repo) {
-        setWindowTitle("Vælg sælger");
-        resize(460,420);
-        auto* layout = new QVBoxLayout(this);
-        layout->setContentsMargins(24,24,24,24);
-        layout->setSpacing(10);
-        list = new QListWidget;
-        for (const auto& s : repo.salespeople) list->addItem(s.name);
-        nameEdit = new QLineEdit;
-        nameEdit->setPlaceholderText("Opret ny sælger...");
-        auto* createBtn = new QPushButton("Opret ny");
-        auto* selectBtn = new QPushButton("Åbn arbejdsrum");selectBtn->setProperty("primary",true);
-        layout->addWidget(premiumLabel("Vælg sælger","pageTitle"));
-        layout->addWidget(premiumLabel("Vælg det arbejdsrum, du vil åbne.","muted"));
-        layout->addWidget(list);
-        layout->addWidget(nameEdit);
-        auto* row = new QHBoxLayout;
-        row->setSpacing(8);
-        row->addWidget(createBtn);
-        row->addWidget(selectBtn);
-        layout->addLayout(row);
-
-        connect(createBtn, &QPushButton::clicked, this, [this]() {
-            const QString name = nameEdit->text().trimmed();
-            if (name.isEmpty()) return;
-            Salesperson s{QUuid::createUuid().toString(QUuid::WithoutBraces), name};
-            this->repo.salespeople.push_back(s);
-            this->repo.settings.activeSalespersonId = s.id;
-            this->repo.saveAll();
-            accept();
-        });
-        connect(selectBtn, &QPushButton::clicked, this, [this]() {
-            const int row = list->currentRow();
-            if (row < 0 || row >= static_cast<int>(this->repo.salespeople.size())) return;
-            this->repo.settings.activeSalespersonId = this->repo.salespeople[row].id;
-            this->repo.saveSettings();
-            accept();
-        });
-    }
-private:
-    Repository& repo;
-    QListWidget* list = nullptr;
-    QLineEdit* nameEdit = nullptr;
-};
-
 class OrderEditorDialog : public QDialog {
 public:
     OrderEditorDialog(Repository& repo, const QString& salespersonId, std::optional<Order> existing = std::nullopt, QWidget* parent = nullptr)
@@ -1527,11 +1479,7 @@ public:
 
         }
 
-        SalespersonPickerDialog sellerDialog(repo, this);
-        sellerDialog.show();
-        qApp->processEvents();
-        saveWidget(&sellerDialog, QDir(outputDir).filePath("07-seller-dialog.png"));
-        sellerDialog.close();
+
 
         CloudLoginDialog loginPreview("Demo");loginPreview.show();qApp->processEvents();saveWidget(&loginPreview,QDir(outputDir).filePath("17-login.png"));loginPreview.close();
 
@@ -1596,7 +1544,7 @@ private:
     QDoubleSpinBox* voiceUnitSpin = nullptr;
     QDoubleSpinBox* targetSpin = nullptr;
     QSpinBox* monthlySalesTargetSpin = nullptr;
-    QListWidget* salespeopleList = nullptr;
+    QLabel* accountIdentityLabel = nullptr;
     bool intramanagerSyncRunning = false;
     bool intramanagerPunchRunning = false;
     QTimer* intramanagerAutoSyncTimer = nullptr;
@@ -2715,7 +2663,7 @@ private:
                 repo.seedProducts();
             }
 
-            const auto saveResult = cloudClient.save(cloudUsername, cloudToken, repo.cloudPayload());
+            const auto saveResult = cloudClient.save(cloudUsername, cloudToken, localPayloadForCloudUser(cloudUsername));
             if (!saveResult.ok) {
                 QMessageBox::warning(
                     this,
@@ -2809,7 +2757,7 @@ private:
         }
 
         if (changed) {
-            const auto saveResult = cloudClient.save(cloudUsername, cloudToken, repo.cloudPayload());
+            const auto saveResult = cloudClient.save(cloudUsername, cloudToken, localPayloadForCloudUser(cloudUsername));
             cloudStatusText = saveResult.ok
                 ? "Lokale adgangsoplysninger blev krypteret og migreret til cloud."
                 : (saveResult.error.isEmpty() ? "Cloud-gemning af adgangsoplysninger fejlede." : saveResult.error);
@@ -2944,7 +2892,7 @@ private:
         cloudSaveInFlight = true;
         cloudSaveAgain = false;
         cloudSaveDirty = false;
-        const QJsonObject payload = repo.cloudPayload();
+        const QJsonObject payload = localPayloadForCloudUser(cloudUsername);
 
         cloudClient.saveAsync(cloudUsername, cloudToken, payload, [this](ProviCloudClient::Result result) {
             cloudSaveInFlight = false;
@@ -2995,7 +2943,7 @@ private:
 
         cloudSaveDirty = false;
         cloudSaveAgain = false;
-        const auto result = cloudClient.save(cloudUsername, cloudToken, repo.cloudPayload());
+        const auto result = cloudClient.save(cloudUsername, cloudToken, localPayloadForCloudUser(cloudUsername));
         if (result.ok) {
             cloudStatusText = "Cloud-data er gemt.";
             updateCloudAccountStatus();
@@ -3068,7 +3016,7 @@ private:
         for(const auto& link:links){if(link.first=="Kontakter" && !contactSearchAllowed())continue;new QListWidgetItem(premiumIcon(link.second),link.first,navigation);}
         side->addWidget(navigation,1);side->addWidget(premiumDivider());
         activeSalespersonLabel=premiumLabel("","cardTitle");activeSalespersonLabel->setWordWrap(true);side->addSpacing(8);side->addWidget(activeSalespersonLabel);
-        auto* switchBtn=new QPushButton("Skift sælger");switchBtn->setProperty("quiet",true);switchBtn->setIcon(premiumIcon("person"));side->addWidget(switchBtn,0,Qt::AlignLeft);
+        side->addWidget(premiumLabel("Personlig cloud-konto","caption"));
         side->addWidget(premiumLabel(QString("Provi Tracker · Test %1").arg(APP_VERSION),"caption"));root->addWidget(sidebar);
         auto* content=new QVBoxLayout;content->setContentsMargins(30,27,30,22);content->setSpacing(24);
         auto* top=new QHBoxLayout;auto* titleBlock=new QVBoxLayout;titleBlock->setSpacing(6);auto* title=premiumLabel("Overblik","pageTitle");auto* subtitle=premiumLabel("Løn, salg og næste milepæl.","muted");titleBlock->addWidget(title);titleBlock->addWidget(subtitle);top->addLayout(titleBlock);top->addStretch();
@@ -3081,7 +3029,7 @@ private:
         connect(tabs,&QTabWidget::currentChanged,navigation,[navigation](int row){navigation->setCurrentRow(row);});
         connect(navigation,&QListWidget::currentRowChanged,this,[title,subtitle,navigation](int row){if(row<0)return;const auto text=navigation->item(row)->text();title->setText(text);
             const QMap<QString,QString> descriptions={{"Overblik","Løn, salg og næste milepæl."},{"Ordrer","Dine salg. Samlet ét sted."},{"Rapporter","Din løn og dine salg, periode for periode."},{"Kontakter","Find offentlige erhvervskontakter med kilde."},{"Indstillinger","Dit arbejdsrum. Dine indstillinger."}};subtitle->setText(descriptions.value(text));});navigation->setCurrentRow(0);
-        connect(newOrderBtn,&QPushButton::clicked,this,[this](){createOrder();});connect(switchBtn,&QPushButton::clicked,this,[this](){chooseSalesperson();});qApp->installEventFilter(this);
+        connect(newOrderBtn,&QPushButton::clicked,this,[this](){createOrder();});qApp->installEventFilter(this);
     }
 
     bool eventFilter(QObject* watched, QEvent* event) override {
@@ -3473,40 +3421,11 @@ private:
         salesRegistrationCard.second->addLayout(salesRegForm);
 
 
-        auto sellerCard = createCard("Konto");
-        salespeopleList = new QListWidget;salespeopleList->setFixedHeight(64);
-
-        auto* sellerNameEdit = new QLineEdit;
-        sellerNameEdit->setPlaceholderText("Nyt sælgernavn");
-        configureSettingsField(sellerNameEdit);
-
-        auto* addSellerBtn = new QPushButton("Tilføj sælger");
-        auto* activateBtn = new QPushButton("Sæt som aktiv");
-        auto* deleteSellerBtn = new QPushButton("Slet valgt sælger");
-        auto* logoutCloudBtn = new QPushButton("Log ud");
-        configureSettingsButton(addSellerBtn);
-        configureSettingsButton(activateBtn);
-        configureSettingsButton(deleteSellerBtn);
-        configureSettingsButton(logoutCloudBtn);
-
-        sellerNameEdit->hide();
-        addSellerBtn->hide();
-        activateBtn->hide();
-        deleteSellerBtn->hide();
-
-        cloudAccountStatusLabel = new QLabel;
-        cloudAccountStatusLabel->setWordWrap(true);
-        cloudAccountStatusLabel->setTextInteractionFlags(Qt::NoTextInteraction);
-        cloudAccountStatusLabel->setStyleSheet("QLabel { color:#AAB3C0; font-size:13px; background:transparent; }");
-
-        sellerCard.second->addWidget(cloudAccountStatusLabel);
-        sellerCard.second->addWidget(salespeopleList);
-        sellerCard.second->addWidget(sellerNameEdit);
-        sellerCard.second->addWidget(addSellerBtn);
-        sellerCard.second->addWidget(activateBtn);
-        sellerCard.second->addWidget(deleteSellerBtn);
-        logoutCloudBtn->setProperty("destructive",true);sellerCard.second->addWidget(logoutCloudBtn,0,Qt::AlignLeft);
-
+        auto sellerCard=createCard("Konto & sælger");
+        accountIdentityLabel=premiumLabel("","sectionTitle");accountIdentityLabel->setWordWrap(true);sellerCard.second->addWidget(accountIdentityLabel);
+        auto* accountHint=premiumLabel("Du har én sælger, som følger dit cloud-login.","muted");accountHint->setWordWrap(true);sellerCard.second->addWidget(accountHint);
+        cloudAccountStatusLabel=premiumLabel("","muted");cloudAccountStatusLabel->setWordWrap(true);sellerCard.second->addWidget(cloudAccountStatusLabel);
+        auto* logoutCloudBtn=new QPushButton("Log ud");logoutCloudBtn->setProperty("destructive",true);sellerCard.second->addWidget(logoutCloudBtn,0,Qt::AlignLeft);
 
         auto backupCard = createCard("Backup");
         auto* exportBackupBtn = new QPushButton("Eksportér backup");
@@ -3591,50 +3510,6 @@ private:
 
         connect(logoutCloudBtn, &QPushButton::clicked, this, [this]() {
             logoutCloudUser();
-        });
-
-        connect(addSellerBtn, &QPushButton::clicked, this, [this, sellerNameEdit]() {
-            const QString name = sellerNameEdit->text().trimmed();
-            if (name.isEmpty()) return;
-
-            repo.salespeople.push_back({QUuid::createUuid().toString(QUuid::WithoutBraces), name});
-            repo.saveSalespeople();
-            sellerNameEdit->clear();
-            refreshSalespeopleUi();
-        });
-
-        connect(activateBtn, &QPushButton::clicked, this, [this]() {
-            const int row = salespeopleList->currentRow();
-            if (row < 0 || row >= static_cast<int>(repo.salespeople.size())) return;
-
-            repo.settings.activeSalespersonId = repo.salespeople[row].id;
-            repo.saveSettings();
-            refreshAll();
-        });
-
-        connect(deleteSellerBtn, &QPushButton::clicked, this, [this]() {
-            const int row = salespeopleList->currentRow();
-            if (row < 0 || row >= static_cast<int>(repo.salespeople.size())) return;
-            if (repo.salespeople.size() <= 1) {
-                QMessageBox::warning(this, "Kan ikke slette", "Der skal være mindst én sælger i programmet.");
-                return;
-            }
-
-            const auto seller = repo.salespeople[row];
-            if (!confirmQuestion(this, "Slet sælger", QString("Er du sikker på, at du vil slette '%1'?").arg(seller.name))) {
-                return;
-            }
-
-            repo.salespeople.removeAt(row);
-
-            if (repo.settings.activeSalespersonId == seller.id) {
-                repo.settings.activeSalespersonId =
-                    repo.salespeople.isEmpty() ? QString() : repo.salespeople.first().id;
-            }
-
-            repo.saveSalespeople();
-            repo.saveSettings();
-            refreshAll();
         });
 
         connect(exportBackupBtn, &QPushButton::clicked, this, [this]() {
@@ -3869,12 +3744,6 @@ private:
         }
     }
 
-    void chooseSalesperson() {
-        SalespersonPickerDialog dlg(repo, this);
-        dlg.exec();
-        refreshAll();
-    }
-
     QVector<int> activeOrderIndicesSorted() const {
         QVector<int> out;
         const auto* s = activeSalesperson();
@@ -3943,11 +3812,12 @@ private:
     }
 
     void refreshAll() {
+        if(!cloudUsername.trimmed().isEmpty())repo.normalizeForCloudUser(cloudUsername);
         const auto* s = activeSalesperson();
         activeSalespersonLabel->setText(s ? s->name.toHtmlEscaped() : "Ingen aktiv sælger");
         refreshDashboard();
         refreshOrdersTable();
-        refreshSalespeopleUi();
+        refreshAccountUi();
         refreshSettingsUi();
         generateReport();
     }
@@ -4319,15 +4189,9 @@ private:
         applyOrderFilter();
     }
 
-    void refreshSalespeopleUi() {
+    void refreshAccountUi() {
         updateCloudAccountStatus();
-
-        salespeopleList->clear();
-        for (const auto& s : repo.salespeople) {
-            QString text = s.name;
-            if (s.id == repo.settings.activeSalespersonId) text += " (aktiv)";
-            salespeopleList->addItem(text);
-        }
+        if(accountIdentityLabel){const auto* seller=activeSalesperson();accountIdentityLabel->setText(cloudUsername.isEmpty()?(seller?seller->name:QString("Demo")):cloudUsername);}
     }
 
     void saveSalesRegistrationSettingsFromUi() {
