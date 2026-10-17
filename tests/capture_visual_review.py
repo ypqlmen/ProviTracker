@@ -18,6 +18,12 @@ def capture(app, output):
                 'intramanagerHoursCache':{'21-09-2026_20-10-2026':{'hours':110.5,'phoneHours':95,'sickHours':8.75,'sickPay':874.34,'sickPayFull':1748.68,'cancellations':-350,'payrollSchema':2,'syncedAt':'2026-10-17T12:00:00'}}}}
         for name,value in samples.items():(root/name).write_text(json.dumps(value),encoding='utf-8')
         env={**os.environ,'PROVI_DATA_DIR':data,'PROVI_VISUAL_REVIEW_DIR':str(output),'QT_QPA_PLATFORM':'offscreen'}
+        if os.name=='nt':
+            # Qt's Windows offscreen plugin uses FreeType and does not discover
+            # the normal Windows font registry. Point it at installed fonts.
+            fontdir=Path(os.environ['WINDIR'])/'Fonts'
+            assert (fontdir/'segoeui.ttf').is_file(),'Windows UI font is missing'
+            env['QT_QPA_FONTDIR']=str(fontdir)
         subprocess.run([str(app.resolve())],env=env,check=True,timeout=30)
         images=list(output.glob('*.png'))
         expected={'01-dashboard.png','02-orders.png','03-reports.png','05-settings.png',
