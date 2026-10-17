@@ -19,7 +19,7 @@ static QIcon premiumIcon(const QString& name,const QColor& color=QColor("#A8AFBF
     if(name=="grid")for(int x:{4,14})for(int y:{4,14})p.drawRoundedRect(QRectF(x,y,6,6),1.7,1.7);
     else if(name=="orders"){p.drawRoundedRect(QRectF(5,3,14,18),3,3);p.drawLine(9,8,15,8);p.drawLine(9,12,15,12);p.drawLine(9,16,13,16);}
     else if(name=="reports"){p.drawRoundedRect(QRectF(3,3,18,18),4,4);p.drawLine(7,16,7,12);p.drawLine(12,16,12,8);p.drawLine(17,16,17,10);}
-    else if(name=="contacts" || name=="person"){p.drawEllipse(QRectF(8,3,8,8));p.drawArc(QRectF(4,12,16,13),0,180*16);}
+    else if(name=="person"){p.drawEllipse(QRectF(8,3,8,8));p.drawArc(QRectF(4,12,16,13),0,180*16);}
     else if(name=="settings"){for(int y:{6,12,18})p.drawLine(4,y,20,y);p.setBrush(QColor("#23262E"));p.drawEllipse(QPointF(9,6),2.5,2.5);p.drawEllipse(QPointF(15,12),2.5,2.5);p.drawEllipse(QPointF(9,18),2.5,2.5);}
     else if(name=="search"){p.drawEllipse(QRectF(4,4,12,12));p.drawLine(14,14,20,20);}
     else if(name=="wallet"){p.drawRoundedRect(QRectF(3,5,18,15),3,3);p.drawRoundedRect(QRectF(14,10,7,6),2,2);p.drawPoint(QPointF(17,13));p.drawLine(6,5,17,2);}
@@ -89,29 +89,6 @@ public:
     void present(const QString& gross,const QString& takeHome,const QString& payDate,const QStringList& detailValues,const QString& projection){
         amount->setText(gross);net->setText(takeHome);payout->setText(payDate);
         for(int i=0;i<values.size();++i)values[i]->setText(detailValues.value(i));forecast->setText(projection);forecast->setVisible(!projection.isEmpty());forecastDivider->setVisible(!projection.isEmpty());
-    }
-};
-
-class BusinessContactsTable:public QTableWidget {
-public:using QTableWidget::QTableWidget;
-protected:
-    void paintEvent(QPaintEvent* event)override{
-        QTableWidget::paintEvent(event);if(rowCount())return;QPainter p(viewport());p.setRenderHint(QPainter::Antialiasing);const int x=viewport()->width()/2,y=viewport()->height()/2-55;
-        premiumIcon("contacts",QColor("#8197BB")).paint(&p,QRect(x-22,y,44,44));QFont f=font();f.setPixelSize(16);f.setWeight(QFont::DemiBold);p.setFont(f);p.setPen(QColor("#DDE5F5"));p.drawText(QRect(10,y+57,viewport()->width()-20,28),Qt::AlignCenter,"Start med et navn");f.setPixelSize(12);f.setWeight(QFont::Normal);p.setFont(f);p.setPen(QColor("#97A5BE"));p.drawText(QRect(10,y+90,viewport()->width()-20,40),Qt::AlignCenter|Qt::TextWordWrap,"Mulige match vises her med et direkte arbejdsnummer og en kilde.");
-    }
-};
-class BusinessContactView:public QWidget {
-public:
-    QLineEdit *name,*company,*website;QPushButton* search;QLabel* status;QTableWidget* results;
-    BusinessContactView(){
-        auto* root=new QVBoxLayout(this);root->setContentsMargins(0,0,0,0);root->setSpacing(18);auto* card=new PremiumCard;auto* body=new QVBoxLayout(card);body->setContentsMargins(26,24,26,24);body->setSpacing(16);
-        body->addWidget(premiumLabel("Find en erhvervskontakt","sectionTitle"));
-        auto* form=new QGridLayout;form->setHorizontalSpacing(20);form->setVerticalSpacing(16);
-        name=new QLineEdit;name->setPlaceholderText("Fornavn og efternavn");name->setMaxLength(100);company=new QLineEdit;company->setPlaceholderText("Virksomhed eller by");company->setMaxLength(140);website=new QLineEdit;website->setPlaceholderText("Virksomhedens hjemmeside");website->setMaxLength(300);
-        form->addWidget(premiumLabel("Fuldt navn","caption"),0,0);form->addWidget(premiumLabel("Virksomhed / by · valgfrit","caption"),0,1);form->addWidget(name,1,0);form->addWidget(company,1,1);form->addWidget(premiumLabel("Hjemmeside · valgfrit","caption"),2,0,1,2);form->addWidget(website,3,0,1,2);form->setColumnStretch(0,1);form->setColumnStretch(1,1);body->addLayout(form);
-        auto* actions=new QHBoxLayout;status=premiumLabel("","muted");status->setWordWrap(true);actions->addWidget(status,1);search=new QPushButton("Find kontakt");search->setIcon(premiumIcon("search",Qt::white));search->setProperty("primary",true);actions->addWidget(search);body->addLayout(actions);root->addWidget(card);
-        auto* resultCard=new PremiumCard;auto* resultLayout=new QVBoxLayout(resultCard);resultLayout->setContentsMargins(24,22,24,22);resultLayout->setSpacing(12);resultLayout->addWidget(premiumLabel("Resultater","cardTitle"));
-        results=new BusinessContactsTable(0,3);results->setHorizontalHeaderLabels({"Navn","Direkte arbejdsnummer","Kilde · dobbeltklik for at åbne"});results->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);results->verticalHeader()->hide();results->verticalHeader()->setDefaultSectionSize(52);results->setEditTriggers(QAbstractItemView::NoEditTriggers);results->setSelectionBehavior(QAbstractItemView::SelectRows);results->setShowGrid(false);resultLayout->addWidget(results,1);root->addWidget(resultCard,1);
     }
 };
 

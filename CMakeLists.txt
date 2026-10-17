@@ -19,6 +19,7 @@ add_executable(ProvisionTrackerV2 WIN32
     commission.h
     order_product_selection.h
     order_product_picker.h
+    orders_view.h
     report_view.h
     report_service.h
 )
@@ -42,9 +43,6 @@ if(BUILD_TESTING)
     add_executable(SingleSellerAccountTests tests/single_seller_account_test.cpp)
     target_link_libraries(SingleSellerAccountTests PRIVATE Qt6::Core)
     add_test(NAME SingleSellerAccountTests COMMAND SingleSellerAccountTests)
-    add_executable(FeatureAccessTests tests/feature_access_test.cpp)
-    target_link_libraries(FeatureAccessTests PRIVATE Qt6::Core)
-    add_test(NAME FeatureAccessTests COMMAND FeatureAccessTests)
     add_executable(SalesRegistrationTests tests/sales_registration_test.cpp)
     target_link_libraries(SalesRegistrationTests PRIVATE Qt6::Core)
     add_test(NAME SalesRegistrationTests COMMAND SalesRegistrationTests)

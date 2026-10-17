@@ -50,6 +50,10 @@ class WorkerActionTests(unittest.TestCase):
     def test_removed_action_rejected_before_browser_launch_for_cli_and_json(self):
         for argv, stdin in [
             (["worker", "--action", "kvikoc-lookup"], ""),
+            (["worker", "--action", "contacts-search"], ""),
+            (["worker", "--action", "provision-diagnose"], ""),
+            (["worker", "--stdin-json"], '{"action":"contacts-search","username":"fixture","password":"fixture"}'),
+            (["worker", "--stdin-json"], '{"action":"provision-diagnose","username":"fixture","password":"fixture"}'),
             (["worker", "--stdin-json"], '{"action":"kvikoc-lookup","username":"fixture","password":"fixture"}'),
             (["worker", "--stdin-json"], '{"action":"unknown","username":"fixture","password":"fixture"}'),
         ]:

@@ -24,8 +24,8 @@
 
 #include "premium_ui.h"
 #include "report_view.h"
+#include "orders_view.h"
 #include "order_product_picker.h"
-#include "feature_access.h"
 #include "updater_script.h"
 #include "sales_registration.h"
 
@@ -1069,10 +1069,11 @@ public:
         if (auto* tabs = findChild<QTabWidget*>("mainPages")) {
             const QMap<QString,QString> tabNames = {
                 {"Overblik","01-dashboard.png"}, {"Ordrer","02-orders.png"},
-                {"Rapporter","03-reports.png"}, {"Kontakter","04-contacts.png"},
+                {"Rapporter","03-reports.png"},
                 {"Indstillinger","05-settings.png"}
             };
-            const int count = tabs->count();
+            const int count = tabs->count();if(count!=4)qFatal("Unexpected retired navigation page");
+            for(const auto* button:findChildren<QPushButton*>())if(button->text().contains("Fejlsøgning"))qFatal("Retired Intramanager diagnosis button is present");
             for (int i = 0; i < count; ++i) {
                 tabs->setCurrentIndex(i);
                 if(tabs->tabText(i)=="Rapporter" && reportPresetCombo)reportPresetCombo->setCurrentIndex(3);
@@ -1129,12 +1130,20 @@ public:
             orderDialog.close();
         }
 
-        BusinessContactView contactPreview;contactPreview.search->setEnabled(false);contactPreview.status->setText("Designvisning med fiktive oplysninger. Søgning er slået fra.");contactPreview.resize(1000,820);contactPreview.show();qApp->processEvents();saveWidget(&contactPreview,QDir(outputDir).filePath("04-contacts-preview.png"));contactPreview.close();
+
         if(auto* pages=findChild<QTabWidget*>("mainPages")){
             pages->setCurrentIndex(0);resize(1080,720);qApp->processEvents();saveWidget(this,QDir(outputDir).filePath("12-dashboard-compact.png"));
-            pages->setCurrentIndex(1);if(ordersTable){const auto saved=repo.orders;repo.orders.clear();refreshOrdersTable();qApp->processEvents();saveWidget(this,QDir(outputDir).filePath("13-orders-empty.png"));repo.orders=saved;refreshOrdersTable();}
+            pages->setCurrentIndex(1);if(ordersList){const auto saved=repo.orders;repo.orders.clear();refreshOrders();qApp->processEvents();saveWidget(this,QDir(outputDir).filePath("13-orders-empty.png"));repo.orders=saved;refreshOrders();}
             pages->setCurrentIndex(0);resize(1000,640);qApp->processEvents();saveWidget(this,QDir(outputDir).filePath("14-dashboard-small.png"));
-            pages->setCurrentIndex(1);resize(1280,900);if(orderSearchEdit && ordersTable->rowCount()>0){orderSearchEdit->setText(ordersTable->item(0,1)->text());qApp->processEvents();ordersTable->selectRow(0);saveWidget(this,QDir(outputDir).filePath("16-orders-filtered.png"));orderSearchEdit->clear();}
+            pages->setCurrentIndex(1);resize(1280,900);if(orderSearchEdit && ordersList->count()>0){orderSearchEdit->setText(ordersList->item(0)->data(Qt::UserRole).toMap().value("id").toString());qApp->processEvents();ordersList->setCurrentRow(0);saveWidget(this,QDir(outputDir).filePath("16-orders-filtered.png"));orderSearchEdit->clear();}
+            pages->setCurrentIndex(1);resize(1000,640);qApp->processEvents();if(ordersList->count()>2){ordersList->setCurrentRow(2);ordersList->scrollToItem(ordersList->item(2),QAbstractItemView::PositionAtCenter);}qApp->processEvents();saveWidget(this,QDir(outputDir).filePath("26-orders-compact.png"));resize(1280,900);
+            orderSearchEdit->setText("no-matching-order-123");qApp->processEvents();if(selectedOrderRepoIndex()!=-1)qFatal("Hidden order remained selected");saveWidget(this,QDir(outputDir).filePath("27-orders-no-results.png"));orderSearchEdit->clear();
+            orderStatusFilter->setCurrentIndex(3);qApp->processEvents();saveWidget(this,QDir(outputDir).filePath("28-orders-status.png"));
+            for(int row=0;row<ordersList->count();++row)if(!ordersList->item(row)->isHidden()){ordersList->setCurrentRow(row);if(repo.orders[selectedOrderRepoIndex()].masterRegistrationState!="error")qFatal("Status filter selected the wrong order");break;}orderStatusFilter->setCurrentIndex(0);
+            if(repo.orders.size()>1){const auto original=repo.orders[1].id;repo.orders[1].id=repo.orders[0].id;refreshOrders();
+                for(int row=0;row<ordersList->count();++row)if(ordersList->item(row)->data(Qt::UserRole).toMap().value("repoIndex").toInt()==1){ordersList->setCurrentRow(row);break;}
+                if(selectedOrderRepoIndex()!=1)qFatal("Duplicate order number selected another order");repo.orders[1].id=original;refreshOrders();}
+
 
         }
 
@@ -1189,7 +1198,9 @@ private:
     QLabel* simoProgressHintLabel = nullptr;
     QLabel* voiceProgressHintLabel = nullptr;
 
-    QTableWidget* ordersTable = nullptr;
+    PremiumOrdersList* ordersList = nullptr;
+    QComboBox* orderStatusFilter = nullptr;
+    QLabel* ordersSummaryLabel = nullptr;
     QLineEdit* orderSearchEdit = nullptr;
     QLabel* ordersCountLabel = nullptr;
     PremiumReportView* reportView = nullptr;
@@ -1362,9 +1373,7 @@ private:
         return {"--action", action, "--stdin-json"};
     }
 
-    QStringList intramanagerProvisionDiagnoseWorkerArgs() const {
-        return {"--action", "provision-diagnose", "--stdin-json"};
-    }
+
 
     IntramanagerFetchResult parseIntramanagerWorkerOutput(const QByteArray& stdoutData, const QByteArray& stderrData) const {
         IntramanagerFetchResult result;
@@ -1998,132 +2007,6 @@ private:
         fetchIntramanagerHoursAsync(fromDate, toDate, silent, afterFetch ? afterFetch : [](bool) {});
     }
 
-    void runIntramanagerProvisionDiagnoseAsync() {
-        if (intramanagerSyncRunning || intramanagerPunchRunning) {
-            QMessageBox::information(this, "Intramanager", "Intramanager arbejder allerede. Prøv igen om lidt.");
-            return;
-        }
-
-        QString username;
-        QString password;
-        QString workerPath;
-        QString error;
-
-        if (!prepareIntramanagerFetch(&username, &password, &workerPath, &error)) {
-            QMessageBox::warning(this, "Intramanager", error);
-            return;
-        }
-
-        const QString debugDir = QDir(appStorageDir()).filePath(
-            "intramanager_provision_diagnostics/" + QDateTime::currentDateTime().toString("yyyyMMdd_HHmmss")
-            );
-        QDir().mkpath(debugDir);
-
-        auto* progress = new QProgressDialog("Kortlægger Intramanager provisionsside...", QString(), 0, 0, this);
-        progress->setWindowTitle("Intramanager diagnose");
-        progress->setCancelButton(nullptr);
-        progress->setWindowModality(Qt::ApplicationModal);
-        progress->setMinimumDuration(0);
-        progress->show();
-
-        if (intramanagerStatusLabel) {
-            intramanagerStatusLabel->setText("Kortlægger Intramanager provisionsside...");
-        }
-
-        intramanagerSyncRunning = true;
-
-        auto* process = new QProcess(this);
-        auto timedOut = std::make_shared<bool>(false);
-        QJsonObject payload;
-        payload["action"] = "provision-diagnose";
-        payload["username"] = username;
-        payload["password"] = password;
-        payload["sessionState"] = intramanagerSessionStatePath();
-        payload["debugDir"] = debugDir;
-        payload["debug"] = true;
-
-        connect(process, &QProcess::started, this, [process, payload]() {
-            process->write(QJsonDocument(payload).toJson(QJsonDocument::Compact));
-            process->closeWriteChannel();
-        });
-
-        connect(process, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
-                this, [this, process, progress, debugDir, timedOut](int, QProcess::ExitStatus) {
-                    progress->close();
-                    progress->deleteLater();
-                    intramanagerSyncRunning = false;
-
-                    const QByteArray stdoutData = process->readAllStandardOutput();
-                    const QByteArray stderrData = process->readAllStandardError();
-                    process->deleteLater();
-
-                    if (*timedOut) {
-                        const QString message = "Kortlægningen tog for lang tid. Prøv igen fra arbejdsnetværket.";
-                        if (intramanagerStatusLabel) intramanagerStatusLabel->setText(message);
-                        QMessageBox::warning(this, "Intramanager diagnose", message);
-                        return;
-                    }
-
-                    QJsonParseError jsonError;
-                    const QJsonDocument doc = QJsonDocument::fromJson(stdoutData, &jsonError);
-                    const QJsonObject obj = doc.object();
-                    if (jsonError.error != QJsonParseError::NoError || !doc.isObject()) {
-                        const QString message =
-                            "Worker returnerede ikke gyldig JSON.\n\nOutput:\n"
-                            + QString::fromUtf8(stdoutData)
-                            + "\n\nFejl:\n"
-                            + QString::fromUtf8(stderrData);
-                        if (intramanagerStatusLabel) intramanagerStatusLabel->setText("Intramanager diagnose fejlede.");
-                        QMessageBox::warning(this, "Intramanager diagnose", message);
-                        return;
-                    }
-
-                    if (!obj.value("success").toBool(false)) {
-                        const QString message = obj.value("error").toString("Intramanager diagnose fejlede.");
-                        if (intramanagerStatusLabel) intramanagerStatusLabel->setText(message);
-                        QMessageBox::warning(this, "Intramanager diagnose", message);
-                        return;
-                    }
-
-                    const int pages = obj.value("pagesAnalyzed").toInt(0);
-                    const QString resultPath = obj.value("resultPath").toString(debugDir);
-                    const QString message = QString("Kortlægning gemt. %1 sider analyseret.\n\n%2")
-                        .arg(pages)
-                        .arg(resultPath);
-                    QGuiApplication::clipboard()->setText(resultPath);
-                    if (intramanagerStatusLabel) {
-                        intramanagerStatusLabel->setText("Intramanager diagnose gemt. Stien er kopieret.");
-                    }
-                    QMessageBox::information(this, "Intramanager diagnose", message);
-                    QDesktopServices::openUrl(QUrl::fromLocalFile(debugDir));
-                });
-
-        connect(process, &QProcess::errorOccurred, this, [this, process, progress](QProcess::ProcessError error) {
-            if (error != QProcess::FailedToStart) return;
-
-            progress->close();
-            progress->deleteLater();
-            intramanagerSyncRunning = false;
-
-            const QString err = process->errorString();
-            process->deleteLater();
-            if (intramanagerStatusLabel) {
-                intramanagerStatusLabel->setText("Kunne ikke starte Intramanager-worker.");
-            }
-            QMessageBox::warning(this, "Intramanager diagnose", "Kunne ikke starte Intramanager-worker:\n" + err);
-        });
-
-        QTimer::singleShot(12 * 60 * 1000, process, [process, timedOut]() {
-            if (process->state() == QProcess::NotRunning) {
-                return;
-            }
-            *timedOut = true;
-            process->kill();
-        });
-
-        process->start(workerPath, intramanagerProvisionDiagnoseWorkerArgs());
-    }
-
     void refreshCurrentPayrollHoursIfStaleAsync(int maxAgeMinutes = 60) {
         if (!repo.settings.intramanagerEnabled || intramanagerSyncRunning) {
             return;
@@ -2665,8 +2548,8 @@ private:
         auto* brand=new QLabel("provi");brand->setStyleSheet("font-size:28px;font-weight:600;color:#FAFBFE;");brandRow->addWidget(mark);brandRow->addSpacing(5);brandRow->addWidget(brand);brandRow->addStretch();side->addLayout(brandRow);
         auto* caption=premiumLabel("Victor er farmand","caption");caption->setContentsMargins(3,12,0,12);side->addWidget(caption);
         auto* navigation=new QListWidget;navigation->setObjectName("navigation");navigation->setIconSize(QSize(19,19));navigation->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);navigation->setFocusPolicy(Qt::NoFocus);
-        const QVector<QPair<QString,QString>> links={{"Overblik","grid"},{"Ordrer","orders"},{"Rapporter","reports"},{"Kontakter","contacts"},{"Indstillinger","settings"}};
-        for(const auto& link:links){if(link.first=="Kontakter" && !contactSearchAllowed())continue;new QListWidgetItem(premiumIcon(link.second),link.first,navigation);}
+        const QVector<QPair<QString,QString>> links={{"Overblik","grid"},{"Ordrer","orders"},{"Rapporter","reports"},{"Indstillinger","settings"}};
+        for(const auto& link:links){new QListWidgetItem(premiumIcon(link.second),link.first,navigation);}
         side->addWidget(navigation,1);side->addWidget(premiumDivider());
         activeSalespersonLabel=premiumLabel("","cardTitle");activeSalespersonLabel->setWordWrap(true);side->addSpacing(8);side->addWidget(activeSalespersonLabel);
         side->addWidget(premiumLabel(QString("Provi Tracker · Test %1").arg(APP_VERSION),"caption"));root->addWidget(sidebar);
@@ -2675,12 +2558,12 @@ private:
         auto* date=premiumLabel(QLocale(QLocale::Danish).toString(QDate::currentDate(),"d. MMMM yyyy"),"muted");top->addWidget(date);top->addSpacing(15);
         auto* newOrderBtn=new QPushButton("Ny ordre");newOrderBtn->setIcon(premiumIcon("plus",Qt::white));newOrderBtn->setProperty("primary",true);top->addWidget(newOrderBtn);content->addLayout(top);
         auto* tabs=new QTabWidget;tabs->setObjectName("mainPages");tabs->setFocusPolicy(Qt::NoFocus);tabs->tabBar()->hide();
-        tabs->addTab(buildDashboardTab(),"Overblik");tabs->addTab(buildOrdersTab(),"Ordrer");tabs->addTab(buildReportsTab(),"Rapporter");if(contactSearchAllowed())tabs->addTab(buildContactsTab(),"Kontakter");tabs->addTab(buildSettingsTab(),"Indstillinger");
+        tabs->addTab(buildDashboardTab(),"Overblik");tabs->addTab(buildOrdersTab(),"Ordrer");tabs->addTab(buildReportsTab(),"Rapporter");tabs->addTab(buildSettingsTab(),"Indstillinger");
         content->addWidget(tabs,1);root->addLayout(content,1);setCentralWidget(central);
         connect(navigation,&QListWidget::currentRowChanged,tabs,&QTabWidget::setCurrentIndex);
         connect(tabs,&QTabWidget::currentChanged,navigation,[navigation](int row){navigation->setCurrentRow(row);});
         connect(navigation,&QListWidget::currentRowChanged,this,[title,subtitle,navigation](int row){if(row<0)return;const auto text=navigation->item(row)->text();title->setText(text);
-            const QMap<QString,QString> descriptions={{"Kontakter","Find offentlige erhvervskontakter med kilde."},{"Indstillinger","Dit arbejdsrum. Dine indstillinger."}};subtitle->setText(descriptions.value(text));subtitle->setVisible(!subtitle->text().isEmpty());});navigation->setCurrentRow(0);
+            const QMap<QString,QString> descriptions={{"Indstillinger","Dit arbejdsrum. Dine indstillinger."}};subtitle->setText(descriptions.value(text));subtitle->setVisible(!subtitle->text().isEmpty());});navigation->setCurrentRow(0);
         connect(newOrderBtn,&QPushButton::clicked,this,[this](){createOrder();});qApp->installEventFilter(this);
     }
 
@@ -2716,15 +2599,15 @@ private:
     }
 
     void clearOrderSelectionOnBackgroundClick(QObject* watched) {
-        if (!ordersTable || !ordersTable->selectionModel() || !ordersTable->selectionModel()->hasSelection())
+        if (!ordersList || !ordersList->selectionModel() || !ordersList->selectionModel()->hasSelection())
             return;
 
         auto* widget = qobject_cast<QWidget*>(watched);
-        if (!widget || isChildOf(widget, ordersTable) || isInteractiveClickTarget(widget))
+        if (!widget || isChildOf(widget, ordersList) || isInteractiveClickTarget(widget))
             return;
 
-        ordersTable->clearSelection();
-        ordersTable->setCurrentItem(nullptr);
+        ordersList->clearSelection();
+        ordersList->setCurrentRow(-1);
     }
 
     QWidget* buildDashboardTab() {
@@ -2749,38 +2632,26 @@ private:
     }
 
     QWidget* buildOrdersTab() {
-        auto* w=new QWidget;auto* layout=new QVBoxLayout(w);layout->setContentsMargins(0,0,0,0);layout->setSpacing(18);
-        auto* toolbar=new QHBoxLayout;toolbar->setSpacing(9);orderSearchEdit=new QLineEdit;orderSearchEdit->setPlaceholderText("Søg i ordrer…");orderSearchEdit->addAction(premiumIcon("search"),QLineEdit::LeadingPosition);orderSearchEdit->setMaximumWidth(310);toolbar->addWidget(orderSearchEdit);toolbar->addStretch();
-        auto* refreshBtn=new QPushButton;refreshBtn->setIcon(premiumIcon("refresh"));refreshBtn->setToolTip("Opdater ordrer");refreshBtn->setAccessibleName("Opdater ordrer");
-        auto* editBtn=new QPushButton("Rediger");auto* registerBtn=new QPushButton("Registrer / prøv igen");auto* deleteBtn=new QPushButton("Slet");deleteBtn->setProperty("destructive",true);
-        toolbar->addWidget(refreshBtn);toolbar->addWidget(editBtn);toolbar->addWidget(registerBtn);toolbar->addWidget(deleteBtn);layout->addLayout(toolbar);
-        auto card=createCard("Alle ordrer");ordersCountLabel=premiumLabel("","caption");card.second->addWidget(ordersCountLabel);
-        ordersTable=new ClearableTableWidget(0,6);ordersTable->setHorizontalHeader(new CleanTableHeaderView(Qt::Horizontal,ordersTable));ordersTable->setHorizontalHeaderLabels({"Dato & tid","Ordre","Produkter","Point","Virksomhed / note","Masterark"});
-        auto* h=ordersTable->horizontalHeader();for(int col:{0,1,3,4,5})h->setSectionResizeMode(col,QHeaderView::Fixed);h->setSectionResizeMode(2,QHeaderView::Stretch);
-        ordersTable->setColumnWidth(0,120);ordersTable->setColumnWidth(1,100);ordersTable->setColumnWidth(3,65);ordersTable->setColumnWidth(4,185);ordersTable->setColumnWidth(5,135);
-        ordersTable->setSelectionBehavior(QAbstractItemView::SelectRows);ordersTable->setSelectionMode(QAbstractItemView::SingleSelection);ordersTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
-        ordersTable->verticalHeader()->hide();ordersTable->verticalHeader()->setMinimumSectionSize(52);ordersTable->setWordWrap(true);ordersTable->setTextElideMode(Qt::ElideNone);ordersTable->setAlternatingRowColors(true);ordersTable->setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);ordersTable->setMinimumHeight(300);
-        ordersTable->setProperty("emptyTitle","Dine ordrer samles her");ordersTable->setProperty("emptyDetail","Opret dit første salg med Ny ordre øverst.");styleDataTable(ordersTable);card.second->addSpacing(4);card.second->addWidget(ordersTable,1);layout->addWidget(card.first,1);
-        auto* rowLayoutTimer=new QTimer(ordersTable);rowLayoutTimer->setSingleShot(true);connect(ordersTable->horizontalHeader(),&QHeaderView::sectionResized,this,[rowLayoutTimer](){rowLayoutTimer->start(0);});connect(rowLayoutTimer,&QTimer::timeout,this,[this](){resizeOrderRows();});
-        connect(orderSearchEdit,&QLineEdit::textChanged,this,[this](){applyOrderFilter();});
-        const auto updateActions=[this,editBtn,registerBtn,deleteBtn](){const bool selected=!ordersTable->selectionModel()->selectedRows().isEmpty();for(auto* button:{editBtn,registerBtn,deleteBtn})button->setEnabled(selected);};
-        connect(ordersTable,&QTableWidget::itemSelectionChanged,this,updateActions);updateActions();
-        connect(refreshBtn,&QPushButton::clicked,this,[this](){refreshOrdersTable();});connect(editBtn,&QPushButton::clicked,this,[this](){editSelectedOrder();});connect(registerBtn,&QPushButton::clicked,this,[this](){retrySelectedMasterRegistration();});connect(deleteBtn,&QPushButton::clicked,this,[this](){deleteSelectedOrder();});
-        return w;
-    }
-
-    void resizeOrderRows() {
-        if(!ordersTable)return;const QFontMetrics metrics(ordersTable->font());
-        for(int row=0;row<ordersTable->rowCount();++row){int height=56;
-            for(int col=0;col<ordersTable->columnCount();++col)if(auto* item=ordersTable->item(row,col))height=qMax(height,metrics.boundingRect(QRect(0,0,qMax(30,ordersTable->columnWidth(col)-28),10000),Qt::TextWordWrap,item->text()).height()+28);
-            ordersTable->setRowHeight(row,height);
-        }
+        auto* page=new QWidget;auto* layout=new QVBoxLayout(page);layout->setContentsMargins(0,0,0,0);layout->setSpacing(18);
+        auto* filters=new QHBoxLayout;filters->setSpacing(12);orderSearchEdit=new QLineEdit;orderSearchEdit->setPlaceholderText("Søg på virksomhed, ordre eller produkt…");orderSearchEdit->addAction(premiumIcon("search"),QLineEdit::LeadingPosition);orderSearchEdit->setClearButtonEnabled(true);filters->addWidget(orderSearchEdit,1);
+        orderStatusFilter=new QComboBox;orderStatusFilter->addItem("Alle statusser",QString());orderStatusFilter->addItem("Afventer masterark","pending");orderStatusFilter->addItem("Registreret","registered");orderStatusFilter->addItem("Kræver handling","error");filters->addWidget(orderStatusFilter);layout->addLayout(filters);
+        auto* heading=new QHBoxLayout;heading->setSpacing(12);heading->addWidget(premiumLabel("Alle ordrer","sectionTitle"));ordersCountLabel=premiumLabel("","badge");heading->addWidget(ordersCountLabel);heading->addStretch();ordersSummaryLabel=premiumLabel("","muted");heading->addWidget(ordersSummaryLabel);layout->addLayout(heading);
+        auto* actions=new QHBoxLayout;actions->setSpacing(9);auto* refreshBtn=new QPushButton;refreshBtn->setIcon(premiumIcon("refresh"));refreshBtn->setToolTip("Opdater ordrer");refreshBtn->setAccessibleName("Opdater ordrer");actions->addWidget(refreshBtn);actions->addStretch();
+        auto* editBtn=new QPushButton("Rediger");auto* registerBtn=new QPushButton("Registrer / prøv igen");auto* deleteBtn=new QPushButton("Slet");deleteBtn->setProperty("destructive",true);for(auto* button:{editBtn,registerBtn,deleteBtn})actions->addWidget(button);layout->addLayout(actions);
+        ordersList=new PremiumOrdersList;layout->addWidget(ordersList,1);
+        connect(orderSearchEdit,&QLineEdit::textChanged,this,[this](){applyOrderFilter();});connect(orderStatusFilter,&QComboBox::currentIndexChanged,this,[this](){applyOrderFilter();});
+        const auto updateActions=[this,editBtn,registerBtn,deleteBtn](){const bool selected=!ordersList->selectedItems().isEmpty() && ordersList->currentItem() && !ordersList->currentItem()->isHidden();for(auto* button:{editBtn,registerBtn,deleteBtn})button->setEnabled(selected);};connect(ordersList,&QListWidget::itemSelectionChanged,this,updateActions);updateActions();
+        connect(ordersList,&QListWidget::itemDoubleClicked,this,[this](){editSelectedOrder();});
+        connect(refreshBtn,&QPushButton::clicked,this,[this](){refreshOrders();});connect(editBtn,&QPushButton::clicked,this,[this](){editSelectedOrder();});connect(registerBtn,&QPushButton::clicked,this,[this](){retrySelectedMasterRegistration();});connect(deleteBtn,&QPushButton::clicked,this,[this](){deleteSelectedOrder();});return page;
     }
 
     void applyOrderFilter() {
-        if(!ordersTable || !orderSearchEdit)return;const QString query=orderSearchEdit->text().simplified();int visible=0;
-        for(int row=0;row<ordersTable->rowCount();++row){QStringList text;for(int col=0;col<ordersTable->columnCount();++col)if(auto* item=ordersTable->item(row,col))text<<item->text();const bool match=query.isEmpty() || text.join(' ').contains(query,Qt::CaseInsensitive);ordersTable->setRowHidden(row,!match);if(match)++visible;}
-        if(ordersCountLabel)ordersCountLabel->setText(query.isEmpty()?QString("%1 ordrer · nyeste først").arg(visible):QString("%1 af %2 ordrer").arg(visible).arg(ordersTable->rowCount()));
+        if(!ordersList || !orderSearchEdit)return;const QString query=orderSearchEdit->text().simplified();const QString status=orderStatusFilter->currentData().toString();int visible=0;double points=0;qint64 units=0;
+        for(int row=0;row<ordersList->count();++row){auto* item=ordersList->item(row);const auto data=item->data(Qt::UserRole).toMap();const QString state=data.value("state").toString();const QString category=state=="registered"?state:state=="error"?state:QString("pending");
+            bool match=status.isEmpty() || status==category;for(const auto& word:query.split(' ',Qt::SkipEmptyParts))if(!item->text().contains(word,Qt::CaseInsensitive))match=false;
+            item->setHidden(!match);if(match){++visible;points+=data.value("points").toDouble();units+=data.value("units").toLongLong();}}
+        if(ordersList->currentItem() && ordersList->currentItem()->isHidden()){ordersList->clearSelection();ordersList->setCurrentRow(-1);}
+        ordersCountLabel->setText(query.isEmpty() && status.isEmpty()?QString::number(visible):QString("%1 af %2").arg(visible).arg(ordersList->count()));ordersSummaryLabel->setText(QString::number(units)+" produkter · "+money(points)+" point");ordersList->doItemsLayout();ordersList->viewport()->update();
     }
 
     QWidget* buildReportsTab() {
@@ -2792,44 +2663,6 @@ private:
         reportView=new PremiumReportView;scroll->setWidget(reportView);layout->addWidget(scroll,1);
         connect(reportPresetCombo,&QComboBox::currentIndexChanged,this,[this,scroll](int index){reportMonthEdit->setVisible(index==4);scroll->verticalScrollBar()->setValue(0);generateReport();});
         connect(reportMonthEdit,&QDateEdit::dateChanged,this,[this,scroll](const QDate&){scroll->verticalScrollBar()->setValue(0);generateReport();});
-        return page;
-    }
-
-    bool contactSearchAllowed() const {
-        return canUseBusinessContactSearch(cloudUsername,!cloudToken.isEmpty());
-    }
-
-    QWidget* buildContactsTab() {
-        if (!contactSearchAllowed()) {
-            auto* denied = new QLabel("Du har ikke adgang til kontaktsøgning.");
-            return denied;
-        }
-        auto* page=new BusinessContactView;auto* name=page->name;auto* company=page->company;auto* website=page->website;
-        auto* search=page->search;auto* status=page->status;auto* results=page->results;
-        connect(results,&QTableWidget::cellDoubleClicked,this,[results](int row,int){
-            const QUrl source(results->item(row,2)->data(Qt::UserRole).toString());
-            if(source.scheme()=="https") QDesktopServices::openUrl(source);
-        });
-        connect(search,&QPushButton::clicked,this,[this,name,company,website,search,status,results](){
-            if (!contactSearchAllowed()) {status->setText("Du har ikke adgang til kontaktsøgning.");return;}
-            if(name->text().simplified().split(' ').size()<2){ status->setText("Indtast både fornavn og efternavn.");return; }
-            auto* process = new QProcess(this);
-            const QJsonObject input{{"action","contacts-search"},{"fullName",name->text().trimmed()},{"company",company->text().trimmed()},{"website",website->text().trimmed()}};
-            search->setEnabled(false); status->setText("Søger på offentlige virksomhedssider…"); results->setRowCount(0);
-            connect(process,&QProcess::started,this,[process,input](){process->write(QJsonDocument(input).toJson(QJsonDocument::Compact));process->closeWriteChannel();});
-            connect(process,QOverload<int,QProcess::ExitStatus>::of(&QProcess::finished),this,[process,search,status,results](int,QProcess::ExitStatus){
-                search->setEnabled(true); const auto document=QJsonDocument::fromJson(process->readAllStandardOutput()); const auto answer=document.object(); process->deleteLater();
-                if(!answer.value("success").toBool()){ status->setText(answer.value("error").toString("Søgningen kunne ikke gennemføres. Prøv en virksomhedshjemmeside."));return; }
-                status->setText(answer.value("message").toString());
-                for(const auto& value:answer.value("results").toArray()) { const auto contact=value.toObject();const int row=results->rowCount();results->insertRow(row);
-                    results->setItem(row,0,new QTableWidgetItem(contact.value("name").toString())); results->setItem(row,1,new QTableWidgetItem(contact.value("phone").toString()));
-                    auto* source=new QTableWidgetItem(contact.value("source").toString()); source->setData(Qt::UserRole,contact.value("source").toString());source->setToolTip(contact.value("context").toString());results->setItem(row,2,source);
-                }
-            });
-            connect(process,&QProcess::errorOccurred,this,[process,search,status](QProcess::ProcessError error){if(error==QProcess::FailedToStart){search->setEnabled(true);status->setText("Søgedelen kunne ikke starte. Geninstaller trial-versionen.");process->deleteLater();}});
-            QTimer::singleShot(120000,process,[process](){if(process->state()!=QProcess::NotRunning) process->kill();});
-            process->start(intramanagerWorkerPath(),{"--stdin-json"});
-        });
         return page;
     }
 
@@ -2898,10 +2731,8 @@ private:
         configureSettingsField(taxRateSpin);
 
         auto* saveIntramanagerBtn = new QPushButton("Gem forbindelse");
-        auto* diagnoseProvisionBtn = new QPushButton("Fejlsøgning…");
         configureSettingsButton(saveIntramanagerBtn);saveIntramanagerBtn->setProperty("primary",true);
-        configureSettingsButton(diagnoseProvisionBtn);
-        auto* intramanagerActionRow = createSettingsButtonGrid(QVector<QPushButton*>{saveIntramanagerBtn, diagnoseProvisionBtn});
+        auto* intramanagerActionRow = createSettingsButtonGrid(QVector<QPushButton*>{saveIntramanagerBtn});
 
         intramanagerStatusLabel = new QLabel("Timer hentes automatisk, når rapporter har brug for dem.");
         intramanagerStatusLabel->setWordWrap(true);
@@ -3132,10 +2963,6 @@ private:
             refreshIntramanagerPunchStatusAsync(true);
         });
 
-        connect(diagnoseProvisionBtn, &QPushButton::clicked, this, [this]() {
-            runIntramanagerProvisionDiagnoseAsync();
-        });
-
         connect(saveSalesRegistrationBtn, &QPushButton::clicked, this, [this]() {
             saveSalesRegistrationSettingsFromUi();
             if (salesRegistrationStatusLabel) {
@@ -3175,11 +3002,11 @@ private:
         for (const auto& item : order.items) {
             const auto* p = repo.findProduct(item.productKey);
             if (!p) continue;
-            parts << QString("%1 x%2").arg(p->displayName).arg(item.quantity);
+            parts << QString("%1 × %2").arg(p->displayName).arg(item.quantity);
             points += p->points * item.quantity;
         }
         if (totalPoints) *totalPoints = points;
-        return parts.join(" | ");
+        return parts.join("  ·  ");
     }
 
     void animateProgressBar(QProgressBar* bar, int targetValue) {
@@ -3228,7 +3055,7 @@ private:
         const auto* s = activeSalesperson();
         activeSalespersonLabel->setText(s ? s->name.toHtmlEscaped() : "Ingen aktiv sælger");
         refreshDashboard();
-        refreshOrdersTable();
+        refreshOrders();
         refreshAccountUi();
         refreshSettingsUi();
         generateReport();
@@ -3568,37 +3395,14 @@ private:
         return out;
     }
 
-    void refreshOrdersTable() {
-        if (!ordersTable) return;
-        const auto indices = activeOrderIndicesSorted();
-        ordersTable->setRowCount(indices.size());
-        auto makeOrderItem = [](const QString& text) {
-            auto* item = new QTableWidgetItem(text);
-            item->setForeground(QBrush(QColor("#D8DEE8")));
-            return item;
-        };
-        for (int row = 0; row < static_cast<int>(indices.size()); ++row) {
-            const auto& order = repo.orders[indices[row]];
-            double pts = 0.0;
-            const QString products = orderProductsSummary(order, &pts);
-            ordersTable->setItem(row, 0, makeOrderItem(order.createdAt.toString("dd-MM-yyyy HH:mm")));
-            ordersTable->setItem(row, 1, makeOrderItem(order.id));
-            ordersTable->setItem(row, 2, makeOrderItem(products));
-            ordersTable->setItem(row, 3, makeOrderItem(money(pts)));
-            ordersTable->setItem(row, 4, makeOrderItem(order.companyName+(order.note.isEmpty()?QString():"\n"+order.note)));
-            ordersTable->setItem(row, 5, makeOrderItem(salesRegistrationStateText(order)));
-            ordersTable->item(row,5)->setToolTip(order.masterRegistrationError);
-            ordersTable->item(row,5)->setForeground(QColor(order.masterRegistrationState=="registered"?"#7ACBA9":order.masterRegistrationState=="error"?"#E9B67C":"#A5B9E1"));
-            ordersTable->item(row,3)->setTextAlignment(Qt::AlignRight|Qt::AlignVCenter);
-            ordersTable->item(row, 1)->setToolTip(order.id);
-            ordersTable->item(row, 2)->setToolTip(products);
-            ordersTable->item(row, 4)->setToolTip(order.note);
+    void refreshOrders() {
+        if(!ordersList)return;ordersList->clear();const auto indices=activeOrderIndicesSorted();
+        for(const int repoIndex:indices){const auto& order=repo.orders[repoIndex];double points=0;const QString products=orderProductsSummary(order,&points);qint64 units=0;for(const auto& product:order.items)units+=product.quantity;
+            const QString company=order.companyName.isEmpty()?"Ordre "+order.id:order.companyName;
+            const QVariantMap data={{"company",company},{"id",order.id},{"date",order.createdAt.toString("dd-MM-yyyy HH:mm")},{"products",products},{"note",order.note},{"points",points},{"pointsText",money(points)},{"units",units},{"status",salesRegistrationStateText(order)},{"state",order.masterRegistrationState},{"repoIndex",repoIndex}};
+            auto* item=new QListWidgetItem(company+" "+order.id+" "+products+" "+order.note+" "+data.value("date").toString()+" "+data.value("status").toString(),ordersList);item->setData(Qt::UserRole,data);item->setToolTip(order.masterRegistrationError.isEmpty()?company+"\n"+order.id+"\n"+products:order.masterRegistrationError);
         }
-        resizeOrderRows();
-        ordersTable->resizeColumnToContents(0);
-        ordersTable->resizeColumnToContents(1);
-        ordersTable->horizontalHeader()->setMinimumSectionSize(55);
-        applyOrderFilter();
+        ordersList->setCurrentRow(-1);applyOrderFilter();
     }
 
     void refreshAccountUi() {
@@ -3825,7 +3629,7 @@ private:
                     repo.orders[index].masterRegistrationError = ok ? QString() : error;
                 }
                 repo.saveOrders();
-                refreshOrdersTable();
+                refreshOrders();
             }
             if (salesRegistrationStatusLabel) salesRegistrationStatusLabel->setText(ok
                 ? (setup ? "Masterarket er klar. Slå automatisk registrering til, og gem indstillingerne." : "Salget er registreret i masterarket.") : error);
@@ -3873,7 +3677,7 @@ private:
         order.masterRegistrationError.clear();
         const QString identity = order.masterRegistration.value("registrationId").toString();
         saveOrdersAndSyncCloud();
-        refreshOrdersTable();
+        refreshOrders();
         runMasterWorker(false, identity);
     }
 
@@ -3892,10 +3696,9 @@ private:
     }
 
     int selectedOrderRepoIndex() const {
-        const int selectedRow = ordersTable->currentRow();
-        const auto indices = activeOrderIndicesSorted();
-        if (selectedRow < 0 || selectedRow >= static_cast<int>(indices.size())) return -1;
-        return indices[selectedRow];
+        if(!ordersList || ordersList->selectedItems().isEmpty() || !ordersList->currentItem() || ordersList->currentItem()->isHidden())return -1;
+        const int index=ordersList->currentItem()->data(Qt::UserRole).toMap().value("repoIndex",-1).toInt();
+        return index>=0 && index<repo.orders.size()?index:-1;
     }
 
     void editSelectedOrder() {

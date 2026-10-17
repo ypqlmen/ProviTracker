@@ -5,7 +5,6 @@ import re
 import sys
 import time
 from pathlib import Path
-from urllib.parse import urljoin, urlparse
 
 BASE_URL = "https://5r.intramanager.com/"
 LOGIN_URL = BASE_URL + "reports/history/"
@@ -879,368 +878,6 @@ def fetch_overview(page, args, debug_dir):
     }
 
 
-def diagnose_slug(value, fallback):
-    slug = re.sub(r"[^A-Za-z0-9_.-]+", "_", clean_text(value))[:80].strip("_")
-    return slug or fallback
-
-
-def same_intramanager_url(url):
-    try:
-        parsed = urlparse(url)
-        return parsed.scheme in {"http", "https"} and parsed.netloc.lower() == "5r.intramanager.com"
-    except Exception:
-        return False
-
-
-def page_diagnostic_snapshot(page, index, label, diagnose_dir, network_events=None):
-    slug = diagnose_slug(label, f"page_{index:02d}")
-    html_name = f"{index:02d}_{slug}.html"
-    screenshot_name = f"{index:02d}_{slug}.png"
-
-    try:
-        html = page.content()
-    except Exception:
-        html = ""
-
-    write_debug_text(diagnose_dir / html_name, html, force=True)
-    save_debug_screenshot(page, diagnose_dir, screenshot_name, full_page=True, force=True)
-
-    try:
-        data = page.evaluate(
-            r"""() => {
-                const clean = value => String(value || '').replace(/\s+/g, ' ').trim();
-                const labelFor = element => {
-                    if (!element) return '';
-                    if (element.id) {
-                        const direct = document.querySelector(`label[for="${CSS.escape(element.id)}"]`);
-                        if (direct) return clean(direct.innerText || direct.textContent || '');
-                    }
-                    const wrapped = element.closest('label');
-                    if (wrapped) return clean(wrapped.innerText || wrapped.textContent || '');
-                    const row = element.closest('tr, .form-group, .row, .field, .control-group');
-                    if (row) {
-                        const label = row.querySelector('label, th, .control-label');
-                        if (label) return clean(label.innerText || label.textContent || '');
-                    }
-                    return '';
-                };
-                const visible = element => {
-                    if (!element) return false;
-                    const style = window.getComputedStyle(element);
-                    return style.display !== 'none'
-                        && style.visibility !== 'hidden'
-                        && Number(style.opacity || '1') > 0.05
-                        && element.offsetParent !== null;
-                };
-                const attr = (element, name) => clean(element.getAttribute(name) || '');
-                const links = Array.from(document.querySelectorAll('a[href]'))
-                    .filter(visible)
-                    .slice(0, 250)
-                    .map(a => ({
-                        text: clean(a.innerText || a.textContent || ''),
-                        href: a.href || '',
-                        id: attr(a, 'id'),
-                        classes: attr(a, 'class')
-                    }));
-                const buttons = Array.from(document.querySelectorAll('button, input[type="submit"], input[type="button"], a.btn, [role="button"]'))
-                    .filter(visible)
-                    .slice(0, 200)
-                    .map(button => ({
-                        text: clean(button.innerText || button.textContent || button.value || ''),
-                        type: clean(button.type || button.tagName || ''),
-                        id: attr(button, 'id'),
-                        name: attr(button, 'name'),
-                        classes: attr(button, 'class'),
-                        onclick: attr(button, 'onclick').slice(0, 300)
-                    }));
-                const inputs = Array.from(document.querySelectorAll('input, textarea, select'))
-                    .filter(visible)
-                    .slice(0, 250)
-                    .map(input => ({
-                        tag: input.tagName.toLowerCase(),
-                        type: clean(input.type || ''),
-                        id: attr(input, 'id'),
-                        name: attr(input, 'name'),
-                        label: labelFor(input),
-                        placeholder: attr(input, 'placeholder'),
-                        options: input.tagName.toLowerCase() === 'select'
-                            ? Array.from(input.options || []).slice(0, 80).map(option => clean(option.textContent || option.value || ''))
-                            : []
-                    }));
-                const forms = Array.from(document.querySelectorAll('form'))
-                    .slice(0, 50)
-                    .map(form => ({
-                        id: attr(form, 'id'),
-                        name: attr(form, 'name'),
-                        action: form.action || '',
-                        method: clean(form.method || ''),
-                        inputNames: Array.from(form.querySelectorAll('input, textarea, select')).slice(0, 120)
-                            .map(input => clean(input.name || input.id || labelFor(input) || input.type || input.tagName))
-                            .filter(Boolean)
-                    }));
-                const tables = Array.from(document.querySelectorAll('table'))
-                    .filter(visible)
-                    .slice(0, 50)
-                    .map(table => {
-                        const headers = Array.from(table.querySelectorAll('thead th, tr th')).slice(0, 40)
-                            .map(th => clean(th.innerText || th.textContent || ''));
-                        const rows = Array.from(table.querySelectorAll('tbody tr, tr')).slice(0, 8)
-                            .map(row => Array.from(row.querySelectorAll('th, td')).slice(0, 20)
-                                .map(cell => clean(cell.innerText || cell.textContent || '')));
-                        return {
-                            id: attr(table, 'id'),
-                            classes: attr(table, 'class'),
-                            headers,
-                            rows
-                        };
-                    });
-                const headings = Array.from(document.querySelectorAll('h1,h2,h3,h4,.page-title,.title,.panel-title'))
-                    .filter(visible)
-                    .slice(0, 80)
-                    .map(element => clean(element.innerText || element.textContent || ''));
-                const navigation = Array.from(document.querySelectorAll('nav a, aside a, .sidebar a, #menu a, #mainmenu a, .navbar a, .dropdown-menu a'))
-                    .filter(visible)
-                    .slice(0, 250)
-                    .map(a => ({
-                        text: clean(a.innerText || a.textContent || ''),
-                        href: a.href || '',
-                        id: attr(a, 'id'),
-                        classes: attr(a, 'class')
-                    }));
-                const hiddenInputs = Array.from(document.querySelectorAll('input[type="hidden"]'))
-                    .slice(0, 250)
-                    .map(input => ({
-                        id: attr(input, 'id'),
-                        name: attr(input, 'name'),
-                        valueLength: String(input.value || '').length,
-                        valuePreview: clean(input.value || '').slice(0, 32)
-                    }));
-                const actionCandidates = Array.from(document.querySelectorAll('a, button, input[type="submit"], input[type="button"], [onclick]'))
-                    .filter(visible)
-                    .slice(0, 350)
-                    .map(element => ({
-                        tag: element.tagName.toLowerCase(),
-                        text: clean(element.innerText || element.textContent || element.value || ''),
-                        href: element.href || '',
-                        id: attr(element, 'id'),
-                        name: attr(element, 'name'),
-                        classes: attr(element, 'class'),
-                        onclick: attr(element, 'onclick').slice(0, 500)
-                    }));
-                const storage = {};
-                try {
-                    storage.localStorageKeys = Object.keys(localStorage || {}).slice(0, 120);
-                    storage.sessionStorageKeys = Object.keys(sessionStorage || {}).slice(0, 120);
-                } catch (error) {
-                    storage.error = String(error);
-                }
-                return {
-                    url: location.href,
-                    title: document.title || '',
-                    bodySample: clean((document.body && document.body.innerText) || '').slice(0, 3000),
-                    bodyLength: clean((document.body && document.body.innerText) || '').length,
-                    headings,
-                    navigation,
-                    links,
-                    buttons,
-                    inputs,
-                    hiddenInputs,
-                    forms,
-                    tables,
-                    actionCandidates,
-                    storage
-                };
-            }"""
-        )
-    except Exception as exc:
-        data = {"error": str(exc), "url": page.url, "title": ""}
-
-    data["label"] = label
-    data["htmlFile"] = html_name
-    data["screenshotFile"] = screenshot_name
-    if network_events:
-        current_url = (data.get("url") or page.url or "").split("#", 1)[0]
-        data["networkEvents"] = [
-            event for event in network_events[-200:]
-            if clean_text(event.get("pageUrl")) == current_url or clean_text(event.get("url", "")).startswith(current_url)
-        ][:80]
-    return data
-
-
-def score_provision_page(snapshot, terms):
-    haystack = " ".join(
-        [
-            clean_text(snapshot.get("url", "")),
-            clean_text(snapshot.get("title", "")),
-            clean_text(snapshot.get("bodySample", "")),
-            " ".join(clean_text(item) for item in snapshot.get("headings", [])),
-            " ".join(clean_text(link.get("text", "") + " " + link.get("href", "")) for link in snapshot.get("navigation", [])),
-            " ".join(clean_text(link.get("text", "") + " " + link.get("href", "")) for link in snapshot.get("links", [])),
-            " ".join(clean_text(button.get("text", "")) for button in snapshot.get("buttons", [])),
-            " ".join(clean_text(input_item.get("label", "") + " " + input_item.get("name", "") + " " + input_item.get("id", "")) for input_item in snapshot.get("inputs", [])),
-            " ".join(clean_text(action.get("text", "") + " " + action.get("href", "") + " " + action.get("onclick", "")) for action in snapshot.get("actionCandidates", [])),
-        ]
-    ).lower()
-    return sum(1 for term in terms if term in haystack)
-
-
-def diagnose_provision_registration(page, args, debug_dir):
-    diagnose_dir = debug_dir / "provision_diagnose"
-    diagnose_dir.mkdir(parents=True, exist_ok=True)
-
-    terms = [
-        "provision",
-        "provisions",
-        "salg",
-        "salgs",
-        "ordre",
-        "ordrer",
-        "registr",
-        "bonus",
-        "commission",
-    ]
-
-    visited = set()
-    pages = []
-    queue = []
-    network_events = []
-
-    def record_request(request):
-        try:
-            url = request.url
-            if not same_intramanager_url(url):
-                return
-            network_events.append({
-                "kind": "request",
-                "pageUrl": (page.url or "").split("#", 1)[0],
-                "method": request.method,
-                "url": url,
-                "resourceType": request.resource_type,
-                "postData": clean_text(request.post_data or "")[:1200],
-            })
-        except Exception:
-            pass
-
-    def record_response(response):
-        try:
-            url = response.url
-            if not same_intramanager_url(url):
-                return
-            network_events.append({
-                "kind": "response",
-                "pageUrl": (page.url or "").split("#", 1)[0],
-                "status": response.status,
-                "url": url,
-                "contentType": clean_text(response.headers.get("content-type", "")),
-            })
-        except Exception:
-            pass
-
-    page.on("request", record_request)
-    page.on("response", record_response)
-
-    def enqueue(url, label):
-        absolute = urljoin(BASE_URL, url or "")
-        if not same_intramanager_url(absolute):
-            return
-        normalized = absolute.split("#", 1)[0]
-        if normalized in visited:
-            return
-        queue.append((normalized, label or normalized))
-
-    def add_links_from(snapshot):
-        for link in snapshot.get("links", []):
-            text = clean_text(link.get("text", ""))
-            href = clean_text(link.get("href", ""))
-            haystack = f"{text} {href}".lower()
-            if any(term in haystack for term in terms):
-                enqueue(href, text or href)
-
-    try:
-        wait_for_page_idle(page, timeout=15000)
-    except Exception:
-        pass
-
-    first = page_diagnostic_snapshot(page, 1, "efter_login", diagnose_dir, network_events)
-    visited.add((first.get("url") or page.url).split("#", 1)[0])
-    pages.append(first)
-    add_links_from(first)
-
-    for guessed in (
-        "orders/",
-        "order/",
-        "sales/",
-        "reports/",
-        "reports/sales/",
-        "reports/commission/",
-        "reports/provision/",
-        "provision/",
-        "provisions/",
-        "provision/registration/",
-        "provision/register/",
-        "commission/",
-        "bonus/",
-        "bonuses/",
-        "salg/",
-        "salgsregistrering/",
-        "orders/create/",
-        "sales/register/",
-    ):
-        enqueue(guessed, guessed.strip("/"))
-
-    while queue and len(pages) < 14:
-        url, label = queue.pop(0)
-        if url in visited:
-            continue
-        visited.add(url)
-
-        try:
-            page.goto(url, wait_until="domcontentloaded", timeout=45000)
-            wait_for_page_idle(page, timeout=20000)
-            snapshot = page_diagnostic_snapshot(page, len(pages) + 1, label, diagnose_dir, network_events)
-            pages.append(snapshot)
-            add_links_from(snapshot)
-        except Exception as exc:
-            pages.append({
-                "label": label,
-                "url": url,
-                "error": str(exc),
-            })
-
-    suspected_pages = []
-    for snapshot in pages:
-        score = score_provision_page(snapshot, terms)
-        has_form = bool(snapshot.get("forms") or snapshot.get("inputs") or snapshot.get("buttons"))
-        has_table = bool(snapshot.get("tables"))
-        if score > 0 or has_form or has_table:
-            suspected_pages.append({
-                "label": snapshot.get("label", ""),
-                "url": snapshot.get("url", ""),
-                "score": score,
-                "htmlFile": snapshot.get("htmlFile", ""),
-                "screenshotFile": snapshot.get("screenshotFile", ""),
-                "forms": len(snapshot.get("forms", [])),
-                "inputs": len(snapshot.get("inputs", [])),
-                "buttons": len(snapshot.get("buttons", [])),
-                "tables": len(snapshot.get("tables", [])),
-            })
-
-    result = {
-        "success": True,
-        "stage": "provision_diagnose",
-        "pagesAnalyzed": len(pages),
-        "candidateTerms": terms,
-        "suspectedPages": suspected_pages,
-        "networkEvents": network_events[-500:],
-        "pages": pages,
-        "debugDir": str(diagnose_dir),
-    }
-    result_path = diagnose_dir / "intramanager_provision_diagnose.json"
-    result["resultPath"] = str(result_path)
-    write_debug_text(result_path, json.dumps(result, ensure_ascii=False, indent=2), force=True)
-    return result
-
-
 def locator_text(locator):
     values = []
 
@@ -1604,7 +1241,7 @@ def toggle_punch(page, args, debug_dir):
 def main():
     parser = argparse.ArgumentParser()
 
-    parser.add_argument("--action", choices=["hours", "punch-status", "punch-toggle", "overview", "provision-diagnose"], default="hours")
+    parser.add_argument("--action", choices=["hours", "punch-status", "punch-toggle", "overview"], default="hours")
     parser.add_argument("--username", required=False)
     parser.add_argument("--password", required=False)
     parser.add_argument("--stdin-json", action="store_true")
@@ -1629,13 +1266,6 @@ def main():
             from chrome_bridge import request_intramanager
             try:
                 output(request_intramanager(payload))
-            except Exception as exc:
-                output({"success":False,"error":str(exc)[:500]})
-            return
-        if args.action == "contacts-search":
-            from contact_search import search
-            try:
-                output(search(payload))
             except Exception as exc:
                 output({"success":False,"error":str(exc)[:500]})
             return
@@ -1687,7 +1317,7 @@ def main():
         args.debug = bool(payload.get("debug", args.debug))
         args.debug_dir = payload.get("debugDir", args.debug_dir)
 
-    if args.action not in {"hours", "punch-status", "punch-toggle", "overview", "provision-diagnose"}:
+    if args.action not in {"hours", "punch-status", "punch-toggle", "overview"}:
         parser.error("Unsupported action")
 
     global DEBUG_ENABLED
@@ -1745,8 +1375,6 @@ def main():
                 result = fetch_punch_status(page, args, debug_dir)
             elif args.action == "overview":
                 result = fetch_overview(page, args, debug_dir)
-            elif args.action == "provision-diagnose":
-                result = diagnose_provision_registration(page, args, debug_dir)
             else:
                 result = toggle_punch(page, args, debug_dir)
 
