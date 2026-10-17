@@ -150,9 +150,6 @@ struct AppSettings {
     double hourlyRate = 0.0;
     double taxDeduction = 0.0;
     double taxRatePercent = 0.0;
-    bool automaticTaxEstimate = true;
-    double municipalTaxPercent = 25.0;
-    double churchTaxPercent = 0.0;
     bool intramanagerViaChrome = false;
     QString intramanagerBrowserProfile;
     QString intramanagerUsername;
@@ -420,9 +417,6 @@ static QJsonObject toJson(const AppSettings& s) {
         {"hourlyRate", s.hourlyRate},
         {"taxDeduction", s.taxDeduction},
         {"taxRatePercent", s.taxRatePercent},
-        {"automaticTaxEstimate", s.automaticTaxEstimate},
-        {"municipalTaxPercent", s.municipalTaxPercent},
-        {"churchTaxPercent", s.churchTaxPercent},
         {"intramanagerViaChrome", s.intramanagerViaChrome},
         {"intramanagerBrowserProfile", s.intramanagerBrowserProfile},
         {"intramanagerUsername", s.intramanagerUsername},
@@ -451,9 +445,6 @@ static AppSettings fromSettingsJson(const QJsonObject& o) {
     s.hourlyRate = o.value("hourlyRate").toDouble(0.0);
     s.taxDeduction = o.value("taxDeduction").toDouble(0.0);
     s.taxRatePercent = o.value("taxRatePercent").toDouble(0.0);
-    s.automaticTaxEstimate = o.value("automaticTaxEstimate").toBool(true);
-    s.municipalTaxPercent = qBound(0.0, o.value("municipalTaxPercent").toDouble(25.0), 35.0);
-    s.churchTaxPercent = qBound(0.0, o.value("churchTaxPercent").toDouble(0.0), 3.0);
     s.intramanagerViaChrome = o.value("intramanagerViaChrome").toBool(false);
     s.intramanagerBrowserProfile = o.value("intramanagerBrowserProfile").toString();
     s.intramanagerUsername = o.value("intramanagerUsername").toString();

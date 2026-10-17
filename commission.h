@@ -308,7 +308,6 @@ struct ReportSalaryBreakdown {
     double delayedProvision = 0.0;
     double totalProvision = 0.0;
     double cancellations = 0.0;
-    bool automaticTaxEstimate = false;
     bool cancellationsKnown = false;
     double totalSalary = 0.0;
     bool taxConfigured = false;

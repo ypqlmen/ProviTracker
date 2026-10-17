@@ -22,7 +22,7 @@
 #include "commission.h"
 #include "report_service.h"
 #include "payroll_forecast.h"
-#include "payroll_tax_estimate.h"
+
 #include "premium_ui.h"
 #include "feature_access.h"
 #include "updater_script.h"
@@ -653,41 +653,7 @@ public:
         setModal(true);
         resize(460, 310);
         setMinimumWidth(440);
-        setStyleSheet(R"(
-            QDialog {
-                background: #181B20;
-                color: #F2F4F7;
-                font-size: 13px;
-            }
-            QLabel {
-                color: #F2F4F7;
-                background: transparent;
-            }
-            QLineEdit {
-                background: #24282F;
-                color: #D8DEE8;
-                border: 1px solid #3B434F;
-                border-radius: 14px;
-                padding: 9px 12px;
-                min-height: 22px;
-                selection-background-color: #286BCE;
-                selection-color: #F7FAFF;
-            }
-            QLineEdit:focus {
-                border: 1px solid #78ADFF;
-            }
-            QPushButton {
-                background: #286BCE;
-                color: #F7FAFF;
-                border: none;
-                padding: 10px 14px;
-                border-radius: 14px;
-                font-weight: 800;
-                min-height: 22px;
-            }
-            QPushButton:hover { background: #3278DD; }
-            QPushButton:pressed { background: #4BBFB0; }
-        )");
+        setStyleSheet(premiumStyle());
 
         auto* layout = new QVBoxLayout(this);
         layout->setContentsMargins(22, 22, 22, 22);
@@ -697,7 +663,7 @@ public:
         title->setStyleSheet("font-size:22px;font-weight:600;color:#F2F4F7;");
         layout->addWidget(title);
 
-        auto* hint = new QLabel("Din opsætning, ordrer og produkter hentes fra Provi Tracker cloud.");
+        auto* hint = new QLabel("Log ind for at åbne dit arbejdsrum.");
         hint->setWordWrap(true);
         hint->setStyleSheet("color:#AAB3C0;");
         layout->addWidget(hint);
@@ -720,12 +686,12 @@ public:
 
         auto* buttons = new QHBoxLayout;
         buttons->setSpacing(10);
-        auto* loginBtn = new QPushButton("Log ind");
+        auto* loginBtn = new QPushButton("Log ind");loginBtn->setProperty("primary",true);loginBtn->setDefault(true);
         auto* registerBtn = new QPushButton("Opret bruger");
         loginBtn->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
         registerBtn->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-        buttons->addWidget(loginBtn);
         buttons->addWidget(registerBtn);
+        buttons->addWidget(loginBtn);
         layout->addLayout(buttons);
 
         connect(loginBtn, &QPushButton::clicked, this, [this]() {
@@ -772,13 +738,13 @@ static QPair<QFrame*, QVBoxLayout*> createCard(const QString& title) {
     frame->setProperty("kpiCard", true);
 
     auto* layout = new QVBoxLayout(frame);
-    layout->setContentsMargins(22, 20, 22, 20);
+    layout->setContentsMargins(24, 22, 24, 22);
     layout->setSpacing(8);
 
     auto* titleLabel = new QLabel(title);
     titleLabel->setWordWrap(true);
     titleLabel->setTextInteractionFlags(Qt::NoTextInteraction);
-    titleLabel->setStyleSheet("color:#AAB3C0; font-size:12px; font-weight:700;");
+    titleLabel->setProperty("role","cardTitle");
 
     layout->addWidget(titleLabel);
 
@@ -791,41 +757,12 @@ public:
 
 protected:
     void paintEvent(QPaintEvent*) override {
-        QPainter painter(this);
-        painter.setRenderHint(QPainter::Antialiasing, true);
-
-        const QRectF outer = QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5);
-        const qreal outerRadius = qMin<qreal>(outer.height() / 2.0, 12.0);
-
-        painter.setPen(QPen(QColor("#3B434F"), 1.0));
-        painter.setBrush(QColor("#24282F"));
-        painter.drawRoundedRect(outer, outerRadius, outerRadius);
-
-        const int minValue = minimum();
-        const int maxValue = maximum();
-        const double ratio = maxValue > minValue
-            ? qBound(0.0, double(value() - minValue) / double(maxValue - minValue), 1.0)
-            : 0.0;
-
-        if (ratio > 0.0) {
-            QRectF fill = outer.adjusted(1.0, 1.0, -1.0, -1.0);
-            fill.setWidth(qMax<qreal>(1.0, fill.width() * ratio));
-
-            QColor fillColor = property("progressColor").value<QColor>();
-            if (!fillColor.isValid()) fillColor = QColor("#78ADFF");
-
-            const qreal fillRadius = qMin(fill.height() / 2.0, fill.width() / 2.0);
-            painter.setPen(Qt::NoPen);
-            painter.setBrush(fillColor);
-            painter.drawRoundedRect(fill, fillRadius, fillRadius);
-        }
-
-        QFont textFont = font();
-        textFont.setBold(true);
-        painter.setFont(textFont);
-        painter.setPen(QColor("#F2F4F7"));
-        painter.drawText(rect(), Qt::AlignCenter, text());
+        QPainter p(this);p.setRenderHint(QPainter::Antialiasing);QFont f=font();f.setPixelSize(15);f.setWeight(QFont::DemiBold);p.setFont(f);p.setPen(QColor("#E3E9F6"));p.drawText(QRect(0,0,width(),24),Qt::AlignLeft|Qt::AlignVCenter,text());
+        QRectF track(0,height()-7,width(),5);p.setPen(Qt::NoPen);p.setBrush(QColor("#3A414E"));p.drawRoundedRect(track,2.5,2.5);
+        const double ratio=maximum()>minimum()?qBound(0.0,double(value()-minimum())/(maximum()-minimum()),1.0):0;
+        if(ratio>0){track.setWidth(qMax(3.0,track.width()*ratio));auto c=property("progressColor").value<QColor>();p.setBrush(c.isValid()?c:QColor("#8EAFEF"));p.drawRoundedRect(track,2.5,2.5);}
     }
+
 };
 
 class RoundedTableWidget : public QTableWidget {
@@ -833,6 +770,14 @@ public:
     using QTableWidget::QTableWidget;
 
 protected:
+    void paintEvent(QPaintEvent* event) override {
+        QTableWidget::paintEvent(event);
+        if(rowCount()!=0 || property("emptyTitle").toString().isEmpty())return;
+        QPainter p(viewport());p.setRenderHint(QPainter::Antialiasing);const int x=viewport()->width()/2,y=viewport()->height()/2-45;
+        premiumIcon("orders",QColor("#7D91B7")).paint(&p,QRect(x-22,y-36,44,44));QFont f=font();f.setPixelSize(16);f.setWeight(QFont::DemiBold);p.setFont(f);p.setPen(QColor("#DCE3F1"));p.drawText(QRect(10,y+22,viewport()->width()-20,30),Qt::AlignCenter,property("emptyTitle").toString());
+        f.setPixelSize(12);f.setWeight(QFont::Normal);p.setFont(f);p.setPen(QColor("#939FB6"));p.drawText(QRect(10,y+55,viewport()->width()-20,38),Qt::AlignCenter|Qt::TextWordWrap,property("emptyDetail").toString());
+    }
+
     void resizeEvent(QResizeEvent* event) override {
         QTableWidget::resizeEvent(event);
 
@@ -866,45 +811,18 @@ protected:
         painter->setPen(Qt::NoPen);
         painter->setBrush(QColor("#2B3039"));
 
-        const int visual = visualIndex(logicalIndex);
-        const bool firstSection = visual == 0;
-        const bool lastSection = visual == count() - 1;
-        const QRectF bg = QRectF(rect).adjusted(0.0, 0.0, 0.0, 0.0);
-        const qreal radius = 10.0;
-
-        QPainterPath bgPath;
-        bgPath.moveTo(firstSection ? bg.left() + radius : bg.left(), bg.top());
-        if (lastSection) {
-            bgPath.lineTo(bg.right() - radius, bg.top());
-            bgPath.quadTo(bg.right(), bg.top(), bg.right(), bg.top() + radius);
-            bgPath.lineTo(bg.right(), bg.bottom() - radius);
-            bgPath.quadTo(bg.right(), bg.bottom(), bg.right() - radius, bg.bottom());
-        } else {
-            bgPath.lineTo(bg.right(), bg.top());
-            bgPath.lineTo(bg.right(), bg.bottom());
-        }
-        if (firstSection) {
-            bgPath.lineTo(bg.left() + radius, bg.bottom());
-            bgPath.quadTo(bg.left(), bg.bottom(), bg.left(), bg.bottom() - radius);
-            bgPath.lineTo(bg.left(), bg.top() + radius);
-            bgPath.quadTo(bg.left(), bg.top(), bg.left() + radius, bg.top());
-        } else {
-            bgPath.lineTo(bg.left(), bg.bottom());
-            bgPath.lineTo(bg.left(), bg.top());
-        }
-        bgPath.closeSubpath();
-        painter->drawPath(bgPath);
+        painter->drawRect(rect);
 
         QFont headerFont = font();
-        headerFont.setBold(true);
+        headerFont.setWeight(QFont::Medium);
         headerFont.setPointSizeF(qMax<qreal>(9.0, headerFont.pointSizeF()));
         painter->setFont(headerFont);
-        painter->setPen(QColor("#F2F4F7"));
+        painter->setPen(QColor("#A4AFC3"));
 
         const QString text = model()->headerData(logicalIndex, orientation(), Qt::DisplayRole).toString();
-        const QRect textRect = rect.adjusted(10, 0, -10, 1);
+        const QRect textRect = rect.adjusted(14, 0, -10, 1);
         const QString elided = fontMetrics().elidedText(text, Qt::ElideRight, textRect.width());
-        painter->drawText(textRect, Qt::AlignCenter | Qt::TextSingleLine, elided);
+        painter->drawText(textRect, Qt::AlignLeft | Qt::AlignVCenter | Qt::TextSingleLine, elided);
         painter->restore();
     }
 };
@@ -923,56 +841,10 @@ protected:
     }
 };
 
-static void styleDataTable(QTableWidget* table, bool allowSelection = true)
-{
-    if (!table) return;
-
-    table->setFrameShape(QFrame::NoFrame);
-    table->setFocusPolicy(allowSelection ? Qt::ClickFocus : Qt::NoFocus);
-    table->viewport()->setAutoFillBackground(false);
-    table->viewport()->setAttribute(Qt::WA_TranslucentBackground);
-    table->horizontalHeader()->setFixedHeight(38);
-    table->horizontalHeader()->setDefaultAlignment(Qt::AlignCenter);
-    table->horizontalHeader()->setHighlightSections(false);
-    table->horizontalHeader()->setSectionsClickable(false);
-
-    table->setStyleSheet(QString(R"(
-QTableWidget {
-    background: #24282F;
-    border: 1px solid #3B434F;
-    border-radius: 16px;
-    padding: 0px;
-    outline: 0;
-    color: #D8DEE8;
-    alternate-background-color: #272C34;
-}
-QTableWidget::viewport {
-    background: transparent;
-    border-radius: 16px;
-}
-QHeaderView::section {
-    background: #2B3039;
-    color: #D8DEE8;
-    border: none;
-    padding: 8px 10px;
-    font-weight: 800;
-    min-height: 24px;
-}
-QTableCornerButton::section {
-    background: #2B3039;
-    border: none;
-}
-QTableWidget::item {
-    color: #D8DEE8;
-    border: none;
-    padding: 8px;
-    min-height: 22px;
-}
-QTableWidget::item:selected {
-    background: %1;
-    color: %2;
-}
-)").arg(allowSelection ? "#286BCE" : "transparent", allowSelection ? "#F7FAFF" : "#D8DEE8"));
+static void styleDataTable(QTableWidget* table,bool allowSelection=true) {
+    if(!table)return;table->setFrameShape(QFrame::NoFrame);table->setFocusPolicy(allowSelection?Qt::ClickFocus:Qt::NoFocus);
+    table->horizontalHeader()->setFixedHeight(40);table->horizontalHeader()->setHighlightSections(false);table->setShowGrid(false);
+    table->setStyleSheet("QTableWidget {border:none;background:transparent;} QTableWidget::item {padding:12px 10px;}");
 }
 
 static bool confirmQuestion(QWidget* parent, const QString& title, const QString& message)
@@ -1021,7 +893,7 @@ static QPair<QFrame*, QLabel*> createSummaryCard(const QString& title) {
     auto* content = new QLabel("-");
     content->setWordWrap(true);
     content->setTextInteractionFlags(Qt::NoTextInteraction);
-    content->setStyleSheet("QLabel { color: #F2F4F7; font-size: 14px; font-weight: 600; background: transparent; }");
+    content->setStyleSheet("QLabel { color:#A5AFC2; font-size:13px; font-weight:400; background:transparent; }");
     card.second->addWidget(content);
     card.second->addStretch();
     return qMakePair(card.first, content);
@@ -1032,14 +904,14 @@ static QFrame* createProgressCard(const QString& title, QProgressBar** barOut, Q
 
     auto* bar = new RoundedProgressBar;
     bar->setRange(0, 100);
-    bar->setMinimumHeight(26);
-    bar->setMaximumHeight(26);
+    bar->setMinimumHeight(39);
+    bar->setMaximumHeight(39);
     bar->setProperty("progressColor", QColor("#78ADFF"));
 
     auto* hint = new QLabel("-");
     hint->setWordWrap(true);
     hint->setTextInteractionFlags(Qt::NoTextInteraction);
-    hint->setStyleSheet("QLabel { color: #F2F4F7; font-size: 13px; background: transparent; }");
+    hint->setStyleSheet("QLabel { color:#9DA9BF; font-size:12px; background:transparent; }");
 
     card.second->addWidget(bar);
     card.second->addWidget(hint);
@@ -1053,17 +925,18 @@ static QFrame* createProgressCard(const QString& title, QProgressBar** barOut, Q
 static void configureSettingsForm(QFormLayout* form) {
     if (!form) return;
     form->setHorizontalSpacing(16);
-    form->setVerticalSpacing(12);
+    form->setVerticalSpacing(18);
     form->setLabelAlignment(Qt::AlignLeft | Qt::AlignVCenter);
     form->setFormAlignment(Qt::AlignTop);
     form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
-    form->setRowWrapPolicy(QFormLayout::DontWrapRows);
+    form->setRowWrapPolicy(QFormLayout::WrapLongRows);
 }
 
 static void configureSettingsField(QWidget* widget, int minWidth = 220) {
     if (!widget) return;
     widget->setMinimumHeight(34);
     widget->setMinimumWidth(minWidth);
+    widget->setMaximumWidth(460);
     widget->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
 }
 
@@ -1098,17 +971,18 @@ public:
     SalespersonPickerDialog(Repository& repo, QWidget* parent = nullptr)
         : QDialog(parent), repo(repo) {
         setWindowTitle("Vælg sælger");
-        resize(440, 340);
+        resize(460,420);
         auto* layout = new QVBoxLayout(this);
-        layout->setContentsMargins(14, 14, 14, 14);
+        layout->setContentsMargins(24,24,24,24);
         layout->setSpacing(10);
         list = new QListWidget;
         for (const auto& s : repo.salespeople) list->addItem(s.name);
         nameEdit = new QLineEdit;
         nameEdit->setPlaceholderText("Opret ny sælger...");
         auto* createBtn = new QPushButton("Opret ny");
-        auto* selectBtn = new QPushButton("Brug valgt sælger");
-        layout->addWidget(new QLabel("Vælg aktiv sælger eller opret en ny:"));
+        auto* selectBtn = new QPushButton("Åbn arbejdsrum");selectBtn->setProperty("primary",true);
+        layout->addWidget(premiumLabel("Vælg sælger","pageTitle"));
+        layout->addWidget(premiumLabel("Vælg det arbejdsrum, du vil åbne.","muted"));
         layout->addWidget(list);
         layout->addWidget(nameEdit);
         auto* row = new QHBoxLayout;
@@ -1145,7 +1019,7 @@ public:
     OrderEditorDialog(Repository& repo, const QString& salespersonId, std::optional<Order> existing = std::nullopt, QWidget* parent = nullptr)
         : QDialog(parent), repo(repo), salespersonId(salespersonId) {
         setWindowTitle(existing.has_value() ? "Rediger ordre" : "Ny ordre");
-        resize(1120, 720);
+        setMinimumSize(960,600);QSize size(1100,780);if(auto* screen=QGuiApplication::primaryScreen())size=size.boundedTo(screen->availableGeometry().size()-QSize(36,48));resize(size);
 
         if (existing.has_value()) {
             order = *existing;
@@ -1155,19 +1029,22 @@ public:
             order.sellerInitials = repo.settings.defaultSellerInitials;
         }
 
-        auto* mainLayout = new QVBoxLayout(this);
+        auto* shell=new QVBoxLayout(this);shell->setContentsMargins(26,24,26,22);shell->setSpacing(18);
+        shell->addWidget(premiumLabel(existing?"Rediger ordre":"Ny ordre","pageTitle"));shell->addWidget(premiumLabel("Ordreoplysninger og produkter. Gem, når alt er klar.","muted"));
+        auto* editorScroll=new QScrollArea;editorScroll->setWidgetResizable(true);editorScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);auto* editorBody=new QWidget;
+        auto* mainLayout=new QVBoxLayout(editorBody);mainLayout->setContentsMargins(0,0,8,0);mainLayout->setSpacing(16);editorScroll->setWidget(editorBody);shell->addWidget(editorScroll,1);
         auto* detailsGrid = new QGridLayout;
         detailsGrid->setHorizontalSpacing(12);
         detailsGrid->setVerticalSpacing(10);
         idEdit = new QLineEdit(order.id);
         idEdit->setPlaceholderText("Indtast eller indsæt ordre-ID...");
         idEdit->setClearButtonEnabled(true);
-        idEdit->setMinimumWidth(240);
+        idEdit->setMinimumWidth(0);
         dateEdit = new QDateTimeEdit(order.createdAt);
         dateEdit->setCalendarPopup(true);
         dateEdit->setDisplayFormat("dd-MM-yyyy HH:mm");
         dateEdit->setLocale(QLocale(QLocale::Danish, QLocale::Denmark));
-        dateEdit->setMinimumWidth(190);
+        dateEdit->setMinimumWidth(0);
         dateEdit->setMinimumHeight(42);
         initialsEdit = new QLineEdit(order.sellerInitials);
         initialsEdit->setPlaceholderText("Fx 5RVPTN");
@@ -1179,59 +1056,41 @@ public:
         phoneEdit->setPlaceholderText("Telefonnummer");
         noteEdit = new QLineEdit(order.note);
         noteEdit->setPlaceholderText("Valgfri note til ordren");
-        detailsGrid->addWidget(new QLabel("Dato/tid:"), 0, 0);
-        detailsGrid->addWidget(dateEdit, 0, 1);
-        detailsGrid->addWidget(new QLabel("Initialer:"), 0, 2);
-        detailsGrid->addWidget(initialsEdit, 0, 3);
-        detailsGrid->addWidget(new QLabel("Ordre nummer:"), 0, 4);
-        detailsGrid->addWidget(idEdit, 0, 5);
-        detailsGrid->addWidget(new QLabel("CVR-nr.:"), 1, 0);
-        detailsGrid->addWidget(cvrEdit, 1, 1);
-        detailsGrid->addWidget(new QLabel("Firmanavn:"), 1, 2);
-        detailsGrid->addWidget(companyNameEdit, 1, 3);
-        detailsGrid->addWidget(new QLabel("Telefon:"), 1, 4);
-        detailsGrid->addWidget(phoneEdit, 1, 5);
-        detailsGrid->addWidget(new QLabel("Note:"), 2, 0);
-        detailsGrid->addWidget(noteEdit, 2, 1, 1, 5);
+        const QVector<QPair<QString,QWidget*>> fields={{"Dato & tidspunkt",dateEdit},{"Sælgerinitialer",initialsEdit},{"Ordrenummer",idEdit},{"CVR-nummer",cvrEdit},{"Virksomhed",companyNameEdit},{"Telefonnummer",phoneEdit}};
+        for(int i=0;i<fields.size();++i){auto* cell=new QVBoxLayout;cell->setSpacing(7);cell->addWidget(premiumLabel(fields[i].first,"caption"));cell->addWidget(fields[i].second);detailsGrid->addLayout(cell,i/3,i%3);}
+        auto* note=new QVBoxLayout;note->setSpacing(7);note->addWidget(premiumLabel("Note · valgfri","caption"));note->addWidget(noteEdit);detailsGrid->addLayout(note,2,0,1,3);
+        for(int i=0;i<3;++i)detailsGrid->setColumnStretch(i,1);
         mainLayout->addLayout(detailsGrid);
 
-        // ===== FAVORITTER CARD =====
-        auto favCard = createCard("Dine favoritter");
-        auto* favRow = new QHBoxLayout;
-        favCard.second->addLayout(favRow);
-        buildFavoritesBar(favRow);
-        mainLayout->addWidget(favCard.first);
-
-        // ===== RECENT CARD =====
-        auto recentCard = createCard("Senest brugte produkter");
-        auto* recentRow = new QHBoxLayout;
-        recentCard.second->addLayout(recentRow);
-        buildRecentBar(recentRow);
-        mainLayout->addWidget(recentCard.first);
+        auto* quickProducts=new QTabWidget;quickProducts->setObjectName("quickProducts");
+        auto* favoritesPage=new QWidget;auto* favRow=new QHBoxLayout(favoritesPage);favRow->setContentsMargins(0,8,0,8);buildFavoritesBar(favRow);quickProducts->addTab(favoritesPage,"Favoritter");
+        auto* recentPage=new QWidget;auto* recentRow=new QHBoxLayout(recentPage);recentRow->setContentsMargins(0,8,0,8);buildRecentBar(recentRow);quickProducts->addTab(recentPage,"Senest brugte");
+        if(!topFavoriteProductKeys().isEmpty() || !recentProductKeys().isEmpty())mainLayout->addWidget(quickProducts);else quickProducts->hide();
 
         // ===== TABLE CARD =====
-        auto tableCard = createCard("Ordrer");
+        auto tableCard = createCard("Produkter");
         table = new RoundedTableWidget(0, 5);
         table->setHorizontalHeader(new CleanTableHeaderView(Qt::Horizontal, table));
         table->setHorizontalHeaderLabels({"Kategori", "Produkt", "Antal", "Info", "Handling"});
 
         tableCard.second->addWidget(table);
-        mainLayout->addWidget(tableCard.first);
+        mainLayout->addWidget(tableCard.first,1);
 
         auto* header = table->horizontalHeader();
 
-        header->setSectionResizeMode(0, QHeaderView::ResizeToContents); // Kategori
+        header->setSectionResizeMode(0, QHeaderView::Fixed); // Kategori
         header->setSectionResizeMode(1, QHeaderView::Stretch);          // Produkt
         header->setSectionResizeMode(2, QHeaderView::Fixed);            // Antal
         header->setSectionResizeMode(3, QHeaderView::Fixed);            // Info
         header->setSectionResizeMode(4, QHeaderView::Fixed);            // Handling
 
-        table->setColumnWidth(2, 110);
-        table->setColumnWidth(3, 220);
-        table->setColumnWidth(4, 120);
+        table->setColumnWidth(0,125);
+        table->setColumnWidth(2,80);
+        table->setColumnWidth(3,170);
+        table->setColumnWidth(4,95);
 
         table->verticalHeader()->setVisible(false);
-        table->verticalHeader()->setDefaultSectionSize(48);
+        table->verticalHeader()->setDefaultSectionSize(56);
         table->setWordWrap(true);
         table->setTextElideMode(Qt::ElideNone);
         table->setShowGrid(false);
@@ -1240,17 +1099,17 @@ public:
         table->setEditTriggers(QAbstractItemView::NoEditTriggers);
         table->setFocusPolicy(Qt::NoFocus);
         table->setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);
-        table->setMinimumHeight(270);
+        table->setMinimumHeight(170);
         table->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
         styleDataTable(table, false);
 
-        auto actionCard = createCard("Handlinger");
+
         auto* btnRow = new QHBoxLayout;
         btnRow->setContentsMargins(0, 0, 0, 0);
 
         auto* addLineBtn = new QPushButton("Tilføj produkt");
         auto* duplicateLastBtn = new QPushButton("Gentag sidste produkt");
-        auto* saveBtn = new QPushButton("Gem ordre");
+        auto* saveBtn = new QPushButton("Gem ordre");saveBtn->setProperty("primary",true);
         auto* cancelBtn = new QPushButton("Annuller");
 
         btnRow->addWidget(addLineBtn);
@@ -1259,8 +1118,7 @@ public:
         btnRow->addWidget(saveBtn);
         btnRow->addWidget(cancelBtn);
 
-        actionCard.second->addLayout(btnRow);
-        mainLayout->addWidget(actionCard.first);
+        shell->addWidget(premiumDivider());shell->addLayout(btnRow);
 
         for (const auto& item : order.items) addRow(item.productKey, item.quantity);
         if (order.items.isEmpty()) addRow({}, 1);
@@ -1353,7 +1211,7 @@ private:
         return category;
     }
 
-    QStringList topFavoriteProductKeys(int limit = 5) const {
+    QStringList topFavoriteProductKeys(int limit = 3) const {
         QMap<QString, int> counts;
         for (const auto& existingOrder : repo.orders) {
             if (existingOrder.salespersonId != salespersonId) continue;
@@ -1374,7 +1232,7 @@ private:
         return out;
     }
 
-    QStringList recentProductKeys(int limit = 5) const {
+    QStringList recentProductKeys(int limit = 3) const {
         QStringList out;
         QSet<QString> seen;
         for (int i = repo.orders.size() - 1; i >= 0 && out.size() < limit; --i) {
@@ -1410,7 +1268,7 @@ private:
         for (const auto& productKey : favorites) {
             const auto* p = repo.findProduct(productKey);
             if (!p) continue;
-            auto* btn = new QPushButton(p->displayName);
+            auto* btn = new QPushButton;btn->setText(btn->fontMetrics().elidedText(p->displayName,Qt::ElideRight,200));btn->setMaximumWidth(250);btn->setProperty("quiet",true);btn->setIcon(premiumIcon("plus"));
             btn->setToolTip(QString("Tilføj %1").arg(p->displayName));
             layout->addWidget(btn);
             connect(btn, &QPushButton::clicked, this, [this, productKey]() { addFavoriteProduct(productKey); });
@@ -1431,7 +1289,7 @@ private:
         for (const auto& productKey : recent) {
             const auto* p = repo.findProduct(productKey);
             if (!p) continue;
-            auto* btn = new QPushButton(p->displayName);
+            auto* btn = new QPushButton;btn->setText(btn->fontMetrics().elidedText(p->displayName,Qt::ElideRight,200));btn->setMaximumWidth(250);btn->setProperty("quiet",true);btn->setIcon(premiumIcon("plus"));
             btn->setToolTip(QString("Tilføj %1 igen").arg(p->displayName));
             layout->addWidget(btn);
             connect(btn, &QPushButton::clicked, this, [this, productKey]() { addFavoriteProduct(productKey); });
@@ -1502,57 +1360,13 @@ private:
 
         auto* categoryCombo = new QComboBox;
         categoryCombo->addItems(categories());
-        categoryCombo->setMinimumWidth(170);
-        categoryCombo->setStyleSheet(R"(
-QComboBox {
-    color: #D8DEE8;
-    background: #24282F;
-    padding: 0 30px 0 10px;
-    border-radius: 12px;
-    border: 1px solid #3B434F;
-    font-weight: 700;
-}
-
-QComboBox::drop-down {
-    subcontrol-origin: padding;
-    subcontrol-position: top right;
-    width: 24px;
-    border: none;
-    background: #2B3039;
-    border-top-right-radius: 12px;
-    border-bottom-right-radius: 12px;
-}
-
-QComboBox QAbstractItemView {
-    color: #D8DEE8;
-    background: #24282F;
-    selection-background-color: #286BCE;
-    selection-color: #F7FAFF;
-    border-radius: 12px;
-}
-)");
+        categoryCombo->setMinimumWidth(0);
         int catIdx = categoryCombo->findText(initialCategory);
         if (catIdx >= 0) categoryCombo->setCurrentIndex(catIdx);
 
         auto* productCombo = new QComboBox;
         productCombo->setEditable(true);
-        productCombo->setMinimumWidth(380);
-        productCombo->setStyleSheet(R"(
-QComboBox {
-    color: #D8DEE8;
-    background: #24282F;
-    padding-right: 28px;
-    border-radius: 12px;
-}
-
-QComboBox QAbstractItemView {
-    background: #24282F;
-    color: #D8DEE8;
-    selection-background-color: #286BCE;
-    selection-color: #F7FAFF;
-    border-radius: 12px;
-}
-)");
+        productCombo->setMinimumWidth(0);
         productCombo->setInsertPolicy(QComboBox::NoInsert);
         fillProductCombo(productCombo, categoryCombo->currentText(), productKey);
         if (auto* completer = productCombo->completer()) {
@@ -1561,40 +1375,12 @@ QComboBox QAbstractItemView {
             completer->setCaseSensitivity(Qt::CaseInsensitive);
         }
         if (productCombo->lineEdit()) {
-            productCombo->lineEdit()->setStyleSheet("QLineEdit { color:#D8DEE8; background:transparent; border:none; padding:0 18px 0 0; selection-background-color:#286BCE; selection-color:#F7FAFF; }");
+            productCombo->lineEdit()->setStyleSheet("QLineEdit {background:transparent;border:none;padding:0;}");
             connect(productCombo->lineEdit(), &QLineEdit::returnPressed, this, [this]() { addRow({}, 1); });
         }
 
         auto* qtySpin = new QSpinBox;
         qtySpin->setButtonSymbols(QAbstractSpinBox::NoButtons);
-        qtySpin->setStyleSheet(R"(
-QSpinBox {
-    background: #24282F;
-    color: #D8DEE8;
-    border-radius: 12px;
-    padding: 0 10px;
-    min-height: 38px;
-}
-
-QSpinBox::up-button, QSpinBox::down-button {
-    background: #286BCE;
-    width: 18px;
-    border-radius: 6px;
-    margin: 2px;
-    color: #F7FAFF;
-    font-weight: 900;
-}
-
-QSpinBox::up-button {
-    subcontrol-origin: border;
-    subcontrol-position: top right;
-}
-
-QSpinBox::down-button {
-    subcontrol-origin: border;
-    subcontrol-position: bottom right;
-}
-)");
         qtySpin->setRange(1, 999);
         qtySpin->setValue(quantity);
 
@@ -1682,7 +1468,7 @@ public:
 
     void captureVisualReviewAndQuit(const QString& outputDir) {
         QDir().mkpath(outputDir);
-        resize(1200, 820);
+        resize(1280,900);
         show();
         qApp->processEvents();
 
@@ -1690,7 +1476,7 @@ public:
             widget->grab().save(path);
         };
 
-        if (auto* tabs = findChild<QTabWidget*>()) {
+        if (auto* tabs = findChild<QTabWidget*>("mainPages")) {
             const QMap<QString,QString> tabNames = {
                 {"Overblik","01-dashboard.png"}, {"Ordrer","02-orders.png"},
                 {"Rapporter","03-reports.png"}, {"Kontakter","04-contacts.png"},
@@ -1699,6 +1485,7 @@ public:
             const int count = tabs->count();
             for (int i = 0; i < count; ++i) {
                 tabs->setCurrentIndex(i);
+                if(tabs->tabText(i)=="Rapporter" && reportPresetCombo)reportPresetCombo->setCurrentIndex(3);
                 qApp->processEvents();
                 saveWidget(this, QDir(outputDir).filePath(tabNames.value(tabs->tabText(i))));
                 if (tabs->tabText(i) == "Indstillinger") {
@@ -1706,16 +1493,11 @@ public:
                         const QSignalBlocker blocker(salesRegistrationEnabledCheck);
                         salesRegistrationEnabledCheck->setChecked(true);
                     }
-                    for (auto* area : tabs->currentWidget()->findChildren<QScrollArea*>()) {
-                        area->verticalScrollBar()->setValue(area->verticalScrollBar()->maximum()/2);
+                    if(auto* sections=findChild<QTabWidget*>("settingsTabs")){
+                        const QStringList names={"05-settings.png","08-settings-payroll.png","09-settings-intramanager.png","10-settings-masterark.png","11-settings-account.png"};
+                        for(int j=0;j<sections->count();++j){sections->setCurrentIndex(j);qApp->processEvents();saveWidget(this,QDir(outputDir).filePath(names[j]));}
                     }
-                    qApp->processEvents();
-                    saveWidget(this, QDir(outputDir).filePath("08-settings-middle.png"));
-                    for (auto* area : tabs->currentWidget()->findChildren<QScrollArea*>()) {
-                        area->verticalScrollBar()->setValue(area->verticalScrollBar()->maximum());
-                    }
-                    qApp->processEvents();
-                    saveWidget(this, QDir(outputDir).filePath("09-settings-registration.png"));
+
                 }
             }
         } else {
@@ -1727,7 +1509,17 @@ public:
             orderDialog.show();
             qApp->processEvents();
             saveWidget(&orderDialog, QDir(outputDir).filePath("06-new-order-dialog.png"));
+            orderDialog.resize(960,620);qApp->processEvents();saveWidget(&orderDialog,QDir(outputDir).filePath("15-new-order-compact.png"));
             orderDialog.close();
+        }
+
+        BusinessContactView contactPreview;contactPreview.search->setEnabled(false);contactPreview.status->setText("Designvisning med fiktive oplysninger. Søgning er slået fra.");contactPreview.resize(1000,820);contactPreview.show();qApp->processEvents();saveWidget(&contactPreview,QDir(outputDir).filePath("04-contacts-preview.png"));contactPreview.close();
+        if(auto* pages=findChild<QTabWidget*>("mainPages")){
+            pages->setCurrentIndex(0);resize(1080,720);qApp->processEvents();saveWidget(this,QDir(outputDir).filePath("12-dashboard-compact.png"));
+            pages->setCurrentIndex(1);if(ordersTable){const auto saved=repo.orders;repo.orders.clear();refreshOrdersTable();qApp->processEvents();saveWidget(this,QDir(outputDir).filePath("13-orders-empty.png"));repo.orders=saved;refreshOrdersTable();}
+            pages->setCurrentIndex(0);resize(1000,640);qApp->processEvents();saveWidget(this,QDir(outputDir).filePath("14-dashboard-small.png"));
+            pages->setCurrentIndex(1);resize(1280,900);if(orderSearchEdit && ordersTable->rowCount()>0){orderSearchEdit->setText(ordersTable->item(0,1)->text());qApp->processEvents();ordersTable->selectRow(0);saveWidget(this,QDir(outputDir).filePath("16-orders-filtered.png"));orderSearchEdit->clear();}
+
         }
 
         SalespersonPickerDialog sellerDialog(repo, this);
@@ -1735,6 +1527,8 @@ public:
         qApp->processEvents();
         saveWidget(&sellerDialog, QDir(outputDir).filePath("07-seller-dialog.png"));
         sellerDialog.close();
+
+        CloudLoginDialog loginPreview("Demo");loginPreview.show();qApp->processEvents();saveWidget(&loginPreview,QDir(outputDir).filePath("17-login.png"));loginPreview.close();
 
         QTimer::singleShot(0, qApp, &QCoreApplication::quit);
     }
@@ -1765,8 +1559,8 @@ private:
     QLabel* recentActivityLabel = nullptr;
 
     QLabel* kpiTodayPointsLabel = nullptr;
-    QLabel* kpiMonthCommissionLabel = nullptr;
-    QLabel* kpiNextMonthPayLabel = nullptr;
+    PremiumSalaryCard* kpiMonthCommissionLabel = nullptr;
+    PremiumSalaryCard* kpiNextMonthPayLabel = nullptr;
     QLabel* kpiMonthSalesLabel = nullptr;
     QLabel* kpiMonthAddonsLabel = nullptr;
     QLabel* kpiRemainingWorkDaysLabel = nullptr;
@@ -1784,6 +1578,8 @@ private:
     QLabel* voiceProgressHintLabel = nullptr;
 
     QTableWidget* ordersTable = nullptr;
+    QLineEdit* orderSearchEdit = nullptr;
+    QLabel* ordersCountLabel = nullptr;
     QTextEdit* reportText = nullptr;
     QComboBox* reportPresetCombo = nullptr;
     QDateEdit* reportMonthEdit = nullptr;
@@ -1807,10 +1603,6 @@ private:
     QDoubleSpinBox* hourlyRateSpin = nullptr;
     QDoubleSpinBox* taxDeductionSpin = nullptr;
     QDoubleSpinBox* taxRateSpin = nullptr;
-    QCheckBox* automaticTaxCheck = nullptr;
-    QDoubleSpinBox* municipalTaxSpin = nullptr;
-    QDoubleSpinBox* churchTaxSpin = nullptr;
-    QLabel* taxEstimateLabel = nullptr;
     QCheckBox* intramanagerChromeCheck = nullptr;
     QLineEdit* intramanagerProfileEdit = nullptr;
     QLineEdit* intramanagerUsernameEdit = nullptr;
@@ -2177,7 +1969,7 @@ private:
 
             intramanagerPunchStatusLabel->setText(status);
             intramanagerPunchStatusLabel->setStyleSheet(
-                QString("QLabel { color:%1; font-size:22px; font-weight:600; background:transparent; }")
+                QString("QLabel { color:%1; font-size:15px; font-weight:600; background:transparent; }")
                     .arg(punch.known && punch.clockedIn ? "#65D2A0" : "#F2F4F7")
                 );
         }
@@ -3260,53 +3052,31 @@ private:
     }
 
     void setupUi() {
-        resize(1200, 800);
-        setWindowTitle("Provi Tracker");
-
-        setStyleSheet(premiumStyle());
-
-        auto* central = new QWidget; central->setObjectName("workspace");
-        auto* root = new QHBoxLayout(central); root->setContentsMargins(18,18,18,18); root->setSpacing(0);
-        auto* sidebar = new QFrame; sidebar->setObjectName("sidebar"); sidebar->setFixedWidth(202);
-        auto* sideLayout = new QVBoxLayout(sidebar); sideLayout->setContentsMargins(16,24,16,20); sideLayout->setSpacing(10);
-        auto* brand = new QLabel("provi"); brand->setStyleSheet("font-size:30px; font-weight:700; color:#F2F4F7; padding:0 10px;");
-        sideLayout->addWidget(brand);
-        auto* caption = new QLabel("Victor er farmand"); caption->setStyleSheet("font-size:10px; font-weight:600; color:#9AA5B5; padding:18px 10px 6px;");
-        sideLayout->addWidget(caption);
-        auto* navigation = new QListWidget; navigation->setObjectName("navigation");
-        navigation->addItems({"Overblik", "Ordrer", "Rapporter"});
-        if (contactSearchAllowed()) navigation->addItem("Kontakter");
-        navigation->addItem("Indstillinger");
-        navigation->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff); navigation->setFocusPolicy(Qt::NoFocus);
-        sideLayout->addWidget(navigation,1);
-        auto* edition = new QLabel(QString("Provi Tracker<br><span style='color:#9AA5B5'>Trial · %1</span>").arg(APP_VERSION));
-        edition->setStyleSheet("font-size:12px; color:#AAB3C0; padding:8px;"); sideLayout->addWidget(edition);
-        root->addWidget(sidebar);
-        auto* content = new QVBoxLayout; content->setContentsMargins(24,10,0,0); content->setSpacing(22);
-        auto* topBar = new QHBoxLayout;
-        auto* heading = new QVBoxLayout; heading->setSpacing(5);
-        auto* pageTitle = new QLabel("Overblik"); pageTitle->setStyleSheet("font-size:28px; font-weight:700; color:#F2F4F7;");
-        activeSalespersonLabel = new QLabel; activeSalespersonLabel->setStyleSheet("font-size:12px; color:#AAB3C0;");
-        heading->addWidget(pageTitle); heading->addWidget(activeSalespersonLabel);
-        auto* switchBtn = new QPushButton("Skift sælger");
-        auto* newOrderBtn = new QPushButton("+  Ny ordre"); newOrderBtn->setProperty("primary",true);
-        topBar->addLayout(heading); topBar->addStretch(); topBar->addWidget(switchBtn); topBar->addWidget(newOrderBtn);
-        content->addLayout(topBar);
-        auto* tabs = new QTabWidget; tabs->setFocusPolicy(Qt::NoFocus); tabs->tabBar()->hide();
-        tabs->addTab(buildDashboardTab(), "Overblik");
-        tabs->addTab(buildOrdersTab(), "Ordrer");
-        tabs->addTab(buildReportsTab(), "Rapporter");
-        if (contactSearchAllowed()) tabs->addTab(buildContactsTab(), "Kontakter");
-        tabs->addTab(buildSettingsTab(), "Indstillinger");
-        content->addWidget(tabs,1); root->addLayout(content,1); setCentralWidget(central);
+        setMinimumSize(1000,640);QSize size(1280,860);if(auto* screen=QGuiApplication::primaryScreen())size=size.boundedTo(screen->availableGeometry().size()-QSize(36,48));resize(size);setWindowTitle("Provi Tracker");
+        auto* central=new PremiumWorkspace;central->setObjectName("workspace");auto* root=new QHBoxLayout(central);root->setContentsMargins(0,0,0,0);root->setSpacing(0);
+        auto* sidebar=new QFrame;sidebar->setObjectName("sidebar");sidebar->setFixedWidth(218);auto* side=new QVBoxLayout(sidebar);side->setContentsMargins(18,30,18,20);side->setSpacing(12);
+        auto* brandRow=new QHBoxLayout;auto* mark=new QLabel;mark->setPixmap(premiumIcon("trend",QColor("#D9E6FF")).pixmap(25,25));mark->setStyleSheet("background:#3B5482;border:1px solid #6B81AB;border-radius:12px;padding:8px;");
+        auto* brand=new QLabel("provi");brand->setStyleSheet("font-size:28px;font-weight:600;color:#FAFBFE;");brandRow->addWidget(mark);brandRow->addSpacing(5);brandRow->addWidget(brand);brandRow->addStretch();side->addLayout(brandRow);
+        auto* caption=premiumLabel("Victor er farmand","caption");caption->setContentsMargins(3,12,0,12);side->addWidget(caption);
+        auto* navigation=new QListWidget;navigation->setObjectName("navigation");navigation->setIconSize(QSize(19,19));navigation->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);navigation->setFocusPolicy(Qt::NoFocus);
+        const QVector<QPair<QString,QString>> links={{"Overblik","grid"},{"Ordrer","orders"},{"Rapporter","reports"},{"Kontakter","contacts"},{"Indstillinger","settings"}};
+        for(const auto& link:links){if(link.first=="Kontakter" && !contactSearchAllowed())continue;new QListWidgetItem(premiumIcon(link.second),link.first,navigation);}
+        side->addWidget(navigation,1);side->addWidget(premiumDivider());
+        activeSalespersonLabel=premiumLabel("","cardTitle");activeSalespersonLabel->setWordWrap(true);side->addSpacing(8);side->addWidget(activeSalespersonLabel);
+        auto* switchBtn=new QPushButton("Skift sælger");switchBtn->setProperty("quiet",true);switchBtn->setIcon(premiumIcon("person"));side->addWidget(switchBtn,0,Qt::AlignLeft);
+        side->addWidget(premiumLabel(QString("Provi Tracker · Test %1").arg(APP_VERSION),"caption"));root->addWidget(sidebar);
+        auto* content=new QVBoxLayout;content->setContentsMargins(30,27,30,22);content->setSpacing(24);
+        auto* top=new QHBoxLayout;auto* titleBlock=new QVBoxLayout;titleBlock->setSpacing(6);auto* title=premiumLabel("Overblik","pageTitle");auto* subtitle=premiumLabel("Løn, salg og næste milepæl.","muted");titleBlock->addWidget(title);titleBlock->addWidget(subtitle);top->addLayout(titleBlock);top->addStretch();
+        auto* date=premiumLabel(QLocale(QLocale::Danish).toString(QDate::currentDate(),"d. MMMM yyyy"),"muted");top->addWidget(date);top->addSpacing(15);
+        auto* newOrderBtn=new QPushButton("Ny ordre");newOrderBtn->setIcon(premiumIcon("plus",Qt::white));newOrderBtn->setProperty("primary",true);top->addWidget(newOrderBtn);content->addLayout(top);
+        auto* tabs=new QTabWidget;tabs->setObjectName("mainPages");tabs->setFocusPolicy(Qt::NoFocus);tabs->tabBar()->hide();
+        tabs->addTab(buildDashboardTab(),"Overblik");tabs->addTab(buildOrdersTab(),"Ordrer");tabs->addTab(buildReportsTab(),"Rapporter");if(contactSearchAllowed())tabs->addTab(buildContactsTab(),"Kontakter");tabs->addTab(buildSettingsTab(),"Indstillinger");
+        content->addWidget(tabs,1);root->addLayout(content,1);setCentralWidget(central);
         connect(navigation,&QListWidget::currentRowChanged,tabs,&QTabWidget::setCurrentIndex);
         connect(tabs,&QTabWidget::currentChanged,navigation,[navigation](int row){navigation->setCurrentRow(row);});
-        connect(navigation,&QListWidget::currentRowChanged,this,[pageTitle,navigation](int row){ if(row>=0) pageTitle->setText(navigation->item(row)->text()); });
-        navigation->setCurrentRow(0);
-
-        connect(newOrderBtn, &QPushButton::clicked, this, [this]() { createOrder(); });
-        connect(switchBtn, &QPushButton::clicked, this, [this]() { chooseSalesperson(); });
-        qApp->installEventFilter(this);
+        connect(navigation,&QListWidget::currentRowChanged,this,[title,subtitle,navigation](int row){if(row<0)return;const auto text=navigation->item(row)->text();title->setText(text);
+            const QMap<QString,QString> descriptions={{"Overblik","Løn, salg og næste milepæl."},{"Ordrer","Dine salg. Samlet ét sted."},{"Rapporter","Et klart overblik, klar til at dele."},{"Kontakter","Find offentlige erhvervskontakter med kilde."},{"Indstillinger","Dit arbejdsrum. Dine indstillinger."}};subtitle->setText(descriptions.value(text));});navigation->setCurrentRow(0);
+        connect(newOrderBtn,&QPushButton::clicked,this,[this](){createOrder();});connect(switchBtn,&QPushButton::clicked,this,[this](){chooseSalesperson();});qApp->installEventFilter(this);
     }
 
     bool eventFilter(QObject* watched, QEvent* event) override {
@@ -3353,196 +3123,68 @@ private:
     }
 
     QWidget* buildDashboardTab() {
-        auto* w = new QWidget;
-        auto* outerLayout = new QVBoxLayout(w);
-        outerLayout->setContentsMargins(0, 0, 0, 0);
-        outerLayout->setSpacing(0);
-
-        auto* scroll = new QScrollArea;
-        scroll->setWidgetResizable(true);
-        scroll->setFrameShape(QFrame::NoFrame);
-        scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
-        scroll->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
-
-        auto* content = new QWidget;
-        content->setMinimumWidth(840);
-
-        auto* layout = new QVBoxLayout(content);
-        layout->setContentsMargins(10, 0, 10, 0);
-        layout->setSpacing(14);
-
-        auto* dashboardTop = new QHBoxLayout;
-        dashboardTop->setContentsMargins(0, 0, 0, 0);
-        dashboardTop->addStretch();
-        auto* versionLabel = new QLabel(QString("Version %1").arg(QString::fromLatin1(APP_VERSION)));
-        versionLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
-        versionLabel->setTextInteractionFlags(Qt::NoTextInteraction);
-        versionLabel->setStyleSheet("QLabel { color:#9AA5B5; font-size:12px; font-weight:600; background:transparent; }");
-        dashboardTop->addWidget(versionLabel);
-        layout->addLayout(dashboardTop);
-
-        auto k1 = createKpiCard("Point i dag");
-        auto k2 = createKpiCard("Løn denne måned");
-        auto k3 = createKpiCard("Løn til næste måned");
-        auto k4 = createKpiCard("Salg denne måned");
-        auto k5 = createKpiCard("Tillæg denne måned");
-        auto k6 = createKpiCard("Resterende arbejdsdage");
-
-        kpiTodayPointsLabel = k1.second;
-        kpiMonthCommissionLabel = k2.second;
-        kpiNextMonthPayLabel = k3.second;
-        kpiMonthSalesLabel = k4.second;
-        kpiMonthAddonsLabel = k5.second;
-        kpiRemainingWorkDaysLabel = k6.second;
-        kpiMonthCommissionLabel->setTextFormat(Qt::RichText);
-        kpiNextMonthPayLabel->setTextFormat(Qt::RichText);
-        kpiRemainingWorkDaysLabel->setWordWrap(false);
-
-        auto* kpiGrid = new QGridLayout;
-        kpiGrid->setHorizontalSpacing(14);
-        kpiGrid->setVerticalSpacing(14);
-        kpiGrid->addWidget(k2.first,0,0,1,2);
-        kpiGrid->addWidget(k3.first,0,2,1,2);
-        kpiGrid->addWidget(k1.first,1,0);
-        kpiGrid->addWidget(k4.first,1,1);
-        kpiGrid->addWidget(k5.first,1,2);
-        kpiGrid->addWidget(k6.first,1,3);
-        for(int column=0;column<4;++column) kpiGrid->setColumnStretch(column,1);
-        layout->addLayout(kpiGrid);
-
-        auto punchCard = createCard("Stempelur");
-        auto* punchTop = new QHBoxLayout;
-        punchTop->setContentsMargins(0, 0, 0, 0);
-        punchTop->setSpacing(12);
-
-        intramanagerPunchStatusLabel = new QLabel("Status ukendt");
-        intramanagerPunchStatusLabel->setTextInteractionFlags(Qt::NoTextInteraction);
-
-        intramanagerPunchButton = new QPushButton("Hent status");
-        intramanagerPunchButton->setMinimumWidth(140);
-
-        punchTop->addWidget(intramanagerPunchStatusLabel);
-        punchTop->addStretch();
-        punchTop->addWidget(intramanagerPunchButton);
-
-        intramanagerPunchDetailLabel = new QLabel("-");
-        intramanagerPunchDetailLabel->setWordWrap(true);
-        intramanagerPunchDetailLabel->setTextInteractionFlags(Qt::NoTextInteraction);
-        intramanagerPunchDetailLabel->setStyleSheet("QLabel { color:#AAB3C0; font-size:13px; font-weight:600; background:transparent; }");
-
-        punchCard.second->addLayout(punchTop);
-        punchCard.second->addWidget(intramanagerPunchDetailLabel);
-        layout->addWidget(punchCard.first);
-
-        auto progressCard = createCard("Mål, provision og næste løft");
-        auto* progressLayout = new QGridLayout;
-        progressLayout->setHorizontalSpacing(14);
-        progressLayout->setVerticalSpacing(14);
-
-        progressLayout->addWidget(createProgressCard("Point mod månedens mål", &targetProgressBar, &targetProgressHintLabel), 0, 0);
-        progressLayout->addWidget(createProgressCard("Salg mod månedens mål", &salesTargetProgressBar, &salesTargetProgressHintLabel), 0, 1);
-        progressLayout->addWidget(createProgressCard("SIMO · næste pengehop", &simoProgressBar, &simoProgressHintLabel), 1, 0);
-        progressLayout->addWidget(createProgressCard("VOICE · næste pengehop", &voiceProgressBar, &voiceProgressHintLabel), 1, 1);
-
-        progressCard.second->addLayout(progressLayout);
-        layout->addWidget(progressCard.first);
-
-        auto recentCard = createSummaryCard("Seneste aktivitet");
-        recentActivityLabel = recentCard.second;
-        layout->addWidget(recentCard.first);
-        layout->addStretch();
-
-        connect(intramanagerPunchButton, &QPushButton::clicked, this, [this]() {
-            toggleIntramanagerPunchAsync();
-        });
-
-        scroll->setWidget(content);
-        outerLayout->addWidget(scroll, 1);
-        return w;
+        auto* page=new QWidget;auto* outer=new QVBoxLayout(page);outer->setContentsMargins(0,0,0,0);
+        auto* scroll=new QScrollArea;scroll->setWidgetResizable(true);scroll->setFrameShape(QFrame::NoFrame);scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+        auto* body=new QWidget;auto* layout=new QVBoxLayout(body);layout->setContentsMargins(0,0,8,8);layout->setSpacing(18);
+        auto* salaries=new QHBoxLayout;salaries->setSpacing(18);kpiMonthCommissionLabel=new PremiumSalaryCard("Løn denne måned",true);kpiNextMonthPayLabel=new PremiumSalaryCard("Løn næste måned",false);salaries->addWidget(kpiMonthCommissionLabel,1);salaries->addWidget(kpiNextMonthPayLabel,1);layout->addLayout(salaries);
+        auto* statistics=new PremiumCard;auto* stats=new QHBoxLayout(statistics);stats->setContentsMargins(24,20,24,20);stats->setSpacing(24);
+        const QStringList labels={"Point i dag","Salg denne måned","Tillæg denne måned","Arbejdsdage tilbage"};QVector<QLabel*> values;
+        for(int i=0;i<4;++i){if(i)stats->addWidget(premiumDivider(true));auto* cell=new QVBoxLayout;cell->setSpacing(9);cell->addWidget(premiumLabel(labels[i],"caption"));auto* value=premiumLabel("—","statValue");cell->addWidget(value);values<<value;stats->addLayout(cell,1);}
+        kpiTodayPointsLabel=values[0];kpiMonthSalesLabel=values[1];kpiMonthAddonsLabel=values[2];kpiRemainingWorkDaysLabel=values[3];layout->addWidget(statistics);
+        auto* punch=new PremiumCard;auto* punchRow=new QHBoxLayout(punch);punchRow->setContentsMargins(22,18,22,18);punchRow->setSpacing(16);
+        auto* clock=new QLabel;clock->setPixmap(premiumIcon("clock").pixmap(25,25));clock->setStyleSheet("background:rgba(255,255,255,8);border-radius:12px;padding:10px;");punchRow->addWidget(clock);
+        auto* punchText=new QVBoxLayout;punchText->setSpacing(5);intramanagerPunchStatusLabel=premiumLabel("Stempelur","cardTitle");intramanagerPunchDetailLabel=premiumLabel("—","muted");intramanagerPunchDetailLabel->setWordWrap(true);punchText->addWidget(intramanagerPunchStatusLabel);punchText->addWidget(intramanagerPunchDetailLabel);punchRow->addLayout(punchText,1);
+        intramanagerPunchButton=new QPushButton("Hent status");punchRow->addWidget(intramanagerPunchButton);layout->addWidget(punch);
+        auto* goalTitle=new QHBoxLayout;goalTitle->addWidget(premiumLabel("Månedens mål & næste bonus","sectionTitle"));goalTitle->addStretch();goalTitle->addWidget(premiumLabel("Ét skridt tættere på næste niveau","caption"));layout->addLayout(goalTitle);
+        auto* progress=new QGridLayout;progress->setHorizontalSpacing(18);progress->setVerticalSpacing(18);
+        progress->addWidget(createProgressCard("Pointmål",&targetProgressBar,&targetProgressHintLabel),0,0);progress->addWidget(createProgressCard("Salgsmål",&salesTargetProgressBar,&salesTargetProgressHintLabel),0,1);
+        progress->addWidget(createProgressCard("SIMO-bonus",&simoProgressBar,&simoProgressHintLabel),1,0);progress->addWidget(createProgressCard("VOICE-bonus",&voiceProgressBar,&voiceProgressHintLabel),1,1);layout->addLayout(progress);
+        auto recent=createSummaryCard("Seneste aktivitet");recentActivityLabel=recent.second;layout->addWidget(recent.first);layout->addStretch();
+        connect(intramanagerPunchButton,&QPushButton::clicked,this,[this](){toggleIntramanagerPunchAsync();});scroll->setWidget(body);outer->addWidget(scroll);return page;
     }
 
     QWidget* buildOrdersTab() {
-        auto* w = new QWidget;
-        auto* layout = new QVBoxLayout(w);
-        layout->setSpacing(18);
-
-        auto actionsCard = createCard("Ordrer");
-        auto* actionsRow = new QHBoxLayout;
-        actionsRow->setSpacing(10);
-        actionsRow->setContentsMargins(0, 0, 0, 0);
-
-        auto* refreshBtn = new QPushButton("Opdater");
-        auto* addBtn = new QPushButton("Ny ordre");
-        auto* editBtn = new QPushButton("Ret ordre");
-        auto* deleteBtn = new QPushButton("Slet ordre");
-        auto* registerBtn = new QPushButton("Registrer / prøv igen");
-        connect(registerBtn, &QPushButton::clicked, this, [this]() { retrySelectedMasterRegistration(); });
-
-        actionsRow->addWidget(refreshBtn);
-        actionsRow->addWidget(addBtn);
-        actionsRow->addWidget(editBtn);
-        actionsRow->addWidget(deleteBtn);
-        actionsRow->addWidget(registerBtn);
-        actionsRow->addStretch();
-
-        actionsCard.second->addLayout(actionsRow);
-        layout->addWidget(actionsCard.first);
-
-        auto tableCard = createCard("Ordreoversigt");
-
-        ordersTable = new ClearableTableWidget(0, 6);
-        ordersTable->setHorizontalHeader(new CleanTableHeaderView(Qt::Horizontal, ordersTable));
-        ordersTable->setHorizontalHeaderLabels({"Tid", "Ordre-ID", "Det der er solgt", "Point", "Note", "Salgsreg"});
-        ordersTable->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Fixed);
-        ordersTable->horizontalHeader()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
-        ordersTable->horizontalHeader()->setSectionResizeMode(2, QHeaderView::Stretch);
-        ordersTable->horizontalHeader()->setSectionResizeMode(3, QHeaderView::ResizeToContents);
-        ordersTable->horizontalHeader()->setSectionResizeMode(4, QHeaderView::Stretch);
-        ordersTable->setColumnWidth(0, 120);
-        ordersTable->horizontalHeader()->setSectionResizeMode(5, QHeaderView::ResizeToContents);
-
-        ordersTable->setAlternatingRowColors(true);
-        ordersTable->setSelectionBehavior(QAbstractItemView::SelectRows);
-        ordersTable->setSelectionMode(QAbstractItemView::SingleSelection);
-        ordersTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
-        ordersTable->verticalHeader()->setVisible(false);
-        ordersTable->verticalHeader()->setDefaultSectionSize(42);
-        ordersTable->setWordWrap(true);
-        ordersTable->setTextElideMode(Qt::ElideNone);
-        ordersTable->setShowGrid(false);
-        ordersTable->setMinimumHeight(360);
-        ordersTable->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
-        styleDataTable(ordersTable, true);
-
-        tableCard.second->addWidget(ordersTable, 1);
-        layout->addWidget(tableCard.first, 1);
-
-        connect(refreshBtn, &QPushButton::clicked, this, [this]() {
-            refreshOrdersTable();
-        });
-
-        connect(addBtn, &QPushButton::clicked, this, [this]() {
-            createOrder();
-        });
-
-        connect(editBtn, &QPushButton::clicked, this, [this]() {
-            editSelectedOrder();
-        });
-
-        connect(deleteBtn, &QPushButton::clicked, this, [this]() {
-            deleteSelectedOrder();
-        });
-
+        auto* w=new QWidget;auto* layout=new QVBoxLayout(w);layout->setContentsMargins(0,0,0,0);layout->setSpacing(18);
+        auto* toolbar=new QHBoxLayout;toolbar->setSpacing(9);orderSearchEdit=new QLineEdit;orderSearchEdit->setPlaceholderText("Søg i ordrer…");orderSearchEdit->addAction(premiumIcon("search"),QLineEdit::LeadingPosition);orderSearchEdit->setMaximumWidth(310);toolbar->addWidget(orderSearchEdit);toolbar->addStretch();
+        auto* refreshBtn=new QPushButton;refreshBtn->setIcon(premiumIcon("refresh"));refreshBtn->setToolTip("Opdater ordrer");refreshBtn->setAccessibleName("Opdater ordrer");
+        auto* editBtn=new QPushButton("Rediger");auto* registerBtn=new QPushButton("Registrer / prøv igen");auto* deleteBtn=new QPushButton("Slet");deleteBtn->setProperty("destructive",true);
+        toolbar->addWidget(refreshBtn);toolbar->addWidget(editBtn);toolbar->addWidget(registerBtn);toolbar->addWidget(deleteBtn);layout->addLayout(toolbar);
+        auto card=createCard("Alle ordrer");ordersCountLabel=premiumLabel("","caption");card.second->addWidget(ordersCountLabel);
+        ordersTable=new ClearableTableWidget(0,6);ordersTable->setHorizontalHeader(new CleanTableHeaderView(Qt::Horizontal,ordersTable));ordersTable->setHorizontalHeaderLabels({"Dato & tid","Ordre","Produkter","Point","Virksomhed / note","Masterark"});
+        auto* h=ordersTable->horizontalHeader();for(int col:{0,1,3,4,5})h->setSectionResizeMode(col,QHeaderView::Fixed);h->setSectionResizeMode(2,QHeaderView::Stretch);
+        ordersTable->setColumnWidth(0,120);ordersTable->setColumnWidth(1,100);ordersTable->setColumnWidth(3,65);ordersTable->setColumnWidth(4,185);ordersTable->setColumnWidth(5,135);
+        ordersTable->setSelectionBehavior(QAbstractItemView::SelectRows);ordersTable->setSelectionMode(QAbstractItemView::SingleSelection);ordersTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
+        ordersTable->verticalHeader()->hide();ordersTable->verticalHeader()->setMinimumSectionSize(52);ordersTable->setWordWrap(true);ordersTable->setTextElideMode(Qt::ElideNone);ordersTable->setAlternatingRowColors(true);ordersTable->setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);ordersTable->setMinimumHeight(300);
+        ordersTable->setProperty("emptyTitle","Dine ordrer samles her");ordersTable->setProperty("emptyDetail","Opret dit første salg med Ny ordre øverst.");styleDataTable(ordersTable);card.second->addSpacing(4);card.second->addWidget(ordersTable,1);layout->addWidget(card.first,1);
+        auto* rowLayoutTimer=new QTimer(ordersTable);rowLayoutTimer->setSingleShot(true);connect(ordersTable->horizontalHeader(),&QHeaderView::sectionResized,this,[rowLayoutTimer](){rowLayoutTimer->start(0);});connect(rowLayoutTimer,&QTimer::timeout,this,[this](){resizeOrderRows();});
+        connect(orderSearchEdit,&QLineEdit::textChanged,this,[this](){applyOrderFilter();});
+        const auto updateActions=[this,editBtn,registerBtn,deleteBtn](){const bool selected=!ordersTable->selectionModel()->selectedRows().isEmpty();for(auto* button:{editBtn,registerBtn,deleteBtn})button->setEnabled(selected);};
+        connect(ordersTable,&QTableWidget::itemSelectionChanged,this,updateActions);updateActions();
+        connect(refreshBtn,&QPushButton::clicked,this,[this](){refreshOrdersTable();});connect(editBtn,&QPushButton::clicked,this,[this](){editSelectedOrder();});connect(registerBtn,&QPushButton::clicked,this,[this](){retrySelectedMasterRegistration();});connect(deleteBtn,&QPushButton::clicked,this,[this](){deleteSelectedOrder();});
         return w;
+    }
+
+    void resizeOrderRows() {
+        if(!ordersTable)return;const QFontMetrics metrics(ordersTable->font());
+        for(int row=0;row<ordersTable->rowCount();++row){int height=56;
+            for(int col=0;col<ordersTable->columnCount();++col)if(auto* item=ordersTable->item(row,col))height=qMax(height,metrics.boundingRect(QRect(0,0,qMax(30,ordersTable->columnWidth(col)-28),10000),Qt::TextWordWrap,item->text()).height()+28);
+            ordersTable->setRowHeight(row,height);
+        }
+    }
+
+    void applyOrderFilter() {
+        if(!ordersTable || !orderSearchEdit)return;const QString query=orderSearchEdit->text().simplified();int visible=0;
+        for(int row=0;row<ordersTable->rowCount();++row){QStringList text;for(int col=0;col<ordersTable->columnCount();++col)if(auto* item=ordersTable->item(row,col))text<<item->text();const bool match=query.isEmpty() || text.join(' ').contains(query,Qt::CaseInsensitive);ordersTable->setRowHidden(row,!match);if(match)++visible;}
+        if(ordersCountLabel)ordersCountLabel->setText(query.isEmpty()?QString("%1 ordrer · nyeste først").arg(visible):QString("%1 af %2 ordrer").arg(visible).arg(ordersTable->rowCount()));
     }
 
     QWidget* buildReportsTab() {
         auto* w = new QWidget;
         auto* layout = new QVBoxLayout(w);
-        layout->setSpacing(18);
+        layout->setSpacing(18);layout->setContentsMargins(0,0,0,0);
 
-        auto controlsCard = createCard("Rapportindstillinger");
-        auto* top = new QHBoxLayout;
+        auto* controls=new QWidget;
+        auto* top = new QHBoxLayout(controls);
         top->setContentsMargins(0, 0, 0, 0);
 
         reportPresetCombo = new QComboBox;
@@ -3554,17 +3196,15 @@ private:
         reportMonthEdit->setCalendarPopup(true);
         reportMonthEdit->setLocale(QLocale(QLocale::Danish, QLocale::Denmark));
 
-        auto* exportBtn = new QPushButton("Gem rapport");
+        auto* exportBtn = new QPushButton("Eksporter PDF");
 
         top->addWidget(new QLabel("Visning:"));
         top->addWidget(reportPresetCombo);
         top->addWidget(new QLabel("Måned:"));
         top->addWidget(reportMonthEdit);
-        top->addWidget(exportBtn);
-        top->addStretch();
+        top->addStretch();exportBtn->setProperty("primary",true);top->addWidget(exportBtn);
 
-        controlsCard.second->addLayout(top);
-        layout->addWidget(controlsCard.first);
+        layout->addWidget(controls);
 
         auto reportCard = createCard("Rapport");
         reportText = new QTextEdit;
@@ -3575,11 +3215,11 @@ private:
         reportText->document()->setDocumentMargin(18);
         reportText->setStyleSheet(R"(
         QTextEdit {
-            background: #181B20;
-            color: #D8DEE8;
+            background: #F5F6FA;
+            color: #202837;
             border: none;
             border-radius: 18px;
-            padding: 18px;
+            padding: 24px;
             font-size: 14px;
         }
     )");
@@ -3603,21 +3243,8 @@ private:
             auto* denied = new QLabel("Du har ikke adgang til kontaktsøgning.");
             return denied;
         }
-        auto* page = new QWidget; auto* layout = new QVBoxLayout(page); layout->setContentsMargins(10,0,10,10); layout->setSpacing(20);
-        auto card = createCard("Find en erhvervskontakt");
-        auto* description = new QLabel("Søg efter et offentligt angivet, direkte arbejdsnummer på en virksomhedsside. Navne kan tilhøre flere personer; kontrollér altid kilden. Private personregistre indgår ikke.");
-        description->setWordWrap(true); card.second->addWidget(description);
-        auto* form = new QFormLayout;
-        auto* name = new QLineEdit; name->setPlaceholderText("Fornavn og efternavn"); name->setMaxLength(100);
-        auto* company = new QLineEdit; company->setPlaceholderText("Virksomhed eller by — valgfrit"); company->setMaxLength(140);
-        auto* website = new QLineEdit; website->setPlaceholderText("Virksomhedens hjemmeside — valgfrit"); website->setMaxLength(300);
-        form->addRow("Fuldt navn",name); form->addRow("Virksomhed / by",company); form->addRow("Hjemmeside",website); card.second->addLayout(form);
-        auto* search = new QPushButton("Find kontakt"); search->setProperty("primary",true); card.second->addWidget(search,0,Qt::AlignLeft);
-        auto* status = new QLabel("Resultater vises med kilde. Der oprettes eller gemmes ingen kontakt automatisk."); status->setWordWrap(true); card.second->addWidget(status);
-        layout->addWidget(card.first);
-        auto* results = new QTableWidget(0,3); results->setHorizontalHeaderLabels({"Navn", "Direkte arbejdsnummer", "Kilde · dobbeltklik for at åbne"});
-        results->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch); results->verticalHeader()->hide(); results->setEditTriggers(QAbstractItemView::NoEditTriggers); results->setSelectionBehavior(QAbstractItemView::SelectRows);
-        layout->addWidget(results,1);
+        auto* page=new BusinessContactView;auto* name=page->name;auto* company=page->company;auto* website=page->website;
+        auto* search=page->search;auto* status=page->status;auto* results=page->results;
         connect(results,&QTableWidget::cellDoubleClicked,this,[results](int row,int){
             const QUrl source(results->item(row,2)->data(Qt::UserRole).toString());
             if(source.scheme()=="https") QDesktopServices::openUrl(source);
@@ -3646,27 +3273,7 @@ private:
     }
 
     QWidget* buildSettingsTab() {
-        auto* w = new QWidget;
-        auto* outerLayout = new QVBoxLayout(w);
-        outerLayout->setContentsMargins(0, 0, 0, 0);
-        outerLayout->setSpacing(0);
-
-        auto* scroll = new QScrollArea;
-        scroll->setWidgetResizable(true);
-        scroll->setFrameShape(QFrame::NoFrame);
-        scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
-        scroll->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
-
-        auto* content = new QWidget;
-        content->setMinimumWidth(880);
-
-        auto* layout = new QHBoxLayout(content);
-        layout->setSpacing(18);
-        layout->setContentsMargins(0, 0, 4, 0);
-
-        auto* left = new QVBoxLayout;
-        left->setSpacing(18);
-
+        auto* w=new QWidget;auto* outerLayout=new QVBoxLayout(w);outerLayout->setContentsMargins(0,0,0,0);outerLayout->setSpacing(18);
         auto goalCard = createCard("Mål");
         auto* form = new QFormLayout;
         configureSettingsForm(form);
@@ -3687,13 +3294,11 @@ private:
 
         auto* saveGoalBtn = new QPushButton("Gem mål");
         configureSettingsButton(saveGoalBtn);
-        form->addRow(saveGoalBtn);
+        saveGoalBtn->setProperty("primary",true);saveGoalBtn->setMaximumWidth(160);form->addRow(QString(),saveGoalBtn);
 
         goalCard.second->addLayout(form);
-        goalCard.second->addStretch();
-        left->addWidget(goalCard.first);
 
-        auto intramanagerCard = createCard("Intramanager og timeløn");
+        auto intramanagerCard = createCard("Forbind Intramanager");
 
         auto* imForm = new QFormLayout;
         configureSettingsForm(imForm);
@@ -3731,9 +3336,9 @@ private:
         taxRateSpin->setButtonSymbols(QAbstractSpinBox::NoButtons);
         configureSettingsField(taxRateSpin);
 
-        auto* saveIntramanagerBtn = new QPushButton("Gem lønindstillinger");
-        auto* diagnoseProvisionBtn = new QPushButton("Kortlæg provision");
-        configureSettingsButton(saveIntramanagerBtn);
+        auto* saveIntramanagerBtn = new QPushButton("Gem forbindelse");
+        auto* diagnoseProvisionBtn = new QPushButton("Fejlsøgning…");
+        configureSettingsButton(saveIntramanagerBtn);saveIntramanagerBtn->setProperty("primary",true);
         configureSettingsButton(diagnoseProvisionBtn);
         auto* intramanagerActionRow = createSettingsButtonGrid(QVector<QPushButton*>{saveIntramanagerBtn, diagnoseProvisionBtn});
 
@@ -3764,24 +3369,17 @@ private:
                 repo.saveSettings();refreshAll();setupIntramanagerAutoSync();
             });
         });
-        imForm->addRow("Timeløn", hourlyRateSpin);
-        imForm->addRow("Skattefradrag", taxDeductionSpin);
-        imForm->addRow("Manuel trækprocent", taxRateSpin);
-        automaticTaxCheck = new QCheckBox("Estimér skat ud fra min lønhistorik");
-        imForm->addRow(automaticTaxCheck);
-        municipalTaxSpin = new QDoubleSpinBox; municipalTaxSpin->setRange(0,35); municipalTaxSpin->setDecimals(2);municipalTaxSpin->setButtonSymbols(QAbstractSpinBox::NoButtons); municipalTaxSpin->setSuffix(" %"); configureSettingsField(municipalTaxSpin);
-        churchTaxSpin = new QDoubleSpinBox; churchTaxSpin->setRange(0,3); churchTaxSpin->setDecimals(2);churchTaxSpin->setButtonSymbols(QAbstractSpinBox::NoButtons); churchTaxSpin->setSuffix(" %"); configureSettingsField(churchTaxSpin);
-        imForm->addRow("Kommuneskat i estimat", municipalTaxSpin);
-        imForm->addRow("Kirkeskat i estimat", churchTaxSpin);
-        taxEstimateLabel = new QLabel; taxEstimateLabel->setWordWrap(true); imForm->addRow(taxEstimateLabel);
-        connect(automaticTaxCheck, &QCheckBox::toggled, taxRateSpin, &QWidget::setDisabled);
+        auto payrollCard=createCard("Løn & skat");auto* payrollForm=new QFormLayout;configureSettingsForm(payrollForm);
+        auto* payrollHelp=premiumLabel("Indtast timeløn, månedsfradrag og trækprocent fra dit skattekort. Dine indtastninger bruges til visningen efter skat.","muted");payrollHelp->setWordWrap(true);payrollCard.second->addWidget(payrollHelp);payrollCard.second->addSpacing(12);
+        payrollForm->addRow("Timeløn",hourlyRateSpin);payrollForm->addRow("Månedsfradrag",taxDeductionSpin);payrollForm->addRow("Trækprocent",taxRateSpin);payrollCard.second->addLayout(payrollForm);
+        auto* savePayrollBtn=new QPushButton("Gem lønindstillinger");savePayrollBtn->setProperty("primary",true);payrollCard.second->addSpacing(12);payrollCard.second->addWidget(savePayrollBtn,0,Qt::AlignRight);
+        auto* payrollSaved=premiumLabel("","muted");payrollSaved->hide();payrollCard.second->addWidget(payrollSaved);
+        connect(savePayrollBtn,&QPushButton::clicked,this,[this,payrollSaved](){repo.settings.hourlyRate=hourlyRateSpin->value();repo.settings.taxDeduction=taxDeductionSpin->value();repo.settings.taxRatePercent=taxRateSpin->value();repo.saveSettings();refreshDashboard();generateReport();payrollSaved->setText("Dine lønindstillinger er gemt.");payrollSaved->show();});
         imForm->addRow(intramanagerActionRow);
         imForm->addRow("Status", intramanagerStatusLabel);
 
         intramanagerCard.second->addLayout(imForm);
-        intramanagerCard.second->addStretch();
 
-        left->addWidget(intramanagerCard.first);
 
         auto salesRegistrationCard = createCard("Salgsregistrering");
         auto* salesRegForm = new QFormLayout;
@@ -3804,7 +3402,8 @@ private:
         auto* testSalesRegistrationBtn = new QPushButton("Forbind masterark");
         auto* installChromeBtn = new QPushButton("Installer Chrome-udvidelse");
         auto* probeChromeBtn = new QPushButton("Kontrollér Chrome");
-        auto* salesActionRow = createSettingsButtonGrid(QVector<QPushButton*>{saveSalesRegistrationBtn, testSalesRegistrationBtn, installChromeBtn, probeChromeBtn}, 1);
+        auto* salesActionRow = createSettingsButtonGrid(QVector<QPushButton*>{saveSalesRegistrationBtn, testSalesRegistrationBtn, installChromeBtn, probeChromeBtn}, 2);
+        testSalesRegistrationBtn->setProperty("primary",true);saveSalesRegistrationBtn->setProperty("quiet",true);
         connect(installChromeBtn, &QPushButton::clicked, this, [this, installChromeBtn]() {
             installChromeBtn->setEnabled(false);
             auto* installer = new QProcess(this);
@@ -3911,14 +3510,10 @@ private:
         salesRegForm->addRow(salesRegistrationStatusLabel);
 
         salesRegistrationCard.second->addLayout(salesRegForm);
-        salesRegistrationCard.second->addStretch();
-        left->addWidget(salesRegistrationCard.first);
 
-        auto* right = new QVBoxLayout;
-        right->setSpacing(18);
 
         auto sellerCard = createCard("Konto");
-        salespeopleList = new QListWidget;
+        salespeopleList = new QListWidget;salespeopleList->setFixedHeight(64);
 
         auto* sellerNameEdit = new QLineEdit;
         sellerNameEdit->setPlaceholderText("Nyt sælgernavn");
@@ -3949,10 +3544,8 @@ private:
         sellerCard.second->addWidget(addSellerBtn);
         sellerCard.second->addWidget(activateBtn);
         sellerCard.second->addWidget(deleteSellerBtn);
-        sellerCard.second->addWidget(logoutCloudBtn);
-        sellerCard.second->addStretch();
+        logoutCloudBtn->setProperty("destructive",true);sellerCard.second->addWidget(logoutCloudBtn,0,Qt::AlignLeft);
 
-        right->addWidget(sellerCard.first);
 
         auto backupCard = createCard("Backup");
         auto* exportBackupBtn = new QPushButton("Eksportér backup");
@@ -3962,15 +3555,17 @@ private:
 
         backupCard.second->addWidget(exportBackupBtn);
         backupCard.second->addWidget(importBackupBtn);
-        backupCard.second->addStretch();
 
-        right->addWidget(backupCard.first);
-        right->addStretch();
 
-        layout->addLayout(left, 3);
-        layout->addLayout(right, 2);
-        scroll->setWidget(content);
-        outerLayout->addWidget(scroll, 1);
+        auto* categories=new QTabWidget;categories->setObjectName("settingsTabs");
+        const auto addSettingsPage=[categories](const QString& name,const QVector<QFrame*>& cards){
+            auto* scroll=new QScrollArea;scroll->setWidgetResizable(true);scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+            auto* body=new QWidget;auto* row=new QHBoxLayout(body);row->setContentsMargins(0,18,8,8);row->setSpacing(0);
+            auto* column=new QWidget;column->setMaximumWidth(820);auto* stack=new QVBoxLayout(column);stack->setContentsMargins(0,0,0,0);stack->setSpacing(18);
+            for(auto* card:cards){card->setSizePolicy(QSizePolicy::Expanding,QSizePolicy::Maximum);stack->addWidget(card);}stack->addStretch();row->addWidget(column,1);row->addStretch(0);scroll->setWidget(body);categories->addTab(scroll,name);
+        };
+        addSettingsPage("Generelt",{goalCard.first,backupCard.first});addSettingsPage("Løn",{payrollCard.first});
+        addSettingsPage("Intramanager",{intramanagerCard.first});addSettingsPage("Masterark",{salesRegistrationCard.first});addSettingsPage("Konto",{sellerCard.first});outerLayout->addWidget(categories);
 
         connect(saveGoalBtn, &QPushButton::clicked, this, [this]() {
             repo.settings.bonus.monthlyTargetPoints = targetSpin->value();
@@ -3987,12 +3582,6 @@ private:
             repo.settings.intramanagerUsername = username;
             repo.settings.intramanagerViaChrome = intramanagerChromeCheck->isChecked();
             repo.settings.intramanagerBrowserProfile = intramanagerProfileEdit->text().trimmed();
-            repo.settings.hourlyRate = hourlyRateSpin->value();
-            repo.settings.taxDeduction = taxDeductionSpin->value();
-            repo.settings.taxRatePercent = taxRateSpin->value();
-            repo.settings.automaticTaxEstimate = automaticTaxCheck->isChecked();
-            repo.settings.municipalTaxPercent = municipalTaxSpin->value();
-            repo.settings.churchTaxPercent = churchTaxSpin->value();
 
             repo.saveSettings();
 
@@ -4381,32 +3970,11 @@ private:
         return QString("<span style=\"color:%1;font-weight:700;\">%2</span>").arg(color).arg(value);
     }
 
-    QString salaryKpiText(double totalSalary, double baseSalary, double sickPay, double provision, const QDate& payoutMonth, const QString& hourlyForecastText, double cancellations = 0.0, bool cancellationsKnown = true) const {
-        const double taxRate = effectiveTaxRate(repo, repo.settings.activeSalespersonId, QDate::currentDate());
-        const bool taxConfigured = taxRate > 0.0;
-        const double netSalary = estimatedNetSalary(
-            totalSalary,
-            repo.settings.taxDeduction,
-            taxRate
-            );
-        const QString netText = taxConfigured ? money(netSalary) + " kr" : QString("indstil skat");
-
-        return QString(
-            "<span style=\"font-size:28px;font-weight:500;color:#F2F4F7;\">%1 kr</span><br>"
-            "<span style=\"font-size:13px;font-weight:500;color:#65D2A0;\">Efter skat (estimat): %2</span><br>"
-            "<span style=\"font-size:12px;font-weight:500;color:#AAB3C0;\">Udbetales: %3</span><br>"
-            "<span style=\"font-size:12px;font-weight:500;color:#AAB3C0;\">Timer: %4 kr</span><br>"
-            "<span style=\"font-size:12px;font-weight:500;color:#AAB3C0;\">Sygeløn: %5 kr</span><br>"
-            "<span style=\"font-size:12px;font-weight:500;color:#AAB3C0;\">Provision: %6 kr</span><br>"
-            "<span style=\"font-size:12px;font-weight:500;color:#AAB3C0;\">Annulleringer: %8</span><br><span style=\"font-size:12px;color:#AAB3C0;\">Prognose af timeløn: %7</span>"
-            )
-            .arg(money(totalSalary))
-            .arg(netText.toHtmlEscaped())
-            .arg(payoutDateLabel(payoutMonth).toHtmlEscaped())
-            .arg(money(baseSalary))
-            .arg(money(sickPay))
-            .arg(money(provision))
-            .arg(hourlyForecastText.toHtmlEscaped()).arg(cancellationsKnown ? money(cancellations) + " kr" : QString("Afventer Intramanager"));
+    void updateSalaryCard(PremiumSalaryCard* card,double totalSalary,double baseSalary,double sickPay,double provision,const QDate& payoutMonth,const QString& hourlyForecastText,double cancellations=0.0,bool cancellationsKnown=true) const {
+        if(!card)return;
+        const QString takeHome=repo.settings.taxRatePercent>0?"Efter skat · "+money(estimatedNetSalary(totalSalary,repo.settings.taxDeduction,repo.settings.taxRatePercent))+" kr (estimat)":"Angiv fradrag og trækprocent i Indstillinger";
+        card->present(money(totalSalary)+" kr",takeHome,"Udbetales "+payoutDateLabel(payoutMonth),
+            {money(baseSalary)+" kr",money(sickPay)+" kr",money(provision)+" kr",cancellationsKnown?money(cancellations)+" kr":QString("Afventer Intramanager")},"Prognose af timeløn · "+hourlyForecastText);
     }
 
     QString plainBadgeText(const QString& label, const QString& value) const {
@@ -4415,7 +3983,7 @@ private:
 
     void refreshAll() {
         const auto* s = activeSalesperson();
-        activeSalespersonLabel->setText(s ? QString("Du arbejder som <b>%1</b>").arg(s->name) : "Ingen aktiv sælger");
+        activeSalespersonLabel->setText(s ? s->name.toHtmlEscaped() : "Ingen aktiv sælger");
         refreshDashboard();
         refreshOrdersTable();
         refreshSalespeopleUi();
@@ -4455,10 +4023,7 @@ private:
         ) {
         requestDashboardHoursIfNeeded(currentPayPeriod);
         requestDashboardHoursIfNeeded(nextPayPeriod);
-        if (repo.settings.automaticTaxEstimate) {
-            for (int offset = 1; offset <= 3; ++offset)
-                requestDashboardHoursIfNeeded(payrollRangeEndingInMonth(QDate::currentDate().addMonths(-offset)));
-        }
+
     }
 
     void refreshDashboard() {
@@ -4561,22 +4126,22 @@ private:
             nextPayPeriodBaseSalary + nextPayPeriodSickPay + nextPayPeriodBonus + backpaidBonusNextMonth + nextCancellations;
 
         if (kpiMonthCommissionLabel) {
-            kpiMonthCommissionLabel->setText(salaryKpiText(
+            updateSalaryCard(kpiMonthCommissionLabel,
                 actualSalaryThisMonth,
                 currentPayPeriodBaseSalary,
                 currentPayPeriodSickPay,
                 currentPayPeriodBonus + backpaidBonusThisMonth,
                 now, hourlyForecastForRange(currentPayPeriod), currentCancellations, currentCached && currentCached->payrollSchema >= 2
-                ));
+                );
         }
         if (kpiNextMonthPayLabel) {
-            kpiNextMonthPayLabel->setText(salaryKpiText(
+            updateSalaryCard(kpiNextMonthPayLabel,
                 salaryEarnedForNextMonth,
                 nextPayPeriodBaseSalary,
                 nextPayPeriodSickPay,
                 nextPayPeriodBonus + backpaidBonusNextMonth,
                 now.addMonths(1), hourlyForecastForRange(nextPayPeriod), nextCancellations, nextCached && nextCached->payrollSchema >= 2
-                ));
+                );
         }
 
         if (kpiMonthSalesLabel) kpiMonthSalesLabel->setText(QString::number(mMonth.salesCount));
@@ -4619,16 +4184,16 @@ private:
         }
         if (targetProgressHintLabel) {
             if (pointsToTarget > 0.0) {
-                targetProgressHintLabel->setText(QString("Du mangler <b>%1 point</b>. Det svarer til cirka <b>%2 point</b> pr. resterende arbejdsdag.").arg(money(pointsToTarget)).arg(money(requiredPointsPerRemainingDay)));
+                targetProgressHintLabel->setText(QString("<b>%1 point</b> til målet · ca. %2 point pr. arbejdsdag").arg(money(pointsToTarget)).arg(money(requiredPointsPerRemainingDay)));
             } else {
-                targetProgressHintLabel->setText(QString("Pointmålet er hjemme. Du ligger <b>%1 point</b> over målet.").arg(money(mMonth.totalPoints - repo.settings.bonus.monthlyTargetPoints)));
+                targetProgressHintLabel->setText(QString("Mål nået · %1 point over målet").arg(money(mMonth.totalPoints - repo.settings.bonus.monthlyTargetPoints)));
             }
         }
 
         if (salesTargetProgressBar) {
             const int salesMax = qMax(1, repo.settings.monthlySalesTarget > 0 ? repo.settings.monthlySalesTarget : qMax(1, mMonth.salesCount));
             salesTargetProgressBar->setRange(0, salesMax);
-            const int salesValue = qMin(mMonth.salesCount, salesMax);
+            const int salesValue = repo.settings.monthlySalesTarget>0?qMin(mMonth.salesCount,salesMax):0;
             animateProgressBar(salesTargetProgressBar, salesValue);
             salesTargetProgressBar->setFormat(repo.settings.monthlySalesTarget > 0
                 ? QString("%1 / %2 salg").arg(mMonth.salesCount).arg(repo.settings.monthlySalesTarget)
@@ -4637,11 +4202,11 @@ private:
         }
         if (salesTargetProgressHintLabel) {
             if (repo.settings.monthlySalesTarget <= 0) {
-                salesTargetProgressHintLabel->setText("Sæt et salgsmål i Indstillinger for at få live fremdrift på måneden.");
+                salesTargetProgressHintLabel->setText("Angiv et salgsmål under Indstillinger → Generelt.");
             } else if (missingSalesToTarget > 0) {
-                salesTargetProgressHintLabel->setText(QString("Du mangler <b>%1 salg</b> for at ramme målet denne måned.").arg(missingSalesToTarget));
+                salesTargetProgressHintLabel->setText(QString("<b>%1 salg</b> til månedens mål").arg(missingSalesToTarget));
             } else {
-                salesTargetProgressHintLabel->setText(QString("Salgsmålet er ramt. Du ligger <b>%1 salg</b> over målet.").arg(mMonth.salesCount - repo.settings.monthlySalesTarget));
+                salesTargetProgressHintLabel->setText(QString("Mål nået · %1 salg over målet").arg(mMonth.salesCount - repo.settings.monthlySalesTarget));
             }
         }
 
@@ -4660,9 +4225,9 @@ private:
         }
         if (simoProgressHintLabel) {
             if (mMonth.simoCount < repo.settings.bonus.simoMinEligible) {
-                simoProgressHintLabel->setText(QString("SIMO åbner ved <b>%1</b>. Du mangler <b>%2</b> for at tænde pengesporet.").arg(repo.settings.bonus.simoMinEligible).arg(qMax(0, repo.settings.bonus.simoMinEligible - mMonth.simoCount)));
+                simoProgressHintLabel->setText(QString("Bonus fra %1 SIMO · %2 tilbage").arg(repo.settings.bonus.simoMinEligible).arg(qMax(0, repo.settings.bonus.simoMinEligible - mMonth.simoCount)));
             } else {
-                simoProgressHintLabel->setText(QString("Næste SIMO-hop ligger ved <b>%1</b>. Du mangler <b>%2</b>, og så står provisionen på %3.").arg(nextSimoStep).arg(missingToNextSimo).arg(moneySpan(nextSimoBonus, missingToNextSimo <= 1 ? "#65D2A0" : "#65D2A0")));
+                simoProgressHintLabel->setText(QString("Næste niveau: %1 SIMO · %2 tilbage · %3").arg(nextSimoStep).arg(missingToNextSimo).arg(moneySpan(nextSimoBonus, missingToNextSimo <= 1 ? "#65D2A0" : "#65D2A0")));
             }
         }
 
@@ -4681,9 +4246,9 @@ private:
         }
         if (voiceProgressHintLabel) {
             if (mMonth.voiceCount < repo.settings.bonus.voiceMinEligible) {
-                voiceProgressHintLabel->setText(QString("VOICE åbner ved <b>%1</b>. Du mangler <b>%2</b>, og derefter hopper den for hver <b>10</b>.").arg(repo.settings.bonus.voiceMinEligible).arg(qMax(0, repo.settings.bonus.voiceMinEligible - mMonth.voiceCount)));
+                voiceProgressHintLabel->setText(QString("Bonus fra %1 VOICE · %2 tilbage").arg(repo.settings.bonus.voiceMinEligible).arg(qMax(0, repo.settings.bonus.voiceMinEligible - mMonth.voiceCount)));
             } else {
-                voiceProgressHintLabel->setText(QString("Næste VOICE-hop ligger ved <b>%1</b>. Du mangler <b>%2</b>, og så står provisionen på %3.").arg(nextVoiceStep).arg(missingToNextVoice).arg(moneySpan(nextVoiceBonus, missingToNextVoice <= 2 ? "#65D2A0" : "#65D2A0")));
+                voiceProgressHintLabel->setText(QString("Næste niveau: %1 VOICE · %2 tilbage · %3").arg(nextVoiceStep).arg(missingToNextVoice).arg(moneySpan(nextVoiceBonus, missingToNextVoice <= 2 ? "#65D2A0" : "#65D2A0")));
             }
         }
 
@@ -4777,17 +4342,20 @@ private:
             ordersTable->setItem(row, 1, makeOrderItem(order.id));
             ordersTable->setItem(row, 2, makeOrderItem(products));
             ordersTable->setItem(row, 3, makeOrderItem(money(pts)));
-            ordersTable->setItem(row, 4, makeOrderItem(order.note));
+            ordersTable->setItem(row, 4, makeOrderItem(order.companyName+(order.note.isEmpty()?QString():"\n"+order.note)));
             ordersTable->setItem(row, 5, makeOrderItem(salesRegistrationStateText(order)));
-            ordersTable->item(row, 5)->setToolTip(order.masterRegistrationError);
+            ordersTable->item(row,5)->setToolTip(order.masterRegistrationError);
+            ordersTable->item(row,5)->setForeground(QColor(order.masterRegistrationState=="registered"?"#7ACBA9":order.masterRegistrationState=="error"?"#E9B67C":"#A5B9E1"));
+            ordersTable->item(row,3)->setTextAlignment(Qt::AlignRight|Qt::AlignVCenter);
             ordersTable->item(row, 1)->setToolTip(order.id);
             ordersTable->item(row, 2)->setToolTip(products);
             ordersTable->item(row, 4)->setToolTip(order.note);
         }
-        ordersTable->resizeRowsToContents();
+        resizeOrderRows();
         ordersTable->resizeColumnToContents(0);
         ordersTable->resizeColumnToContents(1);
-        ordersTable->horizontalHeader()->setMinimumSectionSize(80);
+        ordersTable->horizontalHeader()->setMinimumSectionSize(55);
+        applyOrderFilter();
     }
 
     void refreshSalespeopleUi() {
@@ -4831,14 +4399,6 @@ private:
         if (taxRateSpin) {
             taxRateSpin->setValue(repo.settings.taxRatePercent);
         }
-        if (automaticTaxCheck) automaticTaxCheck->setChecked(repo.settings.automaticTaxEstimate);
-        if (municipalTaxSpin) municipalTaxSpin->setValue(repo.settings.municipalTaxPercent);
-        if (churchTaxSpin) churchTaxSpin->setValue(repo.settings.churchTaxPercent);
-        if (taxEstimateLabel) {
-            const auto estimate = historyTaxEstimate(repo, repo.settings.activeSalespersonId, QDate::currentDate());
-            taxEstimateLabel->setText(estimate ? QString("Skønnet trækprocent: %1 %. Årsindkomst: %2 kr. Grundlag: %3 afsluttede lønperioder. 2026-regler; AM-bidrag beregnes separat. Fradrag er det indtastede månedsfradrag. Pension og anden indkomst er ikke medregnet. Dette er et planlægningsestimat, ikke dit skattekort.").arg(money(estimate->ratePercent),money(estimate->annualGross)).arg(estimate->months) : "Skatteestimat afventer afsluttede lønperioder med timedata. Den manuelle procent bruges indtil da. Modellen understøtter 2026.");
-        }
-
         if (intramanagerUsernameEdit) {
             intramanagerUsernameEdit->setText(repo.settings.intramanagerUsername);
         }
@@ -5257,10 +4817,9 @@ private:
             previousMonthMetrics.monthlyBonus + previousMonthMetrics.simoBonus + previousMonthMetrics.voiceBonus;
         salary.totalProvision = salary.periodProvision + salary.delayedProvision;
         salary.totalSalary = salary.baseSalary + salary.sickPay + salary.totalProvision + salary.cancellations;
-        salary.taxConfigured = effectiveTaxRate(repo, salesperson.id, QDate::currentDate()) > 0.0;
+        salary.taxConfigured = repo.settings.taxRatePercent > 0.0;
         salary.taxDeduction = repo.settings.taxDeduction;
-        salary.taxRatePercent = effectiveTaxRate(repo, salesperson.id, QDate::currentDate());
-        salary.automaticTaxEstimate = repo.settings.automaticTaxEstimate;
+        salary.taxRatePercent = repo.settings.taxRatePercent;
         const SalaryTaxEstimate taxEstimate = estimateSalaryTax(
             salary.totalSalary,
             salary.taxDeduction,
@@ -5523,6 +5082,7 @@ int main(int argc, char *argv[]) {
     }
 
     applyMidnightPalette(app);
+    app.setStyleSheet(premiumStyle());
     MainWindow w;
     if (w.startupWasAborted()) {
         return 0;
