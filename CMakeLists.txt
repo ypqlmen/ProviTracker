@@ -7,7 +7,7 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
 
-find_package(Qt6 REQUIRED COMPONENTS Widgets Core PrintSupport Network Svg)
+find_package(Qt6 REQUIRED COMPONENTS Widgets Core Network Svg)
 
 add_executable(ProvisionTrackerV2 WIN32
     main_v32.cpp
@@ -17,13 +17,13 @@ add_executable(ProvisionTrackerV2 WIN32
     credentials.h
     repository.h
     commission.h
+    report_view.h
     report_service.h
 )
 
 target_link_libraries(ProvisionTrackerV2 PRIVATE
     Qt6::Widgets
     Qt6::Core
-    Qt6::PrintSupport
     Qt6::Network
     Qt6::Svg
 )

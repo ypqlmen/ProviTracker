@@ -1,7 +1,6 @@
 #include <QClipboard>
 #include <QtWidgets>
 #include <QtCore>
-#include <QtPrintSupport>
 #include <QtNetwork>
 #include <QTcpServer>
 #include <QTcpSocket>
@@ -24,6 +23,7 @@
 #include "payroll_forecast.h"
 
 #include "premium_ui.h"
+#include "report_view.h"
 #include "feature_access.h"
 #include "updater_script.h"
 #include "sales_registration.h"
@@ -1488,6 +1488,11 @@ public:
                 if(tabs->tabText(i)=="Rapporter" && reportPresetCombo)reportPresetCombo->setCurrentIndex(3);
                 qApp->processEvents();
                 saveWidget(this, QDir(outputDir).filePath(tabNames.value(tabs->tabText(i))));
+                if(tabs->tabText(i)=="Rapporter"){
+                    if(auto* scroll=findChild<QScrollArea*>("reportScroll")){scroll->verticalScrollBar()->setValue(scroll->verticalScrollBar()->maximum());qApp->processEvents();saveWidget(this,QDir(outputDir).filePath("18-report-details.png"));scroll->verticalScrollBar()->setValue(0);}
+                    resize(1000,640);qApp->processEvents();saveWidget(this,QDir(outputDir).filePath("19-report-compact.png"));resize(1280,900);
+                    reportPresetCombo->setCurrentIndex(4);reportMonthEdit->setDate(QDate(2020,1,1));qApp->processEvents();saveWidget(this,QDir(outputDir).filePath("20-report-empty.png"));reportPresetCombo->setCurrentIndex(3);qApp->processEvents();
+                }
                 if (tabs->tabText(i) == "Indstillinger") {
                     if (salesRegistrationEnabledCheck) {
                         const QSignalBlocker blocker(salesRegistrationEnabledCheck);
@@ -1580,7 +1585,7 @@ private:
     QTableWidget* ordersTable = nullptr;
     QLineEdit* orderSearchEdit = nullptr;
     QLabel* ordersCountLabel = nullptr;
-    QTextEdit* reportText = nullptr;
+    PremiumReportView* reportView = nullptr;
     QComboBox* reportPresetCombo = nullptr;
     QDateEdit* reportMonthEdit = nullptr;
 
@@ -3075,7 +3080,7 @@ private:
         connect(navigation,&QListWidget::currentRowChanged,tabs,&QTabWidget::setCurrentIndex);
         connect(tabs,&QTabWidget::currentChanged,navigation,[navigation](int row){navigation->setCurrentRow(row);});
         connect(navigation,&QListWidget::currentRowChanged,this,[title,subtitle,navigation](int row){if(row<0)return;const auto text=navigation->item(row)->text();title->setText(text);
-            const QMap<QString,QString> descriptions={{"Overblik","Løn, salg og næste milepæl."},{"Ordrer","Dine salg. Samlet ét sted."},{"Rapporter","Et klart overblik, klar til at dele."},{"Kontakter","Find offentlige erhvervskontakter med kilde."},{"Indstillinger","Dit arbejdsrum. Dine indstillinger."}};subtitle->setText(descriptions.value(text));});navigation->setCurrentRow(0);
+            const QMap<QString,QString> descriptions={{"Overblik","Løn, salg og næste milepæl."},{"Ordrer","Dine salg. Samlet ét sted."},{"Rapporter","Din løn og dine salg, periode for periode."},{"Kontakter","Find offentlige erhvervskontakter med kilde."},{"Indstillinger","Dit arbejdsrum. Dine indstillinger."}};subtitle->setText(descriptions.value(text));});navigation->setCurrentRow(0);
         connect(newOrderBtn,&QPushButton::clicked,this,[this](){createOrder();});connect(switchBtn,&QPushButton::clicked,this,[this](){chooseSalesperson();});qApp->installEventFilter(this);
     }
 
@@ -3179,59 +3184,15 @@ private:
     }
 
     QWidget* buildReportsTab() {
-        auto* w = new QWidget;
-        auto* layout = new QVBoxLayout(w);
-        layout->setSpacing(18);layout->setContentsMargins(0,0,0,0);
-
-        auto* controls=new QWidget;
-        auto* top = new QHBoxLayout(controls);
-        top->setContentsMargins(0, 0, 0, 0);
-
-        reportPresetCombo = new QComboBox;
-        reportPresetCombo->addItems({"I dag", "Denne arbejdsuge", "Seneste 2 arbejdsuger", "Denne lønmåned", "Vælg måned"});
-
-        reportMonthEdit = new QDateEdit(QDate::currentDate());
-        reportMonthEdit->setDisplayFormat("MMMM yyyy");
-        reportMonthEdit->setDate(QDate::currentDate());
-        reportMonthEdit->setCalendarPopup(true);
-        reportMonthEdit->setLocale(QLocale(QLocale::Danish, QLocale::Denmark));
-
-        auto* exportBtn = new QPushButton("Eksporter PDF");
-
-        top->addWidget(new QLabel("Visning:"));
-        top->addWidget(reportPresetCombo);
-        top->addWidget(new QLabel("Måned:"));
-        top->addWidget(reportMonthEdit);
-        top->addStretch();exportBtn->setProperty("primary",true);top->addWidget(exportBtn);
-
-        layout->addWidget(controls);
-
-        auto reportCard = createCard("Rapport");
-        reportText = new QTextEdit;
-        reportText->setReadOnly(true);
-        reportText->setTextInteractionFlags(Qt::NoTextInteraction);
-        reportText->setFocusPolicy(Qt::NoFocus);
-        reportText->setFrameShape(QFrame::NoFrame);
-        reportText->document()->setDocumentMargin(18);
-        reportText->setStyleSheet(R"(
-        QTextEdit {
-            background: #F5F6FA;
-            color: #202837;
-            border: none;
-            border-radius: 18px;
-            padding: 24px;
-            font-size: 14px;
-        }
-    )");
-
-        reportCard.second->addWidget(reportText);
-        layout->addWidget(reportCard.first, 1);
-
-        connect(reportPresetCombo, &QComboBox::currentIndexChanged, this, [this](int) { generateReport(); });
-        connect(reportMonthEdit, &QDateEdit::dateChanged, this, [this](const QDate&) { generateReport(); });
-        connect(exportBtn, &QPushButton::clicked, this, [this]() { exportCurrentReport(); });
-
-        return w;
+        auto* page=new QWidget;auto* layout=new QVBoxLayout(page);layout->setSpacing(18);layout->setContentsMargins(0,0,0,0);
+        auto* controls=new QHBoxLayout;controls->setSpacing(12);controls->addWidget(premiumLabel("Periode","caption"));
+        reportPresetCombo=new QComboBox;reportPresetCombo->addItems({"I dag","Denne arbejdsuge","Seneste 2 arbejdsuger","Denne lønmåned","Vælg måned"});reportPresetCombo->setCurrentIndex(3);controls->addWidget(reportPresetCombo);
+        reportMonthEdit=new QDateEdit(QDate::currentDate());reportMonthEdit->setDisplayFormat("MMMM yyyy");reportMonthEdit->setCalendarPopup(true);reportMonthEdit->setLocale(QLocale(QLocale::Danish,QLocale::Denmark));reportMonthEdit->hide();controls->addWidget(reportMonthEdit);controls->addStretch();layout->addLayout(controls);
+        auto* scroll=new QScrollArea;scroll->setObjectName("reportScroll");scroll->setWidgetResizable(true);scroll->setFrameShape(QFrame::NoFrame);scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+        reportView=new PremiumReportView;scroll->setWidget(reportView);layout->addWidget(scroll,1);
+        connect(reportPresetCombo,&QComboBox::currentIndexChanged,this,[this,scroll](int index){reportMonthEdit->setVisible(index==4);scroll->verticalScrollBar()->setValue(0);generateReport();});
+        connect(reportMonthEdit,&QDateEdit::dateChanged,this,[this,scroll](const QDate&){scroll->verticalScrollBar()->setValue(0);generateReport();});
+        return page;
     }
 
     bool contactSearchAllowed() const {
@@ -4761,7 +4722,7 @@ private:
                 const QDate paymentMonth = reportMonthEdit->date();
                 const auto r = monthRange(paymentMonth);
                 const auto salaryRange = payrollRangeEndingInMonth(paymentMonth);
-                return makeReportRange(monthKey(paymentMonth), r, salaryRange, paymentMonth);
+                return makeReportRange(QLocale(QLocale::Danish,QLocale::Denmark).toString(paymentMonth,"MMMM yyyy"), r, salaryRange, paymentMonth);
             }
         }
     }
@@ -4842,20 +4803,6 @@ private:
         return intramanagerPeriodKey(dates.first, dates.second);
     }
 
-    QString reportStatusHtml(const QString& title, const QString& message, const QString& detail = QString()) const {
-        QString html;
-        QTextStream ts(&html);
-        ts << "<div style=\"font-family:Segoe UI,Arial,sans-serif;background:#181B20;color:#D8DEE8;padding:24px;\">";
-        ts << "<h1 style=\"margin:0 0 12px;color:#F2F4F7;\">" << title.toHtmlEscaped() << "</h1>";
-        ts << "<div style=\"border:1px solid #373E49;background:#24282F;border-radius:18px;padding:16px;color:#AAB3C0;\">";
-        ts << message.toHtmlEscaped();
-        if (!detail.isEmpty()) {
-            ts << "<br><span style=\"color:#AAB3C0;\">" << detail.toHtmlEscaped() << "</span>";
-        }
-        ts << "</div></div>";
-        return html;
-    }
-
     std::optional<IntramanagerHoursEntry> reportHoursForRange(const ReportRange& range) const {
         const auto dates = reportHoursDates(range);
         if (auto cached = cachedIntramanagerHours(dates.first, dates.second)) {
@@ -4927,136 +4874,20 @@ private:
     }
 
     void generateReport() {
-        const auto* s = activeSalesperson();
-        if (!s) return;
-
-        const auto range = currentReportRange();
-        const auto dates = reportHoursDates(range);
-        const QString requestedKey = reportHoursKey(range);
-        const auto hoursEntry = reportHoursForRange(range);
-
-        if (!hoursEntry.has_value()) {
-            reportText->setHtml(
-                reportStatusHtml(
-                    "timer hentes...",
-                    "Intramanager henter timer for " + intramanagerPeriodLabel(dates.first, dates.second) + ".",
-                    "Rapporten opdateres automatisk bagefter."
-                    )
-                );
-
-            requestReportHours(range, [this, requestedKey](bool ok) {
-                if (reportHoursKey(currentReportRange()) != requestedKey) return;
-
-                if (ok) {
-                    generateReport();
-                } else {
-                    reportText->setHtml(
-                        reportStatusHtml(
-                            "timer kunne ikke hentes",
-                            "Rapporten kunne ikke hente Intramanager-timer for den valgte periode.",
-                            "Kontroller Intramanager-login og worker-filen i indstillinger."
-                            )
-                        );
-                }
-            });
-            return;
+        if(!reportView)return;
+        const auto* salesperson=activeSalesperson();
+        if(!salesperson){reportView->showStatus("Vælg en sælger","Vælg en sælger for at se løn og salg i perioden.");return;}
+        const auto range=currentReportRange();const auto dates=reportHoursDates(range);const QString requestedKey=reportHoursKey(range);const auto hoursEntry=reportHoursForRange(range);
+        if(!hoursEntry.has_value()){
+            reportView->showStatus("Henter timer","Intramanager henter timer for "+intramanagerPeriodLabel(dates.first,dates.second)+".","Rapporten opdateres automatisk, når timerne er klar.");
+            requestReportHours(range,[this,requestedKey](bool ok){
+                if(reportHoursKey(currentReportRange())!=requestedKey)return;
+                if(ok)generateReport();else reportView->showStatus("Timerne kunne ikke hentes","Kontrollér din Intramanager-forbindelse under Indstillinger → Intramanager.","Vælg perioden igen for at prøve på ny.");
+            });return;
         }
-
-        refreshCachedReportHoursIfNeeded(range, requestedKey);
-
-        const auto dayBonusPeriod = reportDayBonusPeriod(range);
-
-        const auto m = CommissionEngine::calculate(
-            repo,
-            s->id,
-            range.from,
-            range.to,
-            dayBonusPeriod
-            );
-
-        const QString hoursPeriod = intramanagerPeriodLabel(hoursEntry->fromDate, hoursEntry->toDate);
-        const auto salary = reportSalaryBreakdown(range, *s, *hoursEntry);
-
-        reportText->setHtml(
-            ReportService::buildHtmlReport(
-                repo,
-                *s,
-                range.label,
-                m,
-                hoursEntry->hours,
-                repo.settings.hourlyRate,
-                hoursPeriod,
-                salary
-                )
-            );
-    }
-
-    void exportCurrentReport() {
-        const auto* s = activeSalesperson();
-        if (!s) return;
-
-        const auto range = currentReportRange();
-        const auto dates = reportHoursDates(range);
-        const auto hoursEntry = reportHoursForRange(range);
-
-        if (!hoursEntry.has_value()) {
-            reportText->setHtml(
-                reportStatusHtml(
-                    "timer hentes...",
-                    "Intramanager henter timer for " + intramanagerPeriodLabel(dates.first, dates.second) + ".",
-                    "Eksporten fortsætter, når timerne er klar."
-                    )
-                );
-
-            requestReportHours(range, [this](bool ok) {
-                if (ok) {
-                    exportCurrentReport();
-                } else {
-                    reportText->setHtml(
-                        reportStatusHtml(
-                            "timer kunne ikke hentes",
-                            "PDF-eksporten blev stoppet, fordi timerne ikke kunne hentes.",
-                            "Kontroller Intramanager-login og worker-filen i indstillinger."
-                            )
-                        );
-                }
-            });
-            return;
-        }
-
-        const auto dayBonusPeriod = reportDayBonusPeriod(range);
-
-        const auto m = CommissionEngine::calculate(
-            repo,
-            s->id,
-            range.from,
-            range.to,
-            dayBonusPeriod
-            );
-
-        QString safeLabel = range.label;
-        safeLabel.replace(' ', '_');
-        const QString defaultPath = repo.reportDir() + "/" + s->id + "_" + safeLabel + ".pdf";
-        const QString path = QFileDialog::getSaveFileName(this, "Gem rapport", defaultPath, "PDF-filer (*.pdf)");
-        if (path.isEmpty()) return;
-        const QString hoursPeriod = intramanagerPeriodLabel(hoursEntry->fromDate, hoursEntry->toDate);
-        const auto salary = reportSalaryBreakdown(range, *s, *hoursEntry);
-
-        if (ReportService::exportPdf(
-                path,
-                repo,
-                *s,
-                range.label,
-                m,
-                hoursEntry->hours,
-                repo.settings.hourlyRate,
-                hoursPeriod,
-                salary
-                )) {
-            QMessageBox::information(this, "Eksporteret", "Rapport gemt.");
-        } else {
-            QMessageBox::warning(this, "Fejl", "Kunne ikke gemme rapporten.");
-        }
+        refreshCachedReportHoursIfNeeded(range,requestedKey);
+        const auto metrics=CommissionEngine::calculate(repo,salesperson->id,range.from,range.to,reportDayBonusPeriod(range));
+        reportView->present(repo,*salesperson,range.label,metrics,hoursEntry->hours,intramanagerPeriodLabel(dates.first,dates.second),reportSalaryBreakdown(range,*salesperson,*hoursEntry),range.paymentMonth.isValid()?"Udbetales "+payoutDateLabel(range.paymentMonth):QString("Løn for den valgte periode"));
     }
 
 protected:

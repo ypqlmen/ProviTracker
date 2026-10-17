@@ -28,14 +28,9 @@ public:
     QString snapshotDir() const {
         return baseDir() + "/snapshots";
     }
-    QString reportDir() const {
-        return baseDir() + "/reports";
-    }
-
     void ensureDirs() const {
         QDir().mkpath(baseDir());
         QDir().mkpath(snapshotDir());
-        QDir().mkpath(reportDir());
     }
 
     void load() {

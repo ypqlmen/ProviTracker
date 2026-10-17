@@ -27,14 +27,14 @@ def capture(app, output):
         subprocess.run([str(app.resolve())],env=env,check=True,timeout=30)
         images=list(output.glob('*.png'))
         expected={'01-dashboard.png','02-orders.png','03-reports.png','04-contacts-preview.png','05-settings.png',
-            '06-new-order-dialog.png','07-seller-dialog.png','08-settings-payroll.png','09-settings-intramanager.png','10-settings-masterark.png','11-settings-account.png','12-dashboard-compact.png','13-orders-empty.png','14-dashboard-small.png','15-new-order-compact.png','16-orders-filtered.png','17-login.png'}
+            '06-new-order-dialog.png','07-seller-dialog.png','08-settings-payroll.png','09-settings-intramanager.png','10-settings-masterark.png','11-settings-account.png','12-dashboard-compact.png','13-orders-empty.png','14-dashboard-small.png','15-new-order-compact.png','16-orders-filtered.png','17-login.png','18-report-details.png','19-report-compact.png','20-report-empty.png'}
         assert {p.name for p in images}==expected,[p.name for p in images]
         for image in images:
             data=image.read_bytes()
             assert len(data)>512 and data[:8]==b'\x89PNG\r\n\x1a\n',image.name
             width,height=struct.unpack('>II',data[16:24])
             assert width>=160 and height>=120,(image.name,width,height)
-        print('Seventeen premium interface views captured, including all settings pages, compact dashboard and empty orders. Contact preview cannot search.')
+        print('Twenty premium interface views captured, including all settings pages, compact dashboard and empty orders. Contact preview cannot search.')
 
 if __name__=='__main__':
     parser=argparse.ArgumentParser();parser.add_argument('--app',type=Path,required=True);parser.add_argument('--output',type=Path,required=True)
