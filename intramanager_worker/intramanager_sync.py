@@ -13,7 +13,7 @@ HISTORY_URL = BASE_URL + "reports/history/"
 PUNCH_URL = BASE_URL + "reports/punch-in/"
 DEBUG_ENABLED = False
 OFFICE_ONLY_MESSAGE = "Man kan kun stemple ind eller ud på kontorets internet."
-INTRAMANAGER_SICK_PAY_FACTOR = 0.5
+INTRAMANAGER_SICK_PAY_FACTOR = 1.0
 
 
 def configure_playwright_browser_path():
@@ -69,6 +69,13 @@ def output(obj):
     data = json.dumps(obj, ensure_ascii=False) + "\n"
     sys.stdout.buffer.write(data.encode("utf-8", errors="replace"))
     sys.stdout.flush()
+
+
+def read_stdin_json():
+    # Qt sends UTF-8 bytes. Windows pipe text encoding otherwise depends on locale.
+    stream = getattr(sys.stdin, "buffer", None)
+    raw = stream.read().decode("utf-8") if stream is not None else sys.stdin.read()
+    return json.loads(raw)
 
 
 def parse_hours(text):
@@ -491,6 +498,7 @@ def payroll_summary_from_result_rows(page):
     phone_hours = 0.0
     absence_hours = 0.0
     absence_pay = 0.0
+    cancellations = 0.0
     found_any = False
 
     try:
@@ -498,19 +506,27 @@ def payroll_summary_from_result_rows(page):
 
         for i in range(rows.count()):
             cells = rows.nth(i).locator("td").all_inner_texts()
-            if len(cells) < 3:
+            if not cells:
                 continue
+            if len(cells) < 8:
+                return None
+            if any(clean_text(cells[index]) not in ('', '-') and parse_money(cells[index]) is None for index in (5,6,7)):
+                return None
 
             project = clean_text(cells[0])
             hour_lines = text_lines(cells[2])
             if not hour_lines:
-                continue
+                return None
 
             paid = parse_hours(hour_lines[0])
             if paid is None:
-                continue
+                return None
 
             phone = parse_hours(hour_lines[1]) if len(hour_lines) >= 2 else 0.0
+            if any(term in fold_danish_letters(project).lower() for term in ("annullering", "cancellation")):
+                cancellations += payroll_money_from_cells(cells)
+                found_any = True
+                continue
             if is_absence_pay_project(project):
                 absence_hours += paid
                 absence_pay += payroll_money_from_cells(cells)
@@ -530,6 +546,8 @@ def payroll_summary_from_result_rows(page):
         "phoneHours": round(phone_hours, 2),
         "sickHours": round(absence_hours, 2),
         "sickPay": round(absence_pay, 2),
+        "cancellations": round(cancellations, 2),
+        "payrollSchema": 2,
     }
 
 
@@ -540,6 +558,7 @@ def fetch_hours(page, args, debug_dir):
     phone_hours = None
     sick_hours = 0.0
     sick_pay = 0.0
+    cancellations = 0.0
     row_summary = payroll_summary_from_result_rows(page)
 
     if row_summary is not None:
@@ -547,35 +566,14 @@ def fetch_hours(page, args, debug_dir):
         phone_hours = row_summary.get("phoneHours", 0.0)
         sick_hours = row_summary.get("sickHours", 0.0)
         sick_pay = row_summary.get("sickPay", 0.0)
-
-    if row_summary is None:
-        try:
-            footer_cells = (
-                page
-                .locator("tfoot tr")
-                .first
-                .locator("td")
-                .all_inner_texts()
-            )
-
-            if len(footer_cells) >= 3:
-
-                hour_lines = footer_cells[2].splitlines()
-
-                if len(hour_lines) >= 1:
-                    paid_hours = parse_hours(hour_lines[0])
-
-                if len(hour_lines) >= 2:
-                    phone_hours = parse_hours(hour_lines[1])
-
-        except Exception:
-            paid_hours = None
-            phone_hours = None
+        cancellations = row_summary.get("cancellations", 0.0)
 
     if paid_hours is None and result_says_no_rows(page):
         return {
             "success": True,
             "stage": "no_results",
+            "cancellations": 0.0,
+            "payrollSchema": 2,
             "message": "Ingen timer fundet for perioden.",
             "periodFrom": args.from_date,
             "periodTo": args.to_date,
@@ -606,6 +604,8 @@ def fetch_hours(page, args, debug_dir):
         "phoneHours": phone_hours,
         "sickHours": sick_hours,
         "sickPay": sick_pay,
+        "cancellations": cancellations,
+        "payrollSchema": 2,
         "debugDir": str(debug_dir)
     }
 
@@ -868,6 +868,8 @@ def fetch_overview(page, args, debug_dir):
         "phoneHours": hours.get("phoneHours", 0.0),
         "sickHours": hours.get("sickHours", 0.0),
         "sickPay": hours.get("sickPay", 0.0),
+        "cancellations": hours.get("cancellations", 0.0),
+        "payrollSchema": 2,
         "statusKnown": punch.get("statusKnown", False),
         "clockedIn": punch.get("clockedIn", False),
         "statusText": punch.get("statusText", ""),
@@ -1620,9 +1622,60 @@ def main():
     args = parser.parse_args()
 
     if args.stdin_json:
-        payload = json.loads(sys.stdin.read())
+        payload = read_stdin_json()
 
         args.action = payload.get("action", args.action)
+        if args.action == "chrome-intramanager":
+            from chrome_bridge import request_intramanager
+            try:
+                output(request_intramanager(payload))
+            except Exception as exc:
+                output({"success":False,"error":str(exc)[:500]})
+            return
+        if args.action == "contacts-search":
+            from contact_search import search
+            try:
+                output(search(payload))
+            except Exception as exc:
+                output({"success":False,"error":str(exc)[:500]})
+            return
+        if args.action == "chrome-update":
+            from chrome_bridge import sync_installed_extension
+            try:
+                output(sync_installed_extension())
+            except Exception as exc:
+                output({"success": False, "error": str(exc)[:700]})
+            return
+        if args.action == "chrome-install":
+            from chrome_bridge import install_extension
+            try:
+                output(install_extension())
+            except Exception as exc:
+                output({"success": False, "error": str(exc)[:700]})
+            return
+        if args.action in {"chrome-setup", "chrome-register"}:
+            from chrome_bridge import run_registration
+            try:
+                output(run_registration(payload))
+            except Exception as exc:
+                output({"success": False, "error": str(exc)[:700]})
+            return
+        if args.action == "chrome-probe":
+            from chrome_bridge import probe
+            try:
+                output(probe(payload))
+            except Exception as exc:
+                output({"success": False, "error": str(exc)[:700]})
+            return
+        if args.action in {"master-setup", "master-register"}:
+            from master_registration import run
+            try:
+                with sync_playwright() as p:
+                    output(run(payload, p))
+            except Exception as exc:
+                output({"success": False, "stage": "master-registration", "error": str(exc)[:700]})
+            return
+
         args.username = payload.get("username", "")
         args.password = payload.get("password", "")
 
@@ -1718,4 +1771,7 @@ def main():
 
 
 if __name__ == "__main__":
+    if len(sys.argv) > 1 and sys.argv[1].startswith("chrome-extension://"):
+        from chrome_bridge import native_main
+        sys.exit(native_main(sys.argv[1]))
     main()

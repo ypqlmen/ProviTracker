@@ -4,6 +4,7 @@
 #include <QtPrintSupport>
 #include "commission.h"
 
+
 // ============================================================
 // Reports / snapshots
 // ============================================================
@@ -29,7 +30,7 @@ public:
         if (!salary.usesPaymentMonthRules) {
             salary.baseSalary = workedHours * hourlyRate;
             salary.totalProvision = m.totalCommission;
-            salary.totalSalary = salary.baseSalary + salary.sickPay + salary.totalProvision;
+            salary.totalSalary = salary.baseSalary + salary.sickPay + salary.totalProvision + salary.cancellations;
         }
         salary.taxConfigured = repo.settings.taxRatePercent > 0.0;
         salary.taxDeduction = repo.settings.taxDeduction;
@@ -49,26 +50,26 @@ public:
         ts << "<!DOCTYPE html><html><head><meta charset=\"utf-8\">"
            << "<title>Salgsrapport - " << label.toHtmlEscaped() << "</title>"
            << "<style>"
-           << "body{font-family:Segoe UI,Arial,sans-serif;margin:18px;color:#E6EEF8;line-height:1.45;background:#0F172A;}"
-           << "h1,h2{margin-bottom:8px;color:#F8FBFF;}"
-           << "h1{font-size:22px;margin-top:0;}h2{font-size:15px;margin-top:18px;color:#9CC7E8;text-transform:none;}"
-           << "table{border-collapse:collapse;width:100%;margin-top:12px;background:#0F1A2E;border-radius:14px;overflow:hidden;}"
-           << "th,td{border:1px solid #22304A;padding:10px 12px;text-align:left;vertical-align:top;}"
-           << "th{background:#13203A;color:#DDEBFB;}"
-           << ".meta{margin-bottom:18px;color:#BFD7EE;}"
+           << "body{font-family:Segoe UI,Arial,sans-serif;margin:18px;color:#192231;line-height:1.45;background:#F5F6FA;}"
+           << "h1,h2{margin-bottom:8px;color:#192231;}"
+           << "h1{font-size:30px;margin-top:0;}h2{font-size:15px;margin-top:18px;color:#677387;text-transform:none;}"
+           << "table{border-collapse:collapse;width:100%;margin-top:12px;background:#FFFFFF;border-radius:14px;overflow:hidden;}"
+           << "th,td{border:1px solid #DFE4EE;padding:10px 12px;text-align:left;vertical-align:top;}"
+           << "th{background:#EDF0F6;color:#677387;}"
+           << ".meta{margin-bottom:18px;color:#677387;}"
            << ".card-table{width:100%;border-collapse:separate;border-spacing:12px;margin:12px -12px;background:transparent;}"
-           << ".card-table td{width:33%;border:1px solid #223556;border-radius:18px;padding:14px 16px;background:#111B2E;vertical-align:top;}"
-           << ".card-label{color:#9CC7E8;font-size:12px;font-weight:800;margin-bottom:8px;}"
-           << ".card-value{font-size:20px;font-weight:900;color:#FFFFFF;}"
-           << ".section{border:1px solid #223556;border-radius:18px;padding:16px;background:#111B2E;box-shadow:0 10px 24px rgba(0,0,0,0.18);}"
-           << ".section-title{display:block;color:#9CC7E8;font-size:12px;font-weight:800;margin-bottom:6px;}"
+           << ".card-table td{width:33%;border:1px solid #E2E7F0;border-radius:18px;padding:14px 16px;background:#FFFFFF;vertical-align:top;}"
+           << ".card-label{color:#677387;font-size:12px;font-weight:500;margin-bottom:8px;}"
+           << ".card-value{font-size:22px;font-weight:600;color:#192231;}"
+           << ".section{border:1px solid #E2E7F0;border-radius:18px;padding:16px;background:#FFFFFF;box-shadow:0 10px 24px rgba(0,0,0,0.18);}"
+           << ".section-title{display:block;color:#677387;font-size:12px;font-weight:500;margin-bottom:6px;}"
            << ".section{margin-top:14px;font-size:13px;font-weight:400;}"
-           << ".hint{margin-top:10px;padding:12px 14px;background:#10233B;border:1px solid #24527A;border-radius:14px;color:#D8F5FF;}"
+           << ".hint{margin-top:10px;padding:12px 14px;background:#EEF3FF;border:1px solid #DDE7FC;border-radius:14px;color:#677387;}"
            << "</style></head><body>";
 
         ts << R"(
 <h1>Salgsrapport</h1>
-<div class="hint">Her får du det korte overblik: hvor du står nu, og hvad der skal til for næste løft.</div>
+<p style="color:#677387;font-size:12px;">PROVI TRACKER · SALG &amp; LØN</p>
 )";
         ts << "<div class=\"meta\"><strong>Sælger:</strong> " << s.name.toHtmlEscaped()
            << "<br><strong>Periode:</strong> " << label.toHtmlEscaped()
@@ -79,23 +80,12 @@ public:
         auto addCard = [&](const QString& title, const QString& value) {
             cards.append(qMakePair(title, value));
         };
-        addCard("Ordrer", QString::number(m.totalOrders));
-        addCard("Salg", QString::number(m.salesCount));
-        addCard("Tillæg", QString::number(m.addOnCount));
-        addCard("SIMO / VOICE", QString("%1 / %2").arg(m.simoCount).arg(m.voiceCount));
-        addCard("Point nu", money(m.totalPoints));
-        addCard("Løntimer", money(workedHours) + " timer");
-        addCard("Timeløn", money(hourlyRate) + " kr/t");
-        addCard("Timer", money(salary.baseSalary) + " kr");
-        addCard("Sygeløn", money(salary.sickPay) + " kr");
-        addCard("Provision", money(salary.totalProvision) + " kr");
-        addCard("Løn", money(salary.totalSalary) + " kr");
-        addCard("Udbetalt", salary.taxConfigured ? money(salary.netSalary) + " kr" : QString("Indstil skat"));
-        addCard("Aktive salgsdage", QString::number(activeDays));
-        addCard("Snit point pr aktiv dag", money(avgPointsPerActiveDay));
-        addCard("Snit provision pr aktiv dag", money(avgCommissionPerActiveDay) + " kr");
+        addCard("Løn før skat", money(salary.totalSalary)+" kr");
+        addCard("Efter skat · estimat",salary.taxConfigured?money(salary.netSalary)+" kr":QString("Angiv skat"));
+        addCard("Provision",money(salary.totalProvision)+" kr");
+        addCard("Salg",QString::number(m.salesCount));addCard("Point",money(m.totalPoints));addCard("Løntimer",money(workedHours));
 
-        ts << "<table class=\"card-table\">";
+        ts << "<table width=\"100%\" class=\"card-table\">";
         for (int i = 0; i < cards.size(); ++i) {
             if (i % 3 == 0) ts << "<tr>";
             ts << "<td><div class=\"card-label\">" << cards.at(i).first.toHtmlEscaped()
@@ -111,7 +101,7 @@ public:
         ts << "</table>";
 
         ts << "<div class=\"hint\">" << nextMonthlyTierHint(m.totalPoints, repo.settings.bonus).toHtmlEscaped() << "</div>";
-        ts << "<h2>Løn</h2><div class=\"hint\">Her kombineres timer fra Intramanager med provision efter samme regler som dashboardet.</div><table>";
+        ts << "<h2>Løn</h2><div class=\"hint\">Her kombineres timer fra Intramanager med provision efter samme regler som dashboardet.</div><table width=\"100%\">";
         ts << "<tr><th>Felt</th><th>Værdi</th></tr>";
         ts << "<tr><td>Lønperiode</td><td>" << hoursPeriod.toHtmlEscaped() << "</td></tr>";
         ts << "<tr><td>Løntimer</td><td>" << money(workedHours) << " timer</td></tr>";
@@ -127,10 +117,11 @@ public:
             if (!salary.delayedPeriod.isEmpty()) ts << " (" << salary.delayedPeriod.toHtmlEscaped() << ")";
             ts << "</td></tr>";
         }
+        ts << "<tr><td>Annulleringer</td><td>" << (salary.cancellationsKnown ? money(salary.cancellations) + " kr" : QString("Afventer Intramanager")) << "</td></tr>";
         ts << "<tr><td><strong>Løn</strong></td><td><strong>" << money(salary.totalSalary) << " kr</strong></td></tr>";
         if (salary.taxConfigured) {
             ts << "<tr><td>Skattefradrag</td><td>" << money(salary.taxDeduction) << " kr</td></tr>";
-            ts << "<tr><td>Trækprocent</td><td>" << money(salary.taxRatePercent) << " %</td></tr>";
+            ts << "<tr><td>" << QString("Trækprocent") << "</td><td>" << money(salary.taxRatePercent) << " %</td></tr>";
             ts << "<tr><td>AM-bidrag (8%)</td><td>" << money(salary.amBidrag) << " kr</td></tr>";
             ts << "<tr><td>A-skat</td><td>" << money(salary.aTax) << " kr</td></tr>";
             ts << "<tr><td>Estimeret skat inkl. AM-bidrag</td><td>" << money(salary.taxAmount) << " kr</td></tr>";
@@ -140,7 +131,7 @@ public:
         }
         ts << "</table>";
 
-        ts << "<h2>Sådan ligger du lige nu</h2><div class=\"hint\">Her kan du se om du er foran, bagud eller lige på kanten af næste løft.</div><table>";
+        ts << "<h2>Sådan ligger du lige nu</h2><div class=\"hint\">Her kan du se om du er foran, bagud eller lige på kanten af næste løft.</div><table width=\"100%\">";
         ts << "<tr><th>Felt</th><th>Værdi</th></tr>";
         if (!bestDay.first.isEmpty()) {
             ts << "<tr><td>Bedste dag</td><td>" << bestDay.first.toHtmlEscaped() << " (" << money(bestDay.second) << " point)</td></tr>";
@@ -158,7 +149,7 @@ public:
         }
         ts << "</td></tr></table>";
 
-        ts << "<h2>Provision og næste løft</h2><div class=\"hint\">Når du er tæt på provision, bliver de næste pengehop fremhævet tydeligt.</div><table>";
+        ts << "<h2>Provision og næste løft</h2><div class=\"hint\">Når du er tæt på provision, bliver de næste pengehop fremhævet tydeligt.</div><table width=\"100%\">";
         ts << "<tr><th>Felt</th><th>Værdi</th></tr>";
         ts << "<tr><td>Dagsprovision / pointprovision (21.–20.)</td><td>" << money(m.dayBonus) << " kr</td></tr>";
         ts << "<tr><td>Månedsprovision</td><td>" << money(m.monthlyBonus) << " kr</td></tr>";
@@ -166,14 +157,14 @@ public:
         ts << "<tr><td>VOICE provision</td><td>" << money(m.voiceBonus) << " kr</td></tr>";
         ts << "</table>";
 
-        ts << "<h2>Det du har lukket</h2><table><tr><th>Produkt</th><th>Antal</th><th>Point</th></tr>";
+        ts << "<h2>Det du har lukket</h2><table width=\"100%\"><tr><th>Produkt</th><th>Antal</th><th>Point</th></tr>";
         for (auto it = m.quantityByProduct.begin(); it != m.quantityByProduct.end(); ++it) {
             ts << "<tr><td>" << it.key().toHtmlEscaped() << "</td><td>" << it.value() << "</td><td>"
                << money(m.pointsByProduct.value(it.key())) << "</td></tr>";
         }
         ts << "</table>";
 
-        ts << "<h2>Udvikling dag for dag</h2><table><tr><th>Dag</th><th>Point</th><th>Estimeret provision</th></tr>";
+        ts << "<h2>Udvikling dag for dag</h2><table width=\"100%\"><tr><th>Dag</th><th>Point</th><th>Estimeret provision</th></tr>";
         for (auto it = m.pointsByDay.begin(); it != m.pointsByDay.end(); ++it) {
             ts << "<tr><td>" << it.key().toHtmlEscaped() << "</td><td>" << money(it.value()) << "</td><td>"
                << money(m.commissionByDay.value(it.key())) << " kr</td></tr>";
