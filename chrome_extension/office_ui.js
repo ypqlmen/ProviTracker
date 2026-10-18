@@ -2,33 +2,64 @@
 // Serialized by executeScript: all helpers deliberately live inside this function.
 export function officeStep(phase, payloadJson, scriptName = 'ProviTrackerSalesRegistrationV4') {
   const text = el => (el.getAttribute('aria-label') || el.textContent || '').replace(/\s+/g,' ').trim();
-  const usable = el => !el.disabled && !el.closest('[aria-hidden="true"],[hidden]')
-    && getComputedStyle(el).display !== 'none' && getComputedStyle(el).visibility !== 'hidden';
+  const usable=el=>{
+    if(el.disabled || el.closest('[aria-hidden="true"],[hidden]'))return false;
+    for(let parent=el;parent;parent=parent.parentElement){const style=getComputedStyle(parent);if(style.display==='none' || style.visibility==='hidden')return false;}
+    return true;
+  };
   const find = (selector, names) => {
-    const matches = [...document.querySelectorAll(selector)].filter(el => usable(el) && names.includes(text(el)));
+    const matches = [...document.querySelectorAll(selector)].filter(el => usable(el) && names.some(name=>name.toLocaleLowerCase()===text(el).toLocaleLowerCase()));
     return matches.length === 1 ? matches[0] : null;
   };
   const button = names => find('button,[role="button"]',names);
+  const requestId=JSON.parse(payloadJson).requestId;
+  const state=globalThis.proviOfficeActivation?.requestId===requestId?globalThis.proviOfficeActivation:(globalThis.proviOfficeActivation={requestId});
+  const activate=el=>{
+    if(!usable(el))return false;
+    const now=Date.now(),last=state.activation;
+    if(last?.el===el && now-last.at<1200)return false;
+    const retry=last?.el===el;
+    state.activation={el,at:now};
+    // Inactive Chrome tabs can update activeElement without emitting focus
+    // events. Fluent menus need the same focus lifecycle as a normal click.
+    const seen=new Set(),observe=event=>seen.add(event.type);
+    for(const type of ['focus','focusin'])el.addEventListener(type,observe);
+    el.focus({preventScroll:true});
+    for(const type of ['focus','focusin']){
+      el.removeEventListener(type,observe);
+      if(!seen.has(type))el.dispatchEvent(new FocusEvent(type,{bubbles:type==='focusin',composed:true}));
+    }
+    if(!el.isConnected)return false;
+    if(retry){
+      for(const type of ['keydown','keyup'])el.dispatchEvent(new KeyboardEvent(type,{key:'Enter',code:'Enter',keyCode:13,which:13,bubbles:true,cancelable:true}));
+    }else{
+      for(const type of ['pointerdown','mousedown','pointerup','mouseup'])el.dispatchEvent(type.startsWith('pointer')?new PointerEvent(type,{bubbles:true,composed:true,pointerId:1,pointerType:'mouse',isPrimary:true,button:0,buttons:type.endsWith('down')?1:0}):new MouseEvent(type,{bubbles:true,composed:true,button:0,buttons:type.endsWith('down')?1:0,view:window}));
+      el.click();
+    }
+    return true;
+  };
   const named = [...document.querySelectorAll('span,div,p,h1,h2,h3')].find(el => el.children.length===0 && text(el)===scriptName);
   const editor = document.querySelector('textarea[aria-label="editor"]');
   if (location.origin === 'https://euc-excel.officeapps.live.com') {
     if (phase !== 'open') return null;
     const menu = document.getElementById('OverflowPivotHeader-Automate');
-    if (menu && usable(menu)) { menu.click(); return {progress:true}; }
+    if (menu && usable(menu)) { activate(menu); return {progress:true}; }
     const tab = document.getElementById('Automate');
     if (!tab || tab.getAttribute('aria-selected') !== 'true') {
       const control = tab && usable(tab) ? tab : document.getElementById('pivotOverflowButton');
-      if (control && usable(control)) control.click();
+      if (control && usable(control)) activate(control);
       return null;
     }
     const recent = find('[role="menuitem"],[role="menuitemradio"]',['Seneste scripts','Recent scripts']);
-    if (recent) { recent.click(); return null; }
+    if (recent) { activate(recent); return null; }
     const view = document.getElementById('AutomateGroupViewScripts');
-    if (view && usable(view) && view.getAttribute('aria-expanded') !== 'true') view.click();
+    if (view && usable(view) && view.getAttribute('aria-expanded') !== 'true') activate(view);
     return null;
   }
   if (location.origin !== 'https://fa000000043.mro1cdnstorage.public.onecdn.static.microsoft') return null;
   if (phase === 'open' && /\/index\.html$/.test(location.pathname)) {
+    const recentTab=[...document.querySelectorAll('[role="tab"]')].find(el=>usable(el)&&(/seneste scripts|recent scripts/i.test(text(el)) || /^(Seneste|Recent)\b/.test(el.textContent?.trim() || '')));
+    if(!editor && recentTab && recentTab.getAttribute('aria-selected')!=='true'){activate(recentTab);return null;}
     if (editor && usable(editor)) return named ? {ready:true} : {error:'Et andet script er åbent i Excel. Åbn ProviTrackerSalesRegistrationV4 i kodeeditoren, og prøv igen.'};
     if (named) {
       for (let ancestor=named.parentElement, depth=0; ancestor && depth<7; ancestor=ancestor.parentElement,depth++) {

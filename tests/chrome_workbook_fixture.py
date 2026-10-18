@@ -202,25 +202,18 @@ def check_native_sales(context, worker, workbook, foreground):
         print('Native login wait, existing login-tab reuse and resumed setup passed.',flush=True)
     finally:
         context.unroute(login_url)
-    # Exercise the actual extension UI and downloadable structural failure report.
-    # A successful retry must leave the most recent failure available for support.
+    # Developer-only structural checks remain, without user-facing export controls.
     report=service.evaluate("async()=> (await chrome.storage.local.get('lastFailure')).lastFailure")
-    assert report['kind']=='register' and report['extensionVersion']==service.evaluate('chrome.runtime.getManifest().version'),report
-    assert any(e['event']=='finished' and e['outcome']=='error' for e in report['events']),report
+    assert report['kind']=='register'
     popup=context.new_page()
     try:
         extension_id=service.url.split('/')[2]
         popup.goto('chrome-extension://'+extension_id+'/popup.html')
-        popup.get_by_role('button',name='Gem fejloplysninger',exact=True).wait_for()
-        popup.wait_for_function("!document.getElementById('diagnostics').disabled")
-        with popup.expect_download() as download_info:
-            popup.get_by_role('button',name='Gem fejloplysninger',exact=True).click()
-        downloaded=json.loads(Path(download_info.value.path()).read_text())
-        assert downloaded==report
-        text=json.dumps(downloaded)
-        for forbidden in ['companyName','orderNumber','registrationId','requestId','workbookUrl','https://','Synthetic','FIXTURE']:
-            assert forbidden not in text,(forbidden,downloaded)
-        print('Actual extension popup downloads retained failure diagnostics without sales, URLs or identifiers.',flush=True)
+        popup.get_by_role('button',name='Forbind Intramanager',exact=True).wait_for()
+        assert popup.locator('#setup-report,#diagnostics,#setup-help,#diagnostic-help').count()==0
+        assert 'Gem fejloplysninger' not in popup.locator('body').inner_text()
+        assert 'Gem opsætningsrapport' not in popup.locator('body').inner_text()
+        print('Extension popup preserves connection controls without report or error-export buttons.',flush=True)
     finally:
         popup.close()
     print('Actual Chromium/native host + Office controls transport passed: gallery, setup, parameters, fresh receipt, retry, background tab')

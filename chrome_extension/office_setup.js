@@ -3,15 +3,39 @@
 export function installStep(phase, source, scriptName, requestId) {
   const origin='https://fa000000043.mro1cdnstorage.public.onecdn.static.microsoft';
   const label=el=>(el.getAttribute('aria-label') || el.textContent || '').replace(/\s+/g,' ').trim();
-  const visible=el=>!el.closest('[hidden],[aria-hidden="true"]') && getComputedStyle(el).display!=='none' && getComputedStyle(el).visibility!=='hidden';
-  const unique=(selector,names)=>{const all=[...document.querySelectorAll(selector)].filter(el=>visible(el)&&names.includes(label(el)));return all.length===1?all[0]:null;};
+  const visible=el=>{
+    if(el.closest('[hidden],[aria-hidden="true"]'))return false;
+    for(let parent=el;parent;parent=parent.parentElement){const style=getComputedStyle(parent);if(style.display==='none' || style.visibility==='hidden')return false;}
+    return true;
+  };
+  const unique=(selector,names)=>{const all=[...document.querySelectorAll(selector)].filter(el=>visible(el)&&names.some(name=>name.toLocaleLowerCase()===label(el).toLocaleLowerCase()));return all.length===1?all[0]:null;};
   const button=names=>unique('button,[role="button"]',names);
   const enabled=el=>el && !el.disabled && el.getAttribute('aria-disabled')!=='true';
   const state=globalThis.proviInstaller?.requestId===requestId?globalThis.proviInstaller:(globalThis.proviInstaller={requestId});
   const next=phase=>({next:phase});
   const activate=el=>{
-    for(const type of ['pointerdown','mousedown','pointerup','mouseup'])el.dispatchEvent(type.startsWith('pointer')?new PointerEvent(type,{bubbles:true,composed:true,pointerId:1,pointerType:'mouse',isPrimary:true,button:0,buttons:type.endsWith('down')?1:0}):new MouseEvent(type,{bubbles:true,composed:true,button:0,buttons:type.endsWith('down')?1:0,view:window}));
-    el.click();
+    if(!enabled(el))return false;
+    const now=Date.now(),last=state.activation;
+    if(last?.el===el && now-last.at<1200)return false;
+    const retry=last?.el===el;
+    state.activation={el,at:now};
+    // Inactive Chrome tabs can update activeElement without emitting focus
+    // events. Fluent menus need the same focus lifecycle as a normal click.
+    const seen=new Set(),observe=event=>seen.add(event.type);
+    for(const type of ['focus','focusin'])el.addEventListener(type,observe);
+    el.focus({preventScroll:true});
+    for(const type of ['focus','focusin']){
+      el.removeEventListener(type,observe);
+      if(!seen.has(type))el.dispatchEvent(new FocusEvent(type,{bubbles:type==='focusin',composed:true}));
+    }
+    if(!el.isConnected)return false;
+    if(retry){
+      for(const type of ['keydown','keyup'])el.dispatchEvent(new KeyboardEvent(type,{key:'Enter',code:'Enter',keyCode:13,which:13,bubbles:true,cancelable:true}));
+    }else{
+      for(const type of ['pointerdown','mousedown','pointerup','mouseup'])el.dispatchEvent(type.startsWith('pointer')?new PointerEvent(type,{bubbles:true,composed:true,pointerId:1,pointerType:'mouse',isPrimary:true,button:0,buttons:type.endsWith('down')?1:0}):new MouseEvent(type,{bubbles:true,composed:true,button:0,buttons:type.endsWith('down')?1:0,view:window}));
+      el.click();
+    }
+    return true;
   };
   if(location.origin==='https://euc-excel.officeapps.live.com') {
     if(phase!=='install-open')return null;
@@ -23,7 +47,11 @@ export function installStep(phase, source, scriptName, requestId) {
     }
     const all=unique('[role="menuitem"],[role="menuitemradio"]',['Alle scripts','All scripts','Seneste scripts','Recent scripts']);
     if(all){activate(all);return null;}
-    const view=document.getElementById('AutomateGroupViewScripts');if(enabled(view)&&view.getAttribute('aria-expanded')!=='true')activate(view);
+    const view=document.getElementById('AutomateGroupViewScripts');
+    if(enabled(view)){
+      state.viewSince ??= Date.now();
+      if(view.getAttribute('aria-expanded')!=='true' || Date.now()-state.viewSince>2500){activate(view);state.viewSince=Date.now();}
+    }
     return null;
   }
   if(location.origin===origin && /\/dialog\.html$/.test(location.pathname) && document.body.textContent.trim())return {error:'Excel har allerede et parametervindue åbent. Luk det vindue, før automatisk opsætning startes.',waiting:'office-dialog'};
@@ -44,7 +72,7 @@ export function installStep(phase, source, scriptName, requestId) {
   }
   if(phase==='install-find' || phase==='install-reopen'){
     const recent=[...document.querySelectorAll('[role="tab"]')].find(el=>visible(el)&&(/seneste scripts|recent scripts/i.test(label(el)) || /^(Seneste|Recent)\b/.test(el.textContent?.trim() || '')));
-    if(recent && recent.getAttribute('aria-selected')!=='true'){recent.click();state.libraryReady=false;return null;}
+    if(recent && recent.getAttribute('aria-selected')!=='true'){activate(recent);state.libraryReady=false;return null;}
     const filter=unique('input',['Filtrer scripts','Filter scripts']);if(!filter)return null;
     // A library scan must not be restricted by a user's old search.
     if(filter.value!==''){

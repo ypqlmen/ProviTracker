@@ -236,7 +236,7 @@ async function scanOffice(job) {
     const installing=job.phase?.startsWith('install-');
     if(job.phase==='install-open'){
       job.openSince ??= Date.now();
-      if(Date.now()-job.openSince>45000){finish(job,{success:false,error:'Office Scripts kunne ikke åbnes. Kontrollér at Automatiser → Få vist scripts → Seneste scripts kan åbnes i Excel. Gem forløbsrapporten fra appen.'});return;}
+      if(Date.now()-job.openSince>45000){finish(job,{success:false,error:'Office Scripts kunne ikke åbnes. Kontrollér at Automatiser → Få vist scripts → Seneste scripts kan åbnes i Excel.'});return;}
     }
     const targets=installing ? (job.phase==='install-open' ? [...office,...excel] : office) : parameterPhase && dialogs.length ? dialogs : office.length ? office : job.phase==='open' ? excel : [];
     job.officeMissing=targets.length===0;
@@ -395,7 +395,7 @@ function connect() {
       // Re-read the current frames while Excel boots, including frames created
       // after the first scan. Never activate or reload the workbook tab.
       job.poll = setInterval(() => scan(job), 500);
-      job.timeout = setTimeout(() => finish(job, {success:false, error:job.phase==='login' ? 'Microsoft-login blev ikke afsluttet inden for 10 minutter. Log ind og start opsætningen igen.' : job.phase?.startsWith('install-') ? 'Automatisk opsætning stoppede ved '+job.phase+'. Åbn forløbsrapporten i Provi Tracker. Ingen salg er registreret.' : job.connected
+      job.timeout = setTimeout(() => finish(job, {success:false, error:job.phase==='login' ? 'Microsoft-login blev ikke afsluttet inden for 10 minutter. Log ind og start opsætningen igen.' : job.phase?.startsWith('install-') ? 'Automatisk opsætning stoppede ved '+job.phase+'. Kontrollér det åbne scriptpanel i Excel, og prøv opsætningen igen.' : job.connected
         ? (job.officeBlocked ? 'Chrome-udvidelsen mangler adgang til Excels scriptpanel. Genindlæs udvidelsen i Chrome, og prøv igen.' : job.officeMissing ? 'Excels scriptvindue blev ikke fundet. Åbn ProviTrackerSalesRegistrationV4 i kodeeditoren, og prøv igen.' : job.waiting==='parameter-script' ? 'Excels parametervindue blev ikke færdigindlæst. Åbn ProviTrackerSalesRegistrationV4, og prøv samme ordre igen.' : job.waiting==='parameter-field' ? 'Excel viser parametervinduet, men payloadJson-feltet er ikke klar til indtastning. Genindlæs masterarket, og prøv igen.' : job.waiting==='parameter-run' ? 'Salgsdataene er indsat, men Excel har ikke aktiveret Kør. Genindlæs masterarket, og prøv samme ordre igen.' : (['parameter','submit','run'].includes(job.phase) ? 'Excel stoppede ved scriptets parametre. Luk parametervinduet, kontrollér at Chrome-udvidelsen er opdateret, og prøv igen fra Ordrer.' : 'Excel bekræftede ikke registreringen. Åbn ProviTrackerSalesRegistrationV4 i kodeeditoren via Automatiser. Kontrollér arket før genforsøg.'))
         : job.excelBlocked && !job.excelRead
         ? 'Chrome-udvidelsen har ikke adgang til Excel-rammen. Kontrollér udvidelsens webstedsadgang til euc-excel.officeapps.live.com i Chrome, og prøv igen.'

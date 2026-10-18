@@ -1239,7 +1239,6 @@ private:
     QCheckBox* salesRegistrationEnabledCheck = nullptr;
     QLabel* salesRegistrationStatusLabel = nullptr;
     QPointer<QPlainTextEdit> masterSetupLog;
-    QJsonObject masterSetupReport;
 
     struct IntramanagerFetchResult {
         bool success = false;
@@ -2746,8 +2745,8 @@ private:
         configureSettingsField(taxRateSpin);
 
         auto* saveIntramanagerBtn = new QPushButton("Gem forbindelse");
-        configureSettingsButton(saveIntramanagerBtn);saveIntramanagerBtn->setProperty("primary",true);
-        auto* intramanagerActionRow = createSettingsButtonGrid(QVector<QPushButton*>{saveIntramanagerBtn});
+        saveIntramanagerBtn->setObjectName("intramanagerSaveButton");saveIntramanagerBtn->setProperty("primary",true);
+        configureSettingsButton(saveIntramanagerBtn);
 
         intramanagerStatusLabel = new QLabel("Timer hentes automatisk.");
         intramanagerStatusLabel->setWordWrap(true);
@@ -2782,7 +2781,7 @@ private:
         auto* savePayrollBtn=new QPushButton("Gem lønindstillinger");savePayrollBtn->setProperty("primary",true);payrollCard.second->addSpacing(12);payrollCard.second->addWidget(savePayrollBtn,0,Qt::AlignRight);
         auto* payrollSaved=premiumLabel("","muted");payrollSaved->hide();payrollCard.second->addWidget(payrollSaved);
         connect(savePayrollBtn,&QPushButton::clicked,this,[this,payrollSaved](){repo.settings.hourlyRate=hourlyRateSpin->value();repo.settings.taxDeduction=taxDeductionSpin->value();repo.settings.taxRatePercent=taxRateSpin->value();repo.saveSettings();refreshDashboard();generateReport();payrollSaved->setText("Dine lønindstillinger er gemt.");payrollSaved->show();});
-        imForm->addRow(intramanagerActionRow);
+        imForm->addRow(saveIntramanagerBtn);
         imForm->addRow("Status", intramanagerStatusLabel);
 
         intramanagerCard.second->addLayout(imForm);
@@ -3546,16 +3545,14 @@ private:
         auto* start=new QPushButton("Opsæt automatisk i Chrome");start->setProperty("primary",true);layout->addWidget(start);
         auto* check=new QPushButton("Kontrollér eksisterende opsætning");layout->addWidget(check);
         masterSetupLog=new QPlainTextEdit;masterSetupLog->setReadOnly(true);masterSetupLog->setStyleSheet("QPlainTextEdit{background:#20242C;border:1px solid #363D49;border-radius:14px;padding:12px;color:#C7D1E2;}");masterSetupLog->setMinimumHeight(170);masterSetupLog->setPlaceholderText("Forløbet vises her, når opsætningen starter.");layout->addWidget(masterSetupLog,1);
-        auto* report=new QPushButton("Gem forløbsrapport");layout->addWidget(report);
         auto* manual=new QPushButton("Manuel opsætning ▾");manual->setCheckable(true);layout->addWidget(manual);auto* manualBody=new QWidget;auto* bodyLayout=new QVBoxLayout(manualBody);bodyLayout->setContentsMargins(0,0,0,0);
         auto* instructions=premiumLabel("Hvis automatisk opsætning stopper: Åbn Automatiser → Nyt script → Opret i Kodeeditor. Navngiv scriptet ProviTrackerSalesRegistrationV4, indsæt den kopierede kode, og gem. Lad editoren stå åben, og vælg Kontrollér eksisterende opsætning.","muted");instructions->setWordWrap(true);bodyLayout->addWidget(instructions);
         auto* copy=new QPushButton("Kopier Excel-script");bodyLayout->addWidget(copy);layout->addWidget(manualBody);manualBody->hide();connect(manual,&QPushButton::toggled,manualBody,&QWidget::setVisible);
         auto* close=new QPushButton("Luk");layout->addWidget(close);connect(close,&QPushButton::clicked,&dialog,&QDialog::reject);
-        connect(start,&QPushButton::clicked,&dialog,[this](){if(masterSetupLog)masterSetupLog->clear();masterSetupReport={};runMasterWorker(true,{},true);});
+        connect(start,&QPushButton::clicked,&dialog,[this](){if(masterSetupLog)masterSetupLog->clear();runMasterWorker(true,{},true);});
         connect(check,&QPushButton::clicked,&dialog,[this](){runMasterWorker(true);});
         connect(copy,&QPushButton::clicked,&dialog,[this,&dialog](){QFile file(QFileInfo(intramanagerWorkerPath()).absolutePath()+"/_internal/chrome_extension/excel_online_sales_registration_v4.ts");if(!file.open(QIODevice::ReadOnly)){QMessageBox::warning(&dialog,"Excel-script","Scriptet mangler. Geninstaller den nyeste testversion.");return;}QApplication::clipboard()->setText(QString::fromUtf8(file.readAll()));});
-        connect(report,&QPushButton::clicked,&dialog,[this,&dialog](){const QString path=QFileDialog::getSaveFileName(&dialog,"Gem forløbsrapport","ProviTracker-opsaetning.json","JSON (*.json)");if(path.isEmpty())return;QSaveFile file(path);if(!file.open(QIODevice::WriteOnly) || file.write(QJsonDocument(masterSetupReport).toJson())<0 || !file.commit())QMessageBox::warning(&dialog,"Forløbsrapport","Rapporten kunne ikke gemmes.");});
-        auto* timer=new QTimer(&dialog);const auto update=[this,start,check,copy,report,close](){start->setEnabled(!masterRegistrationRunning);check->setEnabled(!masterRegistrationRunning);copy->setEnabled(!masterRegistrationRunning);report->setEnabled(!masterSetupReport.isEmpty() && !masterRegistrationRunning);close->setText(masterRegistrationRunning?"Skjul – opsætningen fortsætter":"Luk");};connect(timer,&QTimer::timeout,&dialog,update);timer->start(200);update();dialog.exec();masterSetupLog=nullptr;
+        auto* timer=new QTimer(&dialog);const auto update=[this,start,check,copy,close](){start->setEnabled(!masterRegistrationRunning);check->setEnabled(!masterRegistrationRunning);copy->setEnabled(!masterRegistrationRunning);close->setText(masterRegistrationRunning?"Skjul – opsætningen fortsætter":"Luk");};connect(timer,&QTimer::timeout,&dialog,update);timer->start(200);update();dialog.exec();masterSetupLog=nullptr;
     }
 
     void runMasterWorker(bool setup, QString registrationId = QString(), bool automaticSetup = false) {
@@ -3626,8 +3623,7 @@ private:
                     && result.value("orderNumber").toString() == orderNumber && result.value("registrationId").toString() == registrationId
                     && result.value("row").toInt() >= 16));
             const QString error = result.value("error").toString("Excel bekræftede ikke registreringen. Kontrollér masterarket og prøv igen.");
-            if(!setup && !result.value("diagnostics").toObject().isEmpty())masterSetupReport=result.value("diagnostics").toObject();
-            if(automaticSetup){masterSetupReport=result.value("diagnostics").toObject();if(masterSetupReport.isEmpty())masterSetupReport=QJsonObject{{"format",1},{"kind","install"},{"phase","probe"},{"events",QJsonArray{}}};masterSetupReport["success"]=ok;if(masterSetupLog)masterSetupLog->appendPlainText(ok?"Klar. Excel har bekræftet opsætningen; ingen salg er registreret.":"Stoppet: "+error);}
+            if(automaticSetup){if(masterSetupLog)masterSetupLog->appendPlainText(ok?"Klar. Excel har bekræftet opsætningen; ingen salg er registreret.":"Stoppet: "+error);}
             if (!setup) {
                 const int index = salesRegistrationIndex(repo.orders, registrationId);
                 if (index >= 0) {

@@ -24,10 +24,12 @@ window.scripts={ExistingPersonalScript:'// KEEP PERSONAL SCRIPT'};window.saveCou
 window.require.config({paths:{vs:'/vs'}});window.require(['vs/editor/editor.main'],()=>library());
 function button(label,fn){const b=document.createElement('button');b.setAttribute('aria-label',label);b.textContent=label;b.onclick=fn;return b}
 function clear(){if(window.code){window.code.dispose();window.code=null}document.getElementById('app').replaceChildren()}
-function library(){clear();const app=document.getElementById('app');const filter=document.createElement('input');filter.setAttribute('aria-label','Filtrer scripts');app.append(filter);
+function library(recent=false){clear();const app=document.getElementById('app');
+const tab=button('6 Recent Scripts',()=>{if(document.activeElement===tab && tab.focusSeen)library(true)});tab.setAttribute('role','tab');tab.setAttribute('aria-selected',String(recent));tab.addEventListener('focusin',()=>tab.focusSeen=true);app.append(tab);const filter=document.createElement('input');filter.setAttribute('aria-label','Filtrer scripts');app.append(filter);
 app.append(button('Nyt script',()=>{const item=document.createElement('div');item.setAttribute('role','menuitem');item.textContent='Opret i Kodeeditor';item.onclick=()=>{window.created++;edit('Script '+created,'function main(workbook: ExcelScript.Workbook) { console.log("new draft"); }')};app.append(item)}));
+if(!recent)return;
 for(const [name,text]of Object.entries(scripts)){const article=document.createElement('article');article.setAttribute('aria-label','Script: '+name);const heading=document.createElement('span');heading.textContent=name;article.append(heading);article.append(button('Rediger',()=>edit(name,text)));app.append(article)}}
-function edit(name,text){clear();window.currentName=name;const app=document.getElementById('app');app.append(button('Tilbage',library));const title=document.createElement('span');title.id='title';title.textContent=name;app.append(title);
+function edit(name,text){clear();window.currentName=name;const app=document.getElementById('app');app.append(button('Tilbage',()=>library()));const title=document.createElement('span');title.id='title';title.textContent=name;app.append(title);
 app.append(button('Omdøb',()=>{const input=document.createElement('input');input.setAttribute('aria-label','Angiv scriptnavn [påkrævet]');input.value=currentName;input.onkeydown=e=>{if(e.key==='Enter'){window.currentName=input.value;title.textContent=input.value;input.remove()}};app.append(input)}));
 const save=button('Scriptet er gemt',()=>{if(failSave)return;scripts[currentName]=code.getValue();if(mismatch)scripts[currentName]+='// tampered';window.saveCount++;save.setAttribute('aria-label','Scriptet er gemt');save.disabled=true});save.disabled=true;app.append(save);
 app.append(button('Kør',()=>{window.runs++;parent.postMessage({type:'parameters',name:currentName},'*')}));const host=document.createElement('div');host.style='height:450px;width:650px';app.append(host);
@@ -57,7 +59,29 @@ chrome.runtime.connectNative=()=>({postMessage:m=>{if(m.type==='result')fixtureR
                     elif url.startswith(DIALOG):req.fulfill(content_type='text/html; charset=utf-8',body='''<div id="title"></div><label for="payload">payloadJson</label><input id="payload" type="text"><button onclick="parent.postMessage({type:'payload',payload:JSON.parse(document.getElementById('payload').value)},'https://euc-excel.officeapps.live.com')">Kør</button><script>addEventListener('message',e=>{if(e.data.name)document.getElementById('title').textContent='Angiv parametre for '+e.data.name})</script>''')
                     elif url.startswith('https://5rmarketing-my.sharepoint.com/_forms/default.aspx'):req.fulfill(content_type='text/html',body='<h1>Returning from login</h1><script>setTimeout(()=>location.assign('+json.dumps(BOOK)+'),700)</script>')
                     elif url.startswith('https://login.microsoftonline.com/'):req.fulfill(content_type='text/html',body='<h1>Fixture login</h1>')
-                    elif url.startswith(EXCEL):req.fulfill(content_type='text/html; charset=utf-8',body='''<a role="tab" aria-selected="true" aria-label="Regneark Salg"><span sheet-title="Salg">Salg</span></a><button id="Automate" aria-selected="false" onmousedown="this.setAttribute('aria-selected','true')">Automatiser</button><button id="AutomateGroupViewScripts" onmousedown="if(document.getElementById('Automate').getAttribute('aria-selected')!=='true')return;const m=document.createElement('div');m.setAttribute('role','menuitem');m.textContent='Seneste scripts';m.onclick=()=>{document.getElementById('pane').src='''+json.dumps(PANE).replace(chr(34),'&quot;')+''';m.remove()};document.body.append(m);this.setAttribute('aria-expanded','true')">Få vist scripts</button><iframe id="pane"></iframe><iframe id="loading-pane" src="'''+PANE+'''?loading=1"></iframe><script>addEventListener('message',e=>{if(e.origin!=='''+json.dumps(OFFICE)+''')return;if(e.data.type==='parameters'){const f=document.createElement('iframe');f.id='dialog';f.src='''+json.dumps(DIALOG)+''';f.onload=()=>f.contentWindow.postMessage({name:e.data.name},'''+json.dumps(OFFICE)+''');document.body.append(f)}if(e.data.type==='payload'){document.getElementById('pane').contentWindow.postMessage(e.data,'''+json.dumps(OFFICE)+''');document.getElementById('dialog').remove()}})</script>''')
+                    elif url.startswith(EXCEL):
+                        excel_page="""<a role="tab" aria-selected="true" aria-label="Regneark Salg"><span sheet-title="Salg">Salg</span></a>
+<button id="Automate" aria-selected="false" onmousedown="this.setAttribute('aria-selected','true')">Automatiser</button>
+<button id="AutomateGroupViewScripts">View Scripts</button><iframe id="pane"></iframe><iframe id="loading-pane" src="__PANE_URL__?loading=1"></iframe>
+<script>
+window.galleryClicks=0;window.menuKeyRuns=0;
+const view=document.getElementById('AutomateGroupViewScripts');
+view.onmousedown=()=>{
+ if(document.getElementById('Automate').getAttribute('aria-selected')!=='true')return;
+ const m=document.createElement('button');m.setAttribute('role','menuitem');m.textContent='Recent Scripts';
+ m.addEventListener('focusin',()=>m.focusSeen=true);
+ const open=()=>{if(document.activeElement!==m || !m.focusSeen)return;document.getElementById('pane').src=__PANE__;m.remove();view.setAttribute('aria-expanded','false')};
+ m.onclick=()=>{window.galleryClicks++;}; // A click alone deliberately does not open the menu item.
+ m.onkeydown=e=>{if(e.key==='Enter'){window.menuKeyRuns++;open()}};
+ document.body.append(m);view.setAttribute('aria-expanded','true');
+ const hidden=document.createElement('div');hidden.style.display='none';hidden.innerHTML='<button role="menuitem">Recent Scripts</button>';document.body.append(hidden);
+};
+addEventListener('message',e=>{if(e.origin!==__OFFICE__)return;
+ if(e.data.type==='parameters'){const f=document.createElement('iframe');f.id='dialog';f.src=__DIALOG__;f.onload=()=>f.contentWindow.postMessage({name:e.data.name},__OFFICE__);document.body.append(f)}
+ if(e.data.type==='payload'){document.getElementById('pane').contentWindow.postMessage(e.data,__OFFICE__);document.getElementById('dialog').remove()}})
+</script>"""
+                        excel_page=excel_page.replace('__PANE_URL__',PANE).replace('__PANE__',json.dumps(PANE)).replace('__OFFICE__',json.dumps(OFFICE)).replace('__DIALOG__',json.dumps(DIALOG))
+                        req.fulfill(content_type='text/html; charset=utf-8',body=excel_page)
                     elif url.startswith(BOOK):req.fulfill(content_type='text/html; charset=utf-8',body='<iframe src="'+EXCEL+'"></iframe>')
                     else:req.abort()
                 context.route('https://**/*',route)
@@ -88,6 +112,8 @@ chrome.runtime.connectNative=()=>({postMessage:m=>{if(m.type==='result')fixtureR
                 assert 'login' in service.evaluate('fixtureProgress'),'Same setup must resume after Microsoft login'
                 assert book.evaluate('async()=>{const q=await navigator.locks.query();return q.held.some(l=>l.name.startsWith("ProviTracker.background."));}'),'Master workbook must hold the background lease'
                 assert service.evaluate('async()=>{const t=await chrome.tabs.query({url:"https://5rmarketing-my.sharepoint.com/*"});return t[0].autoDiscardable===false;}')
+                excel_frame=next(f for f in book.frames if f.url==EXCEL)
+                assert excel_frame.evaluate('galleryClicks')==1 and excel_frame.evaluate('menuKeyRuns')==1,'Recent Scripts requires focus, ignores hidden duplicate and recovers with Enter'
                 frame=next(f for f in book.frames if f.url==PANE)
                 assert frame.evaluate('scripts["'+name+'"]').replace('\r\n','\n')==source.replace('\r\n','\n')
                 assert frame.evaluate('scripts.ExistingPersonalScript')=='// KEEP PERSONAL SCRIPT'
