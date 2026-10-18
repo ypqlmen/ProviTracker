@@ -209,7 +209,11 @@ def check_native_sales(context, worker, workbook, foreground):
     try:
         extension_id=service.url.split('/')[2]
         popup.goto('chrome-extension://'+extension_id+'/popup.html')
-        popup.get_by_role('button',name='Forbind Intramanager',exact=True).wait_for()
+        # The update fixture intentionally retains a confirmed account. An
+        # ungranted host permission must not erase that persisted binding.
+        account=service.evaluate("async()=> (await chrome.storage.local.get('intramanagerAccount')).intramanagerAccount")
+        popup.get_by_role('button',name='Åbn Intramanager' if account else 'Forbind Intramanager',exact=True).wait_for()
+        assert 'Tillad adgang til Intramanager' in popup.locator('#intramanager-status').inner_text()
         assert popup.locator('#setup-report,#diagnostics,#setup-help,#diagnostic-help').count()==0
         assert 'Gem fejloplysninger' not in popup.locator('body').inner_text()
         assert 'Gem opsætningsrapport' not in popup.locator('body').inner_text()
