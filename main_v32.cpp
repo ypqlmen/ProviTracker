@@ -1056,6 +1056,7 @@ public:
         show();
         qApp->processEvents();
 
+        if(qApp->windowIcon().isNull())qFatal("Program icon missing");qApp->windowIcon().pixmap(256,256).save(QDir(outputDir).filePath("30-program-icon.png"));
         const auto* avatar=findChild<QLabel*>("brandAvatar");
         if(!avatar || avatar->pixmap().isNull())qFatal("Brand photo was not loaded");
         const QImage windowImage=grab().toImage();const qreal ratio=windowImage.devicePixelRatio();const QPoint origin=avatar->mapTo(this,QPoint());QSet<QRgb> photoColors;
@@ -1149,6 +1150,7 @@ public:
 
 
 
+        QTimer::singleShot(0,this,[this,outputDir](){auto* dialog=qobject_cast<QDialog*>(QApplication::activeModalWidget());if(!dialog)qFatal("Setup dialog did not open");qApp->processEvents();dialog->grab().save(QDir(outputDir).filePath("29-master-setup.png"));dialog->reject();});showMasterScriptGuide();
         CloudLoginDialog loginPreview("Demo");loginPreview.show();qApp->processEvents();saveWidget(&loginPreview,QDir(outputDir).filePath("17-login.png"));loginPreview.close();
 
         QTimer::singleShot(0, qApp, &QCoreApplication::quit);
@@ -1200,7 +1202,6 @@ private:
 
     PremiumOrdersList* ordersList = nullptr;
     QComboBox* orderStatusFilter = nullptr;
-    QLabel* ordersSummaryLabel = nullptr;
     QLineEdit* orderSearchEdit = nullptr;
     QLabel* ordersCountLabel = nullptr;
     PremiumReportView* reportView = nullptr;
@@ -1236,6 +1237,8 @@ private:
     QLineEdit* masterWorkbookUrlEdit = nullptr;
     QCheckBox* salesRegistrationEnabledCheck = nullptr;
     QLabel* salesRegistrationStatusLabel = nullptr;
+    QPointer<QPlainTextEdit> masterSetupLog;
+    QJsonObject masterSetupReport;
 
     struct IntramanagerFetchResult {
         bool success = false;
@@ -2635,7 +2638,7 @@ private:
         auto* page=new QWidget;auto* layout=new QVBoxLayout(page);layout->setContentsMargins(0,0,0,0);layout->setSpacing(18);
         auto* filters=new QHBoxLayout;filters->setSpacing(12);orderSearchEdit=new QLineEdit;orderSearchEdit->setPlaceholderText("Søg på virksomhed, ordre eller produkt…");orderSearchEdit->addAction(premiumIcon("search"),QLineEdit::LeadingPosition);orderSearchEdit->setClearButtonEnabled(true);filters->addWidget(orderSearchEdit,1);
         orderStatusFilter=new QComboBox;orderStatusFilter->addItem("Alle statusser",QString());orderStatusFilter->addItem("Afventer masterark","pending");orderStatusFilter->addItem("Registreret","registered");orderStatusFilter->addItem("Kræver handling","error");filters->addWidget(orderStatusFilter);layout->addLayout(filters);
-        auto* heading=new QHBoxLayout;heading->setSpacing(12);heading->addWidget(premiumLabel("Alle ordrer","sectionTitle"));ordersCountLabel=premiumLabel("","badge");heading->addWidget(ordersCountLabel);heading->addStretch();ordersSummaryLabel=premiumLabel("","muted");heading->addWidget(ordersSummaryLabel);layout->addLayout(heading);
+        auto* heading=new QHBoxLayout;heading->setSpacing(12);heading->addWidget(premiumLabel("Alle ordrer","sectionTitle"));ordersCountLabel=premiumLabel("","badge");heading->addWidget(ordersCountLabel);heading->addStretch();layout->addLayout(heading);
         auto* actions=new QHBoxLayout;actions->setSpacing(9);auto* refreshBtn=new QPushButton;refreshBtn->setIcon(premiumIcon("refresh"));refreshBtn->setToolTip("Opdater ordrer");refreshBtn->setAccessibleName("Opdater ordrer");actions->addWidget(refreshBtn);actions->addStretch();
         auto* editBtn=new QPushButton("Rediger");auto* registerBtn=new QPushButton("Registrer / prøv igen");auto* deleteBtn=new QPushButton("Slet");deleteBtn->setProperty("destructive",true);for(auto* button:{editBtn,registerBtn,deleteBtn})actions->addWidget(button);layout->addLayout(actions);
         ordersList=new PremiumOrdersList;layout->addWidget(ordersList,1);
@@ -2646,12 +2649,12 @@ private:
     }
 
     void applyOrderFilter() {
-        if(!ordersList || !orderSearchEdit)return;const QString query=orderSearchEdit->text().simplified();const QString status=orderStatusFilter->currentData().toString();int visible=0;double points=0;qint64 units=0;
+        if(!ordersList || !orderSearchEdit)return;const QString query=orderSearchEdit->text().simplified();const QString status=orderStatusFilter->currentData().toString();int visible=0;
         for(int row=0;row<ordersList->count();++row){auto* item=ordersList->item(row);const auto data=item->data(Qt::UserRole).toMap();const QString state=data.value("state").toString();const QString category=state=="registered"?state:state=="error"?state:QString("pending");
             bool match=status.isEmpty() || status==category;for(const auto& word:query.split(' ',Qt::SkipEmptyParts))if(!item->text().contains(word,Qt::CaseInsensitive))match=false;
-            item->setHidden(!match);if(match){++visible;points+=data.value("points").toDouble();units+=data.value("units").toLongLong();}}
+            item->setHidden(!match);if(match)++visible;}
         if(ordersList->currentItem() && ordersList->currentItem()->isHidden()){ordersList->clearSelection();ordersList->setCurrentRow(-1);}
-        ordersCountLabel->setText(query.isEmpty() && status.isEmpty()?QString::number(visible):QString("%1 af %2").arg(visible).arg(ordersList->count()));ordersSummaryLabel->setText(QString::number(units)+" produkter · "+money(points)+" point");ordersList->doItemsLayout();ordersList->viewport()->update();
+        ordersCountLabel->setText(query.isEmpty() && status.isEmpty()?QString::number(visible):QString("%1 af %2").arg(visible).arg(ordersList->count()));ordersList->doItemsLayout();ordersList->viewport()->update();
     }
 
     QWidget* buildReportsTab() {
@@ -3518,52 +3521,32 @@ private:
         order.masterWorkbookUrl = repo.settings.masterWorkbookUrl.trimmed();
     }
 
-    void showMasterScriptGuide() {
-        if (masterRegistrationRunning) return;
-        QDialog dialog(this);
-        dialog.setWindowTitle("Forbind salgsregistrering i Chrome");
-        dialog.setMinimumWidth(580);
-        auto* layout = new QVBoxLayout(&dialog);
-        auto* text = new QLabel("<b>Opsætning én gang pr. arbejdskonto</b><br><br>"
-            "1. Åbn dit masterark i <b>Chrome</b>, og log ind.<br>"
-            "2. Vælg <b>Automatiser → Nyt script → Opret i Kodeeditor</b>.<br>"
-            "3. Omdøb det nye script til <b>ProviTrackerSalesRegistrationV4</b>.<br>"
-            "4. Kopier scriptet med knappen nedenfor. Markér hele teksten i kodeeditoren, indsæt og gem.<br>"
-            "5. I Chrome: <b>Indstillinger → Ydeevne → Hold altid disse websites aktive</b>. Tilføj <b>5rmarketing-my.sharepoint.com</b> én gang, så Chrome ikke sætter masterarket i dvale.<br>"
-            "6. Lad kodeeditoren være åben, og vælg <b>Kontrollér opsætning</b>.<br><br>"
-            "Har du V3-scriptet, opret et nyt V4-script med den kopierede kode. Vælg den arkfane, salget skal registreres i. Arkets navn er valgfrit."
-            "<br>Kontrollen tilføjer ingen salg. Bagefter kan masterarket ligge i en baggrundsfane.");
-        text->setWordWrap(true);
-        layout->addWidget(text);
-        auto* copy = new QPushButton("Kopier Excel-script");
-        auto* check = new QPushButton("Kontrollér opsætning");
-        auto* keepActive = new QPushButton("Hold masterarket aktivt i Chrome");
-        keepActive->setToolTip("Kopierer webstedets navn og åbner Chromes ydeevneindstillinger.");
-        auto* close = new QPushButton("Luk");
-        layout->addWidget(copy); layout->addWidget(keepActive); layout->addWidget(check); layout->addWidget(close);
-        connect(keepActive, &QPushButton::clicked, &dialog, [&dialog]() {
-            QApplication::clipboard()->setText("5rmarketing-my.sharepoint.com");
-            QSettings user("HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\App Paths\\chrome.exe", QSettings::NativeFormat);
-            QSettings machine("HKEY_LOCAL_MACHINE\\Software\\Microsoft\\Windows\\CurrentVersion\\App Paths\\chrome.exe", QSettings::NativeFormat);
-            QString chrome = user.value(".").toString();
-            if (chrome.isEmpty()) chrome = machine.value(".").toString();
-            if (chrome.isEmpty() || !QProcess::startDetached(chrome, {"chrome://settings/performance"}))
-                QMessageBox::information(&dialog, "Hold masterarket aktivt", "Åbn chrome://settings/performance i Chrome. Tilføj det kopierede webstedsnavn under Hold altid disse websites aktive.");
-        });
-        connect(copy, &QPushButton::clicked, &dialog, [this, &dialog]() {
-            QFile file(QFileInfo(intramanagerWorkerPath()).absolutePath() + "/_internal/chrome_extension/excel_online_sales_registration_v4.ts");
-            if (!file.open(QIODevice::ReadOnly)) {
-                QMessageBox::warning(&dialog, "Excel-script", "Scriptet mangler. Geninstaller den nyeste testversion.");
-                return;
-            }
-            QApplication::clipboard()->setText(QString::fromUtf8(file.readAll()));
-        });
-        connect(close, &QPushButton::clicked, &dialog, &QDialog::reject);
-        connect(check, &QPushButton::clicked, &dialog, &QDialog::accept);
-        if (dialog.exec() == QDialog::Accepted) runMasterWorker(true);
+    QString masterSetupPhaseText(const QString& phase) const {
+        static const QMap<QString,QString> names={{"probe","Finder masterarket og den valgte arkfane"},{"install-open","Åbner Office Scripts"},{"install-find","Finder eller opretter Provi Trackers script"},{"install-name","Navngiver det nye script"},{"install-write","Indsætter den medfølgende kode"},{"install-save","Kontrollerer koden og gemmer scriptet"},{"install-reopen","Genåbner scriptet fra Excel"},{"install-verify","Kontrollerer den gemte kode"},{"open","Åbner den skrivefri kontrol"},{"run","Starter kontrollen"},{"parameter","Udfylder kontrolparametrene"},{"submit","Sender kontrollen til Excel"},{"receipt","Afventer Excels bekræftelse"}};
+        return names.value(phase);
     }
 
-    void runMasterWorker(bool setup, QString registrationId = QString()) {
+    void showMasterScriptGuide() {
+        QDialog dialog(this);dialog.setObjectName("masterSetupDialog");dialog.setWindowTitle("Forbind masterark");dialog.resize(650,650);
+        auto* layout=new QVBoxLayout(&dialog);layout->setContentsMargins(26,24,26,24);layout->setSpacing(16);
+        layout->addWidget(premiumLabel("Dit masterark. Klar fra appen.","sectionTitle"));
+        auto* intro=premiumLabel("Udvidelsen åbner dit gemte masterark i Chrome, opretter sit eget script og kontrollerer opsætningen. Log ind i Microsoft, hvis browseren beder om det. Der registreres ingen salg under opsætningen.","muted");intro->setWordWrap(true);layout->addWidget(intro);
+        auto* start=new QPushButton("Opsæt automatisk i Chrome");start->setProperty("primary",true);layout->addWidget(start);
+        auto* check=new QPushButton("Kontrollér eksisterende opsætning");layout->addWidget(check);
+        masterSetupLog=new QPlainTextEdit;masterSetupLog->setReadOnly(true);masterSetupLog->setStyleSheet("QPlainTextEdit{background:#20242C;border:1px solid #363D49;border-radius:14px;padding:12px;color:#C7D1E2;}");masterSetupLog->setMinimumHeight(170);masterSetupLog->setPlaceholderText("Forløbet vises her, når opsætningen starter.");layout->addWidget(masterSetupLog,1);
+        auto* report=new QPushButton("Gem forløbsrapport");layout->addWidget(report);
+        auto* manual=new QPushButton("Manuel opsætning ▾");manual->setCheckable(true);layout->addWidget(manual);auto* manualBody=new QWidget;auto* bodyLayout=new QVBoxLayout(manualBody);bodyLayout->setContentsMargins(0,0,0,0);
+        auto* instructions=premiumLabel("Hvis automatisk opsætning stopper: Åbn Automatiser → Nyt script → Opret i Kodeeditor. Navngiv scriptet ProviTrackerSalesRegistrationV4, indsæt den kopierede kode, og gem. Lad editoren stå åben, og vælg Kontrollér eksisterende opsætning.","muted");instructions->setWordWrap(true);bodyLayout->addWidget(instructions);
+        auto* copy=new QPushButton("Kopier Excel-script");bodyLayout->addWidget(copy);layout->addWidget(manualBody);manualBody->hide();connect(manual,&QPushButton::toggled,manualBody,&QWidget::setVisible);
+        auto* close=new QPushButton("Luk");layout->addWidget(close);connect(close,&QPushButton::clicked,&dialog,&QDialog::reject);
+        connect(start,&QPushButton::clicked,&dialog,[this](){if(masterSetupLog)masterSetupLog->clear();masterSetupReport={};runMasterWorker(true,{},true);});
+        connect(check,&QPushButton::clicked,&dialog,[this](){runMasterWorker(true);});
+        connect(copy,&QPushButton::clicked,&dialog,[this,&dialog](){QFile file(QFileInfo(intramanagerWorkerPath()).absolutePath()+"/_internal/chrome_extension/excel_online_sales_registration_v4.ts");if(!file.open(QIODevice::ReadOnly)){QMessageBox::warning(&dialog,"Excel-script","Scriptet mangler. Geninstaller den nyeste testversion.");return;}QApplication::clipboard()->setText(QString::fromUtf8(file.readAll()));});
+        connect(report,&QPushButton::clicked,&dialog,[this,&dialog](){const QString path=QFileDialog::getSaveFileName(&dialog,"Gem forløbsrapport","ProviTracker-opsaetning.json","JSON (*.json)");if(path.isEmpty())return;QSaveFile file(path);if(!file.open(QIODevice::WriteOnly) || file.write(QJsonDocument(masterSetupReport).toJson())<0 || !file.commit())QMessageBox::warning(&dialog,"Forløbsrapport","Rapporten kunne ikke gemmes.");});
+        auto* timer=new QTimer(&dialog);const auto update=[this,start,check,copy,report,close](){start->setEnabled(!masterRegistrationRunning);check->setEnabled(!masterRegistrationRunning);copy->setEnabled(!masterRegistrationRunning);report->setEnabled(!masterSetupReport.isEmpty() && !masterRegistrationRunning);close->setText(masterRegistrationRunning?"Skjul – opsætningen fortsætter":"Luk");};connect(timer,&QTimer::timeout,&dialog,update);timer->start(200);update();dialog.exec();masterSetupLog=nullptr;
+    }
+
+    void runMasterWorker(bool setup, QString registrationId = QString(), bool automaticSetup = false) {
         if (masterRegistrationRunning) return;
         if (cloudUsername.isEmpty()) {
             QMessageBox::information(this, "Salgsregistrering", "Log ind i Provi Tracker først.");
@@ -3587,6 +3570,7 @@ private:
         }
         if (!isMasterWorkbookUrl(url)) {
             if (salesRegistrationStatusLabel) salesRegistrationStatusLabel->setText("Gem linket til dit masterark i Indstillinger først.");
+            if(setup && masterSetupLog)masterSetupLog->appendPlainText("Gem et direkte link til masterarket i Indstillinger først.");
             return;
         }
         masterRegistrationRunning = true;
@@ -3598,18 +3582,28 @@ private:
         const QString requestId = QUuid::createUuid().toString(QUuid::WithoutBraces);
         registration["requestId"] = requestId;
         if (setup) registration["isTest"] = true;
-        const QJsonObject input{{"action", setup ? "chrome-setup" : "chrome-register"},
+        const QJsonObject input{{"action", automaticSetup ? "chrome-autosetup" : setup ? "chrome-setup" : "chrome-register"},
             {"workbookUrl", url}, {"registration", registration}};
         auto* process = new QProcess(this);
         masterRegistrationRunning = true;
         if (salesRegistrationStatusLabel) salesRegistrationStatusLabel->setText(setup
             ? "Kontrollerer salgsregistreringsscriptet i dit åbne masterark i Chrome. Der skrives ingen salg."
             : "Registrerer salget i masterarket...");
+        if(automaticSetup){
+            if(masterSetupLog)masterSetupLog->appendPlainText("Starter automatisk opsætning. Eksisterende scripts bevares.");
+            auto buffer=std::make_shared<QByteArray>();
+            connect(process,&QProcess::readyReadStandardError,this,[this,process,buffer](){
+                buffer->append(process->readAllStandardError());
+                while(buffer->contains('\n')){const int end=buffer->indexOf('\n');const auto line=buffer->left(end);buffer->remove(0,end+1);if(!line.startsWith("PROVITRACKER_PROGRESS:"))continue;
+                    const QString text=masterSetupPhaseText(QJsonDocument::fromJson(line.mid(22)).object().value("phase").toString());if(text.isEmpty())continue;if(masterSetupLog)masterSetupLog->appendPlainText(text);if(salesRegistrationStatusLabel)salesRegistrationStatusLabel->setText(text);
+                }
+            });
+        }
         connect(process, &QProcess::started, this, [process, input]() {
             process->write(QJsonDocument(input).toJson(QJsonDocument::Compact));
             process->closeWriteChannel();
         });
-        const auto finish = [this, process, setup, registrationId, orderNumber, requestId, url](QJsonObject result) {
+        const auto finish = [this, process, setup, automaticSetup, registrationId, orderNumber, requestId, url](QJsonObject result) {
             masterRegistrationRunning = false;
             const QString status = result.value("status").toString();
             const bool ok = result.value("success").toBool() && result.value("scriptVersion").toInt() == 4
@@ -3620,6 +3614,7 @@ private:
                     && result.value("orderNumber").toString() == orderNumber && result.value("registrationId").toString() == registrationId
                     && result.value("row").toInt() >= 16));
             const QString error = result.value("error").toString("Excel bekræftede ikke registreringen. Kontrollér masterarket og prøv igen.");
+            if(automaticSetup){masterSetupReport=result.value("diagnostics").toObject();if(masterSetupReport.isEmpty())masterSetupReport=QJsonObject{{"format",1},{"kind","install"},{"phase","probe"},{"events",QJsonArray{}}};masterSetupReport["success"]=ok;if(masterSetupLog)masterSetupLog->appendPlainText(ok?"Klar. Excel har bekræftet opsætningen; ingen salg er registreret.":"Stoppet: "+error);}
             if (!setup) {
                 const int index = salesRegistrationIndex(repo.orders, registrationId);
                 if (index >= 0) {
@@ -3643,7 +3638,7 @@ private:
         connect(process, &QProcess::errorOccurred, this, [finish](QProcess::ProcessError error) {
             if (error == QProcess::FailedToStart) finish(QJsonObject{{"error", "Browserhjælperen kunne ikke starte. Geninstaller den nyeste Provi Tracker-version."}});
         });
-        QTimer::singleShot(210000, process, [process]() { if (process->state() != QProcess::NotRunning) process->kill(); });
+        QTimer::singleShot(automaticSetup ? 330000 : 210000, process, [process]() { if (process->state() != QProcess::NotRunning) process->kill(); });
         process->start(intramanagerWorkerPath(), {"--stdin-json"});
     }
 
@@ -3990,6 +3985,7 @@ int main(int argc, char *argv[]) {
         return 0;
     }
 
+    app.setWindowIcon(QIcon(":/settings/provi-icon.png"));
     applyMidnightPalette(app);
     app.setStyleSheet(premiumStyle());
     MainWindow w;

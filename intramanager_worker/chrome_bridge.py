@@ -15,7 +15,7 @@ from urllib.parse import urlparse, parse_qs
 
 HOST = 'dk.provitracker.masterark'
 LIMIT = 16384
-EXTENSION_FILES = ('manifest.json', 'background.js', 'diagnostics.js', 'intramanager.js', 'identity.js', 'probe.js', 'popup.html', 'popup.js', 'office_ui.js', 'receipt.js', 'excel_online_sales_registration_v3.ts', 'excel_online_sales_registration_v4.ts')
+EXTENSION_FILES = ('manifest.json', 'background.js', 'diagnostics.js', 'intramanager.js', 'identity.js', 'probe.js', 'popup.html', 'popup.js', 'office_ui.js', 'office_setup.js', 'receipt.js', 'excel_online_sales_registration_v3.ts', 'excel_online_sales_registration_v4.ts')
 
 def version_tuple(value):
     parts = str(value).split('.')
@@ -202,7 +202,7 @@ def probe(payload):
     return request_chrome(payload, 'probe')
 
 def run_registration(payload):
-    return request_chrome(payload, 'setup' if payload.get('action') == 'chrome-setup' else 'register')
+    return request_chrome(payload, 'install' if payload.get('action') == 'chrome-autosetup' else 'setup' if payload.get('action') == 'chrome-setup' else 'register')
 
 def valid_intramanager_request(value):
     if value.get('type')!='intramanager' or value.get('workbookUrl')!='https://5r.intramanager.com/reports/history/': return False
@@ -235,9 +235,9 @@ def request_chrome(payload, kind):
     register_host()
     folder = root()
     request_id = str(uuid.uuid4())
-    if kind == 'setup' and payload.get('registration', {}).get('requestId'):
+    if kind in {'setup','install'} and payload.get('registration', {}).get('requestId'):
         request_id = str(uuid.UUID(payload['registration']['requestId']))
-    registration = {'isTest': True, 'requestId': request_id} if kind == 'setup' else dict(payload.get('registration', {}))
+    registration = {'isTest': True, 'requestId': request_id} if kind in {'setup','install'} else dict(payload.get('registration', {}))
     if kind == 'register':
         try:
             uuid.UUID(registration['registrationId'])
@@ -247,7 +247,7 @@ def request_chrome(payload, kind):
         request_id = registration['requestId']
         if registration.get('isTest') is True or not isinstance(registration.get('orderNumber'), str) or not registration['orderNumber'].strip():
             raise ValueError('Ugyldig salgsregistrering.')
-    duration = 60 if kind=='intramanager' else 35 if kind == 'probe' else 180
+    duration = 300 if kind=='install' else 60 if kind=='intramanager' else 35 if kind == 'probe' else 180
     envelope = {'type': kind, 'requestId': request_id, 'workbookUrl': url, 'expiresAt': time.time()+duration}
     if kind not in {'probe','intramanager'}: envelope['registration'] = registration
     if kind=='intramanager':
@@ -262,8 +262,15 @@ def request_chrome(payload, kind):
         if existing.get('expiresAt', 0) > time.time(): raise RuntimeError('En anden Chrome-kontrol er i gang. Prøv igen om lidt.')
         atomic_json(request, envelope)
     try:
+        last_phase = None
         deadline = time.monotonic() + duration
         while time.monotonic() < deadline:
+            if kind=='install':
+                progress = read_json(folder / 'progress.json')
+                phase = progress.get('phase')
+                if progress.get('requestId')==request_id and phase in SETUP_PHASES and phase!=last_phase:
+                    last_phase=phase
+                    print('PROVITRACKER_PROGRESS:'+json.dumps({'phase':phase}),file=sys.stderr,flush=True)
             result = read_json(response)
             if result.get('requestId') == request_id:
                 if kind=='probe' or result.get('success') is not True or (valid_intramanager_result(result,envelope) if kind=='intramanager' else valid_receipt(result, registration)): return result
@@ -309,6 +316,9 @@ def native_main(origin):
             if live and request.get('requestId') != last_id and (valid_intramanager_request(request) if request.get('type')=='intramanager' else valid_workbook(request.get('workbookUrl', ''))):
                 last_id = request['requestId']
                 write_frame(sys.stdout.buffer, request)
+        elif message.get('type') == 'progress' and live and request.get('type')=='install' and message.get('requestId')==last_id==request.get('requestId'):
+            if message.get('phase') in SETUP_PHASES:
+                atomic_json(root() / 'progress.json', {'requestId':last_id,'phase':message['phase']})
         elif message.get('type') == 'result' and live and message.get('requestId') == last_id == request.get('requestId'):
             if request.get('type')=='intramanager':
                 success=valid_intramanager_result(message,request)
@@ -322,6 +332,31 @@ def native_main(origin):
                 success = valid_receipt(message, request.get('registration', {}))
                 result = {key:message.get(key) for key in ['requestId','scriptVersion','registrationId','orderNumber','row','status','worksheetName','worksheetId']}
                 result['success'] = success
+            if request.get('type')=='install': result['diagnostics']=safe_setup_report(message.get('diagnostics'))
             result['background'] = message.get('background') is True
             if not success: result['error'] = str(message.get('error', 'Excel bekræftede ikke salget. Kontrollér masterarket før genforsøg.'))[:500]
             atomic_json(root() / 'response.json', result)
+
+
+SETUP_PHASES = {'probe','install-open','install-find','install-name','install-write','install-save','install-reopen','install-verify','open','run','parameter','submit','receipt'}
+def safe_setup_report(value):
+    if not isinstance(value,dict): return {}
+    report={'format':1,'kind':'install','extensionVersion':value.get('extensionVersion','') if isinstance(value.get('extensionVersion'),str) and value['extensionVersion'].replace('.','').isdigit() and len(value['extensionVersion'])<=24 else 'unknown'}
+    if value.get('scriptVersion')==4: report['scriptVersion']=4
+    revision=value.get('scriptRevision')
+    if isinstance(revision,str) and len(revision)==10 and all(c in '0123456789abcdef' for c in revision): report['scriptRevision']=revision
+    if type(value.get('elapsedMs')) is int: report['elapsedMs']=max(0,min(value['elapsedMs'],3600000))
+    report['phase']=value.get('phase') if isinstance(value.get('phase'),str) and value['phase'] in SETUP_PHASES else 'probe'
+    report['events']=[]
+    for item in value.get('events',[])[:120] if isinstance(value.get('events'),list) else []:
+        if not isinstance(item,dict): continue
+        event={}
+        for key in ['event','phase','outcome','reason']:
+            if isinstance(item.get(key),str) and item[key] in SETUP_REPORT_CODES: event[key]=item[key]
+        for key in ['active','discarded','frozen','matched','codeMatched','saved','reopened','scriptMatched','defaultTest','attached','disabled','readOnly','runEnabled']:
+            if type(item.get(key)) is bool: event[key]=item[key]
+        for key in ['ms','lastMs','repeats','frames','office','dialogs','targets','fields','matches','frame','inflight']:
+            if type(item.get(key)) is int: event[key]=max(0,min(item[key],3600000))
+        report['events'].append(event)
+    return report
+SETUP_REPORT_CODES = SETUP_PHASES | {'start','tab','navigation','injection','injected','rejected','finished','workbook-frames','office-frames','scan-error','result','error','none','other','permission','frame-gone','context-gone','waiting','parameter-script','parameter-field','parameter-run','parameters','ready','started','filled','refill','submitted','installed','next'}

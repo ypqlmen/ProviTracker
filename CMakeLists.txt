@@ -32,6 +32,9 @@ target_link_libraries(ProvisionTrackerV2 PRIVATE
 )
 
 if(WIN32)
+    enable_language(RC)
+    target_sources(ProvisionTrackerV2 PRIVATE app_icon.rc)
+    target_include_directories(ProvisionTrackerV2 PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
     target_link_libraries(ProvisionTrackerV2 PRIVATE crypt32 advapi32 bcrypt)
 endif()
 

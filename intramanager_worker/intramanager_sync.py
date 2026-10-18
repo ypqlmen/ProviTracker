@@ -1283,7 +1283,7 @@ def main():
             except Exception as exc:
                 output({"success": False, "error": str(exc)[:700]})
             return
-        if args.action in {"chrome-setup", "chrome-register"}:
+        if args.action in {"chrome-setup", "chrome-autosetup", "chrome-register"}:
             from chrome_bridge import run_registration
             try:
                 output(run_registration(payload))

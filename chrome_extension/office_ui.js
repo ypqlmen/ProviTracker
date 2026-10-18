@@ -1,7 +1,6 @@
 // Operate visible Office Scripts controls only. No cookies, tokens or private page APIs.
 // Serialized by executeScript: all helpers deliberately live inside this function.
-export function officeStep(phase, payloadJson) {
-  const scriptName = 'ProviTrackerSalesRegistrationV4';
+export function officeStep(phase, payloadJson, scriptName = 'ProviTrackerSalesRegistrationV4') {
   const text = el => (el.getAttribute('aria-label') || el.textContent || '').replace(/\s+/g,' ').trim();
   const usable = el => !el.disabled && !el.closest('[aria-hidden="true"],[hidden]')
     && getComputedStyle(el).display !== 'none' && getComputedStyle(el).visibility !== 'hidden';

@@ -18,7 +18,7 @@ function background() {
     setInterval:()=>1,clearInterval:()=>{},setTimeout:fn=>{timers.push(fn);return 1},clearTimeout:()=>{},
     chrome:{runtime:{getManifest:()=>({version}),reload:()=>calls.push('reload'),connectNative:()=>port,
       onMessage:{addListener:fn=>runtime=fn},onStartup:event(),onInstalled:event()},
-      storage:{local:{set:async data=>{}},session:{get:async()=>({}),set:async()=>{},remove:async()=>{}}},
+      storage:{local:{get:async key=>({[key]:typeof stored==='undefined'?undefined:stored[key]}),set:async data=>{}},session:{get:async()=>({}),set:async()=>{},remove:async()=>{}}},
     tabs:{onUpdated:event(),onRemoved:event(),update:async(id,value)=>{assert.equal(Object.keys(value).join(','),'autoDiscardable');},query:async()=>[{id:7,url}],get:async()=>({id:7,url,active:false}),sendMessage:async()=>{}},
       webNavigation:{getAllFrames:async()=>[{frameId:0,parentFrameId:-1,url},{frameId:1,parentFrameId:0,url:'https://euc-excel.officeapps.live.com/x'},
         {frameId:2,parentFrameId:0,url:'https://unrelated.example/x'},{frameId:3,parentFrameId:1,url:'about:blank'},

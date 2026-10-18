@@ -26,7 +26,7 @@ function fixture({existingDialog=false,reverts=0,wrongDialog=false,waiting=null,
  vm.runInNewContext(source,{workbookIdentity,traceStep,diagnosticReport,failureReason,officeStep,validReceipt,URL,Date:{now:()=>clock},
  setInterval:fn=>{intervals.push(fn);return fn},clearInterval(){},setTimeout:fn=>{timeouts.push(fn);return fn},clearTimeout(){},
  chrome:{runtime:{getManifest:()=>({version}),reload:()=>calls.push('reload'),connectNative:()=>port,onMessage:event(),onStartup:event(),onInstalled:event()},
- storage:{local:{set:async data=>Object.assign(stored,data)},session:{get:async key=>({[key]:stored[key]}),set:async values=>Object.assign(stored,values),remove:async key=>delete stored[key]}},
+ storage:{local:{get:async key=>({[key]:typeof stored==='undefined'?undefined:stored[key]}),set:async data=>Object.assign(stored,data)},session:{get:async key=>({[key]:stored[key]}),set:async values=>Object.assign(stored,values),remove:async key=>delete stored[key]}},
  tabs:{onUpdated:{addListener:fn=>updated=fn},onRemoved:{addListener:fn=>removed=fn},query:async()=>[{id:7,url,autoDiscardable:true,frozen,discarded}],get:async()=>({id:7,url:currentUrl,active:false,frozen,discarded}),sendMessage:async()=>{},update:async(id,value)=>{assert.equal(id,7);assert.equal(Object.keys(value).join(','),'autoDiscardable','never activate, reload or navigate the workbook');calls.push({protection:value.autoDiscardable});}},
  webNavigation:{getAllFrames:async()=>frames.filter(f=>f.frameId!==3 || dialog)},scripting:{executeScript:async input=>{
  if(input.files)return [{result:{sheet:'Salg ÆØÅ',origin:'https://euc-excel.officeapps.live.com'}}];

@@ -19,7 +19,7 @@ function fixture({existing=false,pendingTab=false,duplicate=false}={}) {
   vm.runInNewContext(source,{workbookIdentity,traceStep,diagnosticReport,failureReason,URL,
     setInterval:fn=>{intervals.push(fn);return fn},clearInterval(){},setTimeout:()=>1,clearTimeout(){},
     chrome:{runtime:{getManifest:()=>({version}),reload(){},connectNative:()=>port,onMessage:event(),onStartup:event(),onInstalled:event()},
-    storage:{local:{set:async data=>Object.assign(stored,data)},session:{get:async key=>({[key]:stored[key]}),set:async obj=>Object.assign(stored,obj),remove:async key=>delete stored[key]}},
+    storage:{local:{get:async key=>({[key]:typeof stored==='undefined'?undefined:stored[key]}),set:async data=>Object.assign(stored,data)},session:{get:async key=>({[key]:stored[key]}),set:async obj=>Object.assign(stored,obj),remove:async key=>delete stored[key]}},
     tabs:{onUpdated:event(),onRemoved:event(),query:async()=>[...tabs.values()],get:async id=>{if(!tabs.has(id))throw Error('Closed');return {...tabs.get(id)}},
       create:async options=>{assert.equal(options.url,url);assert.equal(options.active,false,'opening must preserve foreground');created.push(options);return add({id:nextId++,url:'about:blank',pendingUrl:options.url,status:'loading',active:false,autoDiscardable:true})},
       update:async(id,value)=>{assert.equal(Object.keys(value).join(','),'autoDiscardable');Object.assign(tabs.get(id),value)},sendMessage:async()=>{}},

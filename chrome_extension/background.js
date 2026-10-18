@@ -1,5 +1,6 @@
 import {startIntramanager} from './intramanager.js';
 import {workbookIdentity} from './identity.js';
+import {installStep} from './office_setup.js';
 import {officeStep} from './office_ui.js';
 import {validReceipt} from './receipt.js';
 import {traceStep,diagnosticReport,failureReason} from './diagnostics.js';
@@ -109,7 +110,7 @@ async function confirmWorkbook(job, sheetName) {
       if (job.registration.worksheetName && job.registration.worksheetName!==sheetName) {
         finish(job,{success:false,error:'Salget tilhører arkfanen '+job.registration.worksheetName+'. Vælg den før genforsøg.'});return;
       }
-      job.registration.worksheetName=sheetName;job.connected=true;job.phase='open';
+      job.registration.worksheetName=sheetName;job.connected=true;job.phase=job.type==='install'?'install-open':'open';
     }
   } catch { finish(job, {success:false, error:'Masterarket blev lukket under kontrollen.'}); }
 }
@@ -166,7 +167,8 @@ async function scanOffice(job) {
     // Inspect the pane first. Open the gallery only if the script pane is absent.
     const dialogs=office.filter(frame=>/\/dialog\.html(?:[?#]|$)/i.test(frame.url));
     const parameterPhase=['open','run','parameter','submit'].includes(job.phase);
-    const targets=parameterPhase && dialogs.length ? dialogs : office.length ? office : job.phase==='open' ? excel : [];
+    const installing=job.phase?.startsWith('install-');
+    const targets=installing ? (office.length ? office : excel) : parameterPhase && dialogs.length ? dialogs : office.length ? office : job.phase==='open' ? excel : [];
     job.officeMissing=targets.length===0;
     traceStep(job,'office-frames',{phase:job.phase,frames:frames.length,office:office.length,dialogs:dialogs.length,targets:targets.length});
     for(const frame of targets) {
@@ -174,16 +176,18 @@ async function scanOffice(job) {
       let readings;
       traceStep(job,'injection',{phase:job.phase,frame:frame.frameId});
       job.inflight=1;
-      try { readings=await chrome.scripting.executeScript({target:{tabId:job.tabId,frameIds:[frame.frameId]},func:officeStep,args:[job.phase,JSON.stringify(job.registration)]}); }
+      try { readings=await chrome.scripting.executeScript({target:{tabId:job.tabId,frameIds:[frame.frameId]},func:installing?installStep:officeStep,args:installing?[job.phase,job.source,job.scriptName,job.requestId]:[job.phase,JSON.stringify(job.registration),job.scriptName]}); }
       catch(error) { job.inflight=0;traceStep(job,'rejected',{phase:job.phase,frame:frame.frameId,reason:failureReason(error)});job.officeBlocked=true;continue; }
       job.inflight=0;
       job.officeBlocked=false;
       for(const item of readings) {
         const result=item.result;
-        const outcome=!result?'none':result.error?'error':result.waiting?'waiting':result.receipt?'receipt':['parameters','refill','ready','started','filled','submitted'].find(key=>result[key]) || 'other';
+        const outcome=!result?'none':result.error?'error':result.waiting?'waiting':result.receipt?'receipt':result.next?'next':result.installed?'installed':['parameters','refill','ready','started','filled','submitted'].find(key=>result[key]) || 'other';
         traceStep(job,'injected',{phase:job.phase,frame:frame.frameId,outcome,reason:result?.waiting,...result?.controls});
         if(!result) continue;
         if(result.error) { finish(job,{success:false,error:result.error});return; }
+        if(result.next) { job.phase=result.next;return; }
+        if(result.installed) { job.installed=true;job.phase='open';return; }
         if(result.parameters) { job.phase='parameter';return; }
         if(result.waiting) { job.waiting=result.waiting;return; }
         job.waiting=null;
@@ -202,6 +206,10 @@ async function scanOffice(job) {
         if(result.receipt && validReceipt(result.receipt,job.registration)) {
           const current=await chrome.tabs.get(job.tabId);
           if(!await workbookAvailable(job,current)) return;
+          if(job.type==='install'){
+            if(!job.installed)return;
+            await chrome.storage.local.set({['masterScript.'+job.identity]:{name:job.scriptName}});
+          }
           finish(job,{...result.receipt,background:!current.active});return;
         }
       }
@@ -215,6 +223,7 @@ async function scan(job) {
   try {
     const tab=await chrome.tabs.get(job.tabId);
     if (pending!==job) return;
+    if(job.type==='install' && job.progressPhase!==(job.phase || 'probe')){job.progressPhase=job.phase || 'probe';status=({probe:'Finder masterarket…','install-open':'Åbner Office Scripts…','install-find':'Finder opsætningsscriptet…','install-name':'Navngiver scriptet…','install-write':'Indsætter koden…','install-save':'Gemmer scriptet…','install-reopen':'Genåbner det gemte script…','install-verify':'Kontrollerer koden…',open:'Åbner kontrollen…',run:'Starter kontrollen…',parameter:'Udfylder kontrollen…',submit:'Sender kontrollen…',receipt:'Afventer Excel…'})[job.progressPhase] || 'Opsætter masterarket…';port?.postMessage({type:'progress',requestId:job.requestId,phase:job.progressPhase});}
     traceStep(job,'tab',{active:tab.active===true,discarded:tab.discarded===true,frozen:tab.frozen===true,locked:job.scanning===true,inflight:job.inflight || 0});
     if (!await workbookAvailable(job,tab)) return;
     // Check outside the injection lock: a suspended injected call can stay pending.
@@ -245,9 +254,10 @@ function finish(job, result) {
   clearInterval(job.poll);
   clearTimeout(job.timeout);
   traceStep(job,'finished',{phase:job.phase,outcome:result.success?'result':'error',locked:job.scanning===true,inflight:job.inflight || 0});
+  if(job.type==='install'){result.diagnostics=diagnosticReport(job,loadedVersion);chrome.storage.local.set({lastSetup:result.diagnostics}).catch(()=>{});}
   if(!result.success && job.type!=='intramanager') chrome.storage.local.set({lastFailure:diagnosticReport(job,loadedVersion)}).catch(()=>{});
   pending = null;
-  status = result.success ? (job.type==='intramanager' ? 'Intramanager er opdateret.' : job.type==='probe' ? 'Forbindelsen til masterarket virker.' : 'Excel har bekræftet registreringen.') : result.error;
+  status = result.success ? (job.type==='intramanager' ? 'Intramanager er opdateret.' : job.type==='probe' ? 'Forbindelsen til masterarket virker.' : job.type==='install' ? 'Masterarket er opsat og kontrolleret uden at registrere salg.' : 'Excel har bekræftet registreringen.') : result.error;
   port?.postMessage({type:'result', requestId:job.requestId, worksheetName:job.registration?.worksheetName, extensionVersion:loadedVersion, ...result});
   reloadWhenIdle();
 }
@@ -274,21 +284,33 @@ function connect() {
       try {await startIntramanager(job,finish,()=>pending===job);} catch {finish(job,{success:false,error:'Chrome-forbindelsen til Intramanager kunne ikke starte.'});}
       return;
     }
-    if (!['probe','setup','register'].includes(message.type) || pending) return;
+    if (!['probe','setup','install','register'].includes(message.type) || pending) return;
     const identity = workbookIdentity(message.workbookUrl);
     if (!identity) return;
-    const registration=message.type==='setup' ? {isTest:true,requestId:message.requestId} : message.registration;
+    const registration=['setup','install'].includes(message.type) ? {isTest:true,requestId:message.requestId} : message.registration;
     if(message.type==='register' && (!registration || registration.requestId!==message.requestId || typeof registration.registrationId!=='string' || registration.isTest===true)) return;
     const job = pending = {requestId:message.requestId, identity, heard:false,type:message.type,registration,startedAt:Date.now(),trace:[]};
     traceStep(job,'start',{phase:message.type});
     try {
+      if(job.type==='install'){
+        const response=await fetch(chrome.runtime.getURL('excel_online_sales_registration_v4.ts'));
+        if(!response.ok)throw Error('Missing packaged script');
+        job.source=await response.text();
+        if(!job.source.includes('PROVITRACKER_RESULT:') || job.source.length<1000)throw Error('Invalid packaged script');
+        const digest=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(job.source));
+        const version=Array.from(new Uint8Array(digest)).map(n=>n.toString(16).padStart(2,'0')).join('').slice(0,10);
+        job.scriptName='ProviTrackerAutoV4_'+version;
+      }else{
+        const key='masterScript.'+identity,saved=(await chrome.storage.local.get(key))[key];
+        job.scriptName=/^ProviTrackerAutoV4_[0-9a-f]{10}$/.test(saved?.name || '')?saved.name:'ProviTrackerSalesRegistrationV4';
+      }
       const tab=await selectWorkbook(job,message.workbookUrl);
       if (pending !== job || !tab) return;
       job.tabId = tab.id;
       // Re-read the current frames while Excel boots, including frames created
       // after the first scan. Never activate or reload the workbook tab.
       job.poll = setInterval(() => scan(job), 500);
-      job.timeout = setTimeout(() => finish(job, {success:false, error:job.connected
+      job.timeout = setTimeout(() => finish(job, {success:false, error:job.phase?.startsWith('install-') ? 'Automatisk opsætning stoppede ved '+job.phase+'. Åbn forløbsrapporten i Provi Tracker. Ingen salg er registreret.' : job.connected
         ? (job.officeBlocked ? 'Chrome-udvidelsen mangler adgang til Excels scriptpanel. Genindlæs udvidelsen i Chrome, og prøv igen.' : job.officeMissing ? 'Excels scriptvindue blev ikke fundet. Åbn ProviTrackerSalesRegistrationV4 i kodeeditoren, og prøv igen.' : job.waiting==='parameter-script' ? 'Excels parametervindue blev ikke færdigindlæst. Åbn ProviTrackerSalesRegistrationV4, og prøv samme ordre igen.' : job.waiting==='parameter-field' ? 'Excel viser parametervinduet, men payloadJson-feltet er ikke klar til indtastning. Genindlæs masterarket, og prøv igen.' : job.waiting==='parameter-run' ? 'Salgsdataene er indsat, men Excel har ikke aktiveret Kør. Genindlæs masterarket, og prøv samme ordre igen.' : (['parameter','submit','run'].includes(job.phase) ? 'Excel stoppede ved scriptets parametre. Luk parametervinduet, kontrollér at Chrome-udvidelsen er opdateret, og prøv igen fra Ordrer.' : 'Excel bekræftede ikke registreringen. Åbn ProviTrackerSalesRegistrationV4 i kodeeditoren via Automatiser. Kontrollér arket før genforsøg.'))
         : job.excelBlocked && !job.excelRead
         ? 'Chrome-udvidelsen har ikke adgang til Excel-rammen. Kontrollér udvidelsens webstedsadgang til euc-excel.officeapps.live.com i Chrome, og prøv igen.'
@@ -296,7 +318,7 @@ function connect() {
         ? 'Chrome svarede fra SharePoint, men selve Excel-arket svarede ikke. Genindlæs masterarket i Chrome, kontrollér login, og prøv igen.'
         : job.heard
         ? 'Chrome svarede, men den valgte arkfane blev ikke fundet i Excel. Kontrollér at masterarket er færdigindlæst, vælg salgsarket, og prøv igen.'
-        : 'Udvidelsen svarede ikke fra masterarket. Genindlæs Provi Tracker-udvidelsen under chrome://extensions og derefter masterarket.'}), message.type==='probe' ? 22000 : 150000);
+        : 'Udvidelsen svarede ikke fra masterarket. Genindlæs Provi Tracker-udvidelsen under chrome://extensions og derefter masterarket.'}), message.type==='probe' ? 22000 : message.type==='install' ? 270000 : 150000);
       await scan(job);
     } catch {
       finish(job, {success:false, error:'Chrome-kontrollen blev afbrudt. Åbn masterarket, og prøv igen.'});

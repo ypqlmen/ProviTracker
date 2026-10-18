@@ -1,4 +1,4 @@
-# Salgsregistrering i Chrome – testversion 0.1.7
+# Salgsregistrering i Chrome – testversion 0.1.13
 
 Provi Tracker overfører nye salgsregistreringer gennem brugerens eksisterende Chrome-login. Ordrekøen bruger Chrome i stedet for en separat Microsoft-browser. Funktionen er endnu kun i testversionen; den offentlige opdateringskanal ændres ikke af Windows-prøvebygningen.
 
@@ -6,13 +6,16 @@ Provi Tracker overfører nye salgsregistreringer gennem brugerens eksisterende C
 
 1. Installer den nye Windows-testversion. Åbn **Indstillinger → Salgsregistrering** i Provi Tracker.
 2. Gem sælgerinitialer og det direkte masterark-link med `sourcedoc`. Åbn dette masterark én gang i Chrome, og log ind.
-3. Vælg **Installer Chrome-udvidelse**. Følg programmets guide: åbn `chrome://extensions`, behold **Udviklertilstand** aktiveret, og vælg **Indlæs udpakket** med den mappesti, programmet kopierer. Det kræver ingen administratorinstallation. Hvis udvidelsen allerede er installeret, bruges samme mappe og samme udvidelses-ID. Kontrollér version **0.1.7** og adgang til Excel og scriptpanelet; Chrome kan bede om ny webstedsadgang ved denne opdatering.
-4. Vælg **Forbind masterark**. Her ligger guiden og knappen **Kopier Excel-script**. Opret et nyt Office-script via **Automatiser → Nyt script → Opret i Kodeeditor**, og omdøb det til **ProviTrackerSalesRegistrationV4**. Markér hele standardkoden, indsæt den kopierede kode, og gem. Bevar eventuelle tidligere scripts.
-5. Lad V4-scriptet være åbent i kodeeditoren. Vælg først den ønskede arkfane nederst i Excel. Vælg derefter **Kontrollér opsætning** i programmets guide. Denne kontrol skal bekræftes af Excel og tilføjer ingen salg.
-6. I Chrome → **Indstillinger → Ydeevne → Hold altid disse websites aktive**: tilføj **5rmarketing-my.sharepoint.com** én gang. Det undtager masterarket fra både hukommelsesbesparelse og Chromes frysning under energibesparelse. En allerede sovende fane skal åbnes én gang. Derefter kan du arbejde i en anden fane.
-7. Slå **Registrer automatisk i masterarket** til, og gem indstillingerne. Gem den næste nye ordre med alle kundedata og produkter. Kontrollér **Registreret i masterark** på Ordrer og de to placeringer i Excel.
+3. Vælg **Installer Chrome-udvidelse**. Følg programmets guide: åbn `chrome://extensions`, behold **Udviklertilstand** aktiveret, og vælg **Indlæs udpakket** med den mappesti, programmet kopierer. Det kræver ingen administratorinstallation. Hvis udvidelsen allerede er installeret, bruges samme mappe og samme udvidelses-ID. Kontrollér version **0.1.13** og adgang til Excel og scriptpanelet; Chrome kan bede om ny webstedsadgang ved denne opdatering.
+4. Gem det direkte link til masterarket i appen. Vælg **Forbind masterark → Opsæt automatisk i Chrome**.
+5. Følg trinene i dialogen. Udvidelsen genbruger eller opretter sit eget versionsbestemte `ProviTrackerAutoV4_…`-script, indsætter den medfølgende kode, læser hele koden tilbage, gemmer, genåbner og kontrollerer den igen. Eksisterende og ændrede scripts overskrives ikke. En skrivefri kørsel skal kvittere fra Excel, før appen melder klar.
+6. Slå **Registrer automatisk i masterarket** til, og gem indstillingerne.
 
-Excel-scriptet skal oprettes én gang pr. arbejdskonto. Brugeren får hjælp inde i programmet og skal ikke hente kildefiler fra GitHub. Scriptet kan genfindes under Automatiser. Det åbne masterark må være en baggrundsfane; brugeren skal ikke aktivere fanen for hvert salg. Browseren og masterarket skal være åbne og logget ind. Microsofts krav om login/MFA gælder fortsat. Mailafsendelse er en senere opgave.
+**Gem forløbsrapport** i appen eller **Gem opsætningsrapport** i udvidelsen gemmer det seneste forløbs trin og tider – både ved succes og fejl. Rapporten indeholder ikke salgsdata, dokumentlink, kode eller login og sendes ikke automatisk. Microsoft-login/MFA skal fortsat godkendes af brugeren. Ved blokeret Office Scripts eller ændrede Excel-kontroller stopper opsætningen med besked; en manuel reservevej findes i samme dialog.
+
+Udvidelsen bruger almindelige synlige felter og editorens tastatur-/kopi-/indsæt-hændelser. Den læser ikke systemets udklipsholder og kræver ingen nye Chrome-rettigheder. Et genforsøg genbruger det uændrede gemte script. Et afbrudt forløb med ufuldstændig kode kræver manuel kontrol; løsningen overskriver ikke koden automatisk.
+
+Chrome og Microsoft-login skal være aktive. Hvis Chrome sætter fanen i dvale, tilføjes `5rmarketing-my.sharepoint.com` under **Indstillinger → Ydeevne → Hold altid disse websites aktive**. Opsætning og salg kan foregå i en baggrundsfane; daglig MFA omgås ikke.
 
 ## Arkets struktur og skrivning
 
@@ -46,4 +49,7 @@ En skrivefri kørsel af V4 i brugerens rigtige Excel skal validere kompilering, 
 
 ## Parametervinduet
 
-Udvidelsen genkender `payloadJson` via feltets label, navn eller tilgængelighedstekst. Den ældre hjælpetekst er kun en fallback. Et allerede åbent V4-parametervindue genbruges før kodeeditorens Kør-knap. Salgsdata erstatter den indledende `{"isTest":true}`-værdi; kun en fuld identisk værdi må sendes. Hvis Excel nulstiller et styret felt, udfyldes det igen højst tre gange. Et vindue, som et tidligere forsøg allerede har sendt, kræver kontrol før genbrug. Opret det nye V4-script én gang fra programmets guide; bevar det gamle V3-script. Genforsøg bindes til den oprindelige arkfane via dens ID. Eksisterende V3-journalrækker behandles som registreringer i Ark1.
+Udvidelsen genkender `payloadJson` via feltets label, navn eller tilgængelighedstekst. Den ældre hjælpetekst er kun en fallback. Et allerede åbent V4-parametervindue genbruges før kodeeditorens Kør-knap. Salgsdata erstatter den indledende `{"isTest":true}`-værdi; kun en fuld identisk værdi må sendes. Hvis Excel nulstiller et styret felt, udfyldes det igen højst tre gange. Et vindue, som et tidligere forsøg allerede har sendt, kræver kontrol før genbrug. Brug automatisk opsætning fra appen, eller opret V4 via den manuelle reservevej; bevar det gamle V3-script. Genforsøg bindes til den oprindelige arkfane via dens ID. Eksisterende V3-journalrækker behandles som registreringer i Ark1.
+
+## Automatisk opsætning – afprøvning
+Den isolerede Chrome-prøve bruger den rigtige Monaco-editor og udvidelsen med krydsdomæne-rammer. Den verificerer ny oprettelse, fuld kodetilbage­læsning, gemning/genåbning, kontrolkvittering uden salg, genbrug, bevarelse af andre scripts og stop ved ændret eller ugemt kode. Den erstatter ikke afprøvning af automatisk opsætning i en brugers autentificerede Microsoft-session.

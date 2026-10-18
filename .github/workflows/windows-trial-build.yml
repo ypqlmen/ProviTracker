@@ -169,6 +169,18 @@ jobs:
           $expectedVersion = [regex]::Match((Get-Content main_v32.cpp -Raw), 'APP_VERSION\s*=\s*"([^"]+)"').Groups[1].Value
           if ($proc.ExitCode -ne 0 -or (Get-Content $versionFile -Raw).Trim() -ne $expectedVersion) { throw 'Installed application version check failed' }
           Write-Host "Installed application started successfully: $expectedVersion"
+          Add-Type -AssemblyName System.Drawing
+          $actualIcon = [System.Drawing.Icon]::ExtractAssociatedIcon($installed)
+          $expectedIcon = [System.Drawing.Icon]::new((Join-Path $pwd 'assets/provi.ico'), 32, 32)
+          $actualImage = $actualIcon.ToBitmap()
+          $expectedImage = $expectedIcon.ToBitmap()
+          if ($actualImage.Size -ne $expectedImage.Size) { throw 'Installed program icon size differs' }
+          for ($y=0; $y -lt $actualImage.Height; $y++) {
+            for ($x=0; $x -lt $actualImage.Width; $x++) {
+              if ($actualImage.GetPixel($x,$y).ToArgb() -ne $expectedImage.GetPixel($x,$y).ToArgb()) { throw 'Installed EXE does not use the supplied program photo' }
+            }
+          }
+          $actualImage.Dispose(); $expectedImage.Dispose(); $actualIcon.Dispose(); $expectedIcon.Dispose()
       - name: Verify local Chrome extension preparation
         run: |
           $ErrorActionPreference = 'Stop'
@@ -197,6 +209,15 @@ jobs:
           $env:PLAYWRIGHT_BROWSERS_PATH = Join-Path $env:RUNNER_TEMP 'provi-trial-stage/intramanager_worker/b'
           python tests/chrome_intramanager_integration.py
           if ($LASTEXITCODE -ne 0) { throw 'Actual Chrome payroll reader failed' }
+      - name: Verify automatic script setup with real Monaco editor
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $env:PLAYWRIGHT_BROWSERS_PATH = Join-Path $env:RUNNER_TEMP 'provi-trial-stage/intramanager_worker/b'
+          $deps = Join-Path $env:RUNNER_TEMP 'provi-monaco'
+          npm.cmd install --prefix "$deps" monaco-editor@0.52.2 --ignore-scripts --no-audit --no-fund
+          if ($LASTEXITCODE -ne 0) { throw 'Editor fixture dependency failed' }
+          python tests/chrome_setup_integration.py --monaco "$deps/node_modules/monaco-editor/min/vs"
+          if ($LASTEXITCODE -ne 0) { throw 'Automatic script setup failed' }
       - name: Capture installed Midnight Grey interface with demo data
         run: |
           $installed = Join-Path $env:LOCALAPPDATA 'Programs/Provi Tracker/ProvisionTrackerV2.exe'

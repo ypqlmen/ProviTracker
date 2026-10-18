@@ -22,6 +22,7 @@ OutputBaseFilename={#MySetupBaseName}
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
+SetupIconFile=..\assets\provi.ico
 PrivilegesRequired=lowest
 ArchitecturesAllowed=x64compatible
 UninstallDisplayName={#MyAppName}

@@ -1,7 +1,7 @@
 // Structural metadata only: never retain page text, URLs or sale payloads.
-const flags=['active','discarded','frozen','locked','matched','defaultTest','attached','readOnly','disabled','runEnabled','scriptMatched','titleKnown'];
+const flags=['active','discarded','frozen','locked','matched','defaultTest','attached','readOnly','disabled','runEnabled','scriptMatched','titleKnown','codeMatched','saved','reopened'];
 const counts=['frames','office','dialogs','targets','fields','matches','frame','inflight'];
-const codes=['open','run','parameter','submit','receipt','probe','setup','register','waiting','parameter-script','parameter-field','parameter-run','parameters','ready','started','filled','refill','submitted','error','none','result','permission','frame-gone','context-gone','other','timeout','start','tab','navigation','injection','injected','rejected','finished','workbook-frames','office-frames','scan-error'];
+const codes=['install','install-open','install-find','install-name','install-write','install-save','install-reopen','install-verify','installed','next','open','run','parameter','submit','receipt','probe','setup','register','waiting','parameter-script','parameter-field','parameter-run','parameters','ready','started','filled','refill','submitted','error','none','result','permission','frame-gone','context-gone','other','timeout','start','tab','navigation','injection','injected','rejected','finished','workbook-frames','office-frames','scan-error'];
 export function structuralInfo(data={}) {
   const result={};
   for(const key of flags) if(typeof data[key]==='boolean') result[key]=data[key];
@@ -19,7 +19,8 @@ export function traceStep(job,event,data={}) {
   if(job.trace.length>120) job.trace.shift();
 }
 export function diagnosticReport(job,version) {
-  return {format:1,extensionVersion:version,kind:['probe','setup','register'].includes(job.type)?job.type:'other',
+  return {format:1,extensionVersion:version,kind:['probe','setup','install','register'].includes(job.type)?job.type:'other',
+    ...(job.type==='install' && /^ProviTrackerAutoV4_[0-9a-f]{10}$/.test(job.scriptName || '')?{scriptVersion:4,scriptRevision:job.scriptName.slice(-10)}:{}),
     elapsedMs:Math.max(0,Date.now()-job.startedAt),phase:structuralInfo({phase:job.phase}).phase || 'probe',
     events:(job.trace || []).map(({signature,...item})=>item)};
 }
