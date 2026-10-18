@@ -48,7 +48,7 @@ async function workbookAvailable(job,tab) {
   if(pending!==job) return false;
   if(loginOrigins.includes(originOf(address))) {
     if(job.type==='install'){
-      if(!job.loginSince){job.loginSince=Date.now();job.connected=false;job.protected=false;job.openSince=null;job.phase='login';status='Log ind i Microsoft i masterark-fanen. Opsætningen fortsætter automatisk.';port?.postMessage({type:'progress',requestId:job.requestId,phase:'login'});}
+      if(!job.loginSince){job.loginSince=Date.now();job.connected=false;job.protected=false;job.openSince=null;job.installFrameId=null;job.phase='login';status='Log ind i Microsoft i masterark-fanen. Opsætningen fortsætter automatisk.';port?.postMessage({type:'progress',requestId:job.requestId,phase:'login'});}
       return false;
     }
     finish(job,{success:false,status:'chrome-login-required',error:'Microsoft kræver login i masterark-fanen i Chrome. Salget afventer. Log ind og godkend; automatisk registrering prøver derefter igen.'});return false;
@@ -227,7 +227,8 @@ async function scanOffice(job) {
     if(!await workbookAvailable(job,tab)) return;
     if (sleeping(job, tab)) return;
     const frames=await chrome.webNavigation.getAllFrames({tabId:job.tabId}) || [];
-    const office=officeFrames(frames);
+    const office=officeFrames(frames).filter(frame=>!job.installFrameId || frame.frameId===job.installFrameId || /\/dialog\.html(?:[?#]|$)/i.test(frame.url));
+    if(job.installFrameId && !office.some(frame=>frame.frameId===job.installFrameId)){finish(job,{success:false,error:'Excel genindlæste scriptpanelet under opsætningen. Start opsætningen igen; eksisterende scripts bevares.'});return;}
     const excel=frames.filter(f=>originOf(f.url)===workbookOrigins[1]);
     // Inspect the pane first. Open the gallery only if the script pane is absent.
     const dialogs=office.filter(frame=>/\/dialog\.html(?:[?#]|$)/i.test(frame.url));
@@ -255,7 +256,10 @@ async function scanOffice(job) {
         traceStep(job,'injected',{phase:job.phase,frame:frame.frameId,outcome,reason:result?.waiting,...result?.controls});
         if(!result) continue;
         if(result.error) { finish(job,{success:false,error:result.error});return; }
-        if(result.next) { job.phase=result.next;return; }
+        if(result.next) {
+          if(job.phase==='install-open' && result.next==='install-find')job.installFrameId=frame.frameId;
+          job.phase=result.next;return;
+        }
         if(result.installed) { job.installed=true;job.phase='open';return; }
         if(result.parameters) { job.phase='parameter';return; }
         if(result.waiting) { job.waiting=result.waiting;return; }

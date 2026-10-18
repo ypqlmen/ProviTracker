@@ -79,6 +79,10 @@ chrome.runtime.connectNative=()=>({postMessage:m=>{if(m.type==='result')fixtureR
                 result=run({'type':'intramanager','operation':'hours','requestId':'wrong','expectedProfile':PROFILE,'fromDate':'21-08-2026','toDate':'20-09-2026'})
                 assert not result.get('success') and 'anden Intramanager-konto' in result.get('error',''),result
                 assert len(requests)==before,'Wrong account must stop before another query'
+                popup=context.new_page();popup.goto('chrome-extension://'+service.url.split('/')[2]+'/popup.html')
+                popup.locator('#intramanager-status').filter(has_text='anden Intramanager-konto').wait_for()
+                assert popup.get_by_role('button',name='Forbind Intramanager',exact=True).is_visible()
+                popup.close();foreground.bring_to_front()
                 assert len([page for page in context.pages if page.url.startswith(BASE)])==1
                 assert service.evaluate('(async()=>{const t=await chrome.tabs.query({active:true});return t.every(x=>!x.url?.startsWith("https://5r.intramanager.com"));})()')
                 print('Actual background Chromium: UI date-form submission despite ignored URL query, fresh result after delayed AJAX (never stale hours), background lease, Memory Saver protection, actual connected popup,  profile binding, normal history navigation, full sick pay, negative cancellation and wrong-account stop passed.')
