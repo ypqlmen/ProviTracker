@@ -9,19 +9,24 @@ export function installStep(phase, source, scriptName, requestId) {
   const enabled=el=>el && !el.disabled && el.getAttribute('aria-disabled')!=='true';
   const state=globalThis.proviInstaller?.requestId===requestId?globalThis.proviInstaller:(globalThis.proviInstaller={requestId});
   const next=phase=>({next:phase});
+  const activate=el=>{
+    for(const type of ['pointerdown','mousedown','pointerup','mouseup'])el.dispatchEvent(type.startsWith('pointer')?new PointerEvent(type,{bubbles:true,composed:true,pointerId:1,pointerType:'mouse',isPrimary:true,button:0,buttons:type.endsWith('down')?1:0}):new MouseEvent(type,{bubbles:true,composed:true,button:0,buttons:type.endsWith('down')?1:0,view:window}));
+    el.click();
+  };
   if(location.origin==='https://euc-excel.officeapps.live.com') {
     if(phase!=='install-open')return null;
     const overflow=document.getElementById('OverflowPivotHeader-Automate');
-    if(overflow && visible(overflow)){overflow.click();return null;}
+    if(overflow && visible(overflow)){activate(overflow);return null;}
     const tab=document.getElementById('Automate');
     if(!tab || tab.getAttribute('aria-selected')!=='true'){
-      const control=tab && visible(tab)?tab:document.getElementById('pivotOverflowButton');if(enabled(control))control.click();return null;
+      const control=tab && visible(tab)?tab:document.getElementById('pivotOverflowButton');if(enabled(control))activate(control);return null;
     }
     const all=unique('[role="menuitem"],[role="menuitemradio"]',['Alle scripts','All scripts','Seneste scripts','Recent scripts']);
-    if(all){all.click();return null;}
-    const view=document.getElementById('AutomateGroupViewScripts');if(enabled(view)&&view.getAttribute('aria-expanded')!=='true')view.click();
+    if(all){activate(all);return null;}
+    const view=document.getElementById('AutomateGroupViewScripts');if(enabled(view)&&view.getAttribute('aria-expanded')!=='true')activate(view);
     return null;
   }
+  if(location.origin===origin && /\/dialog\.html$/.test(location.pathname) && document.body.textContent.trim())return {error:'Excel har allerede et parametervindue åbent. Luk det vindue, før automatisk opsætning startes.',waiting:'office-dialog'};
   if(location.origin!==origin || !/\/index\.html$/.test(location.pathname))return null;
   const editor=document.querySelector('textarea[aria-label="editor"]');
   const named=[...document.querySelectorAll('span,div,p,h1,h2,h3')].filter(el=>el.children.length===0 && visible(el) && label(el)===scriptName);

@@ -1217,6 +1217,7 @@ private:
     QSpinBox* monthlySalesTargetSpin = nullptr;
     QLabel* accountIdentityLabel = nullptr;
     bool intramanagerSyncRunning = false;
+    QMap<QString,QList<std::function<void(bool)>>> intramanagerHoursWaiters;
     bool intramanagerPunchRunning = false;
     QTimer* intramanagerAutoSyncTimer = nullptr;
     QDateTime intramanagerLastAutoHoursRefreshUtc;
@@ -1652,11 +1653,22 @@ private:
             done(document.isObject()?document.object():QJsonObject{{"success",false},{"error","Chrome returnerede ikke et gyldigt svar fra Intramanager."}});process->deleteLater();
         });
         connect(process,&QProcess::errorOccurred,this,[process,done](QProcess::ProcessError error){if(error==QProcess::FailedToStart){done({{"success",false},{"error","Chrome-forbindelsen kunne ikke starte. Geninstaller trial-versionen."}});process->deleteLater();}});
-        QTimer::singleShot(65000,process,[process](){if(process->state()!=QProcess::NotRunning)process->kill();});
+        QTimer::singleShot(95000,process,[process](){if(process->state()!=QProcess::NotRunning)process->kill();});
         process->start(intramanagerWorkerPath(),{"--stdin-json"});
     }
 
-    void fetchIntramanagerHoursAsync(
+    void fetchIntramanagerHoursAsync(const QString& fromDate,const QString& toDate,bool silent,std::function<void(bool)> afterFetch = {}) {
+        const QString key=fromDate+"|"+toDate;
+        if(intramanagerHoursWaiters.contains(key)){if(afterFetch)intramanagerHoursWaiters[key].append(afterFetch);return;}
+        intramanagerHoursWaiters.insert(key,{});
+        if(afterFetch)intramanagerHoursWaiters[key].append(afterFetch);
+        performIntramanagerHoursFetch(fromDate,toDate,silent,[this,key](bool ok){
+            const auto callbacks=intramanagerHoursWaiters.take(key);
+            for(const auto& callback:callbacks)callback(ok);
+        });
+    }
+
+    void performIntramanagerHoursFetch(
         const QString& fromDate,
         const QString& toDate,
         bool silent,
@@ -1664,7 +1676,7 @@ private:
         ) {
         if (intramanagerSyncRunning) {
             QTimer::singleShot(1500, this, [this, fromDate, toDate, silent, afterFetch]() {
-                fetchIntramanagerHoursAsync(fromDate, toDate, silent, afterFetch);
+                performIntramanagerHoursFetch(fromDate, toDate, silent, afterFetch);
             });
             return;
         }
@@ -2737,7 +2749,7 @@ private:
         configureSettingsButton(saveIntramanagerBtn);saveIntramanagerBtn->setProperty("primary",true);
         auto* intramanagerActionRow = createSettingsButtonGrid(QVector<QPushButton*>{saveIntramanagerBtn});
 
-        intramanagerStatusLabel = new QLabel("Timer hentes automatisk, når rapporter har brug for dem.");
+        intramanagerStatusLabel = new QLabel("Timer hentes automatisk.");
         intramanagerStatusLabel->setWordWrap(true);
         intramanagerStatusLabel->setTextInteractionFlags(Qt::NoTextInteraction);
 
@@ -3472,7 +3484,7 @@ private:
         }
 
         if (intramanagerStatusLabel) {
-            intramanagerStatusLabel->setText("Timer hentes automatisk, når rapporter har brug for dem.");
+            intramanagerStatusLabel->setText("Timer hentes automatisk.");
         }
 
         if (defaultSellerInitialsEdit) {
@@ -3522,7 +3534,7 @@ private:
     }
 
     QString masterSetupPhaseText(const QString& phase) const {
-        static const QMap<QString,QString> names={{"probe","Finder masterarket og den valgte arkfane"},{"install-open","Åbner Office Scripts"},{"install-find","Finder eller opretter Provi Trackers script"},{"install-name","Navngiver det nye script"},{"install-write","Indsætter den medfølgende kode"},{"install-save","Kontrollerer koden og gemmer scriptet"},{"install-reopen","Genåbner scriptet fra Excel"},{"install-verify","Kontrollerer den gemte kode"},{"open","Åbner den skrivefri kontrol"},{"run","Starter kontrollen"},{"parameter","Udfylder kontrolparametrene"},{"submit","Sender kontrollen til Excel"},{"receipt","Afventer Excels bekræftelse"}};
+        static const QMap<QString,QString> names={{"login","Afventer Microsoft-login i Chrome. Opsætningen fortsætter automatisk efter login."},{"probe","Finder masterarket og den valgte arkfane"},{"install-open","Åbner Office Scripts"},{"install-find","Finder eller opretter Provi Trackers script"},{"install-name","Navngiver det nye script"},{"install-write","Indsætter den medfølgende kode"},{"install-save","Kontrollerer koden og gemmer scriptet"},{"install-reopen","Genåbner scriptet fra Excel"},{"install-verify","Kontrollerer den gemte kode"},{"open","Åbner den skrivefri kontrol"},{"run","Starter kontrollen"},{"parameter","Udfylder kontrolparametrene"},{"submit","Sender kontrollen til Excel"},{"receipt","Afventer Excels bekræftelse"}};
         return names.value(phase);
     }
 
@@ -3639,7 +3651,7 @@ private:
         connect(process, &QProcess::errorOccurred, this, [finish](QProcess::ProcessError error) {
             if (error == QProcess::FailedToStart) finish(QJsonObject{{"error", "Browserhjælperen kunne ikke starte. Geninstaller den nyeste Provi Tracker-version."}});
         });
-        QTimer::singleShot(!setup ? 450000 : automaticSetup ? 330000 : 210000, process, [process]() { if (process->state() != QProcess::NotRunning) process->kill(); });
+        QTimer::singleShot(!setup ? 450000 : automaticSetup ? 690000 : 210000, process, [process]() { if (process->state() != QProcess::NotRunning) process->kill(); });
         process->start(intramanagerWorkerPath(), {"--stdin-json"});
     }
 

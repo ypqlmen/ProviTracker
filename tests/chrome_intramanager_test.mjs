@@ -32,14 +32,14 @@ async function transport({permission=true,account=profile,redacted=false,login=f
   const created=[],navigated=[],results=[],saved={intramanagerTab:8};let closed=false;
   globalThis.chrome={permissions:{contains:async query=>{assert.deepEqual(query,{origins:['https://5r.intramanager.com/*']});return permission;}},
     storage:{session:{get:async key=>({[key]:saved[key]}),set:async data=>Object.assign(saved,data)}},
-    tabs:{get:async()=>tab,create:async options=>{created.push(options);tab={id:9,url:options.url,status:'complete',active:false};return tab;},update:async(id,options)=>{assert.equal(id,tab.id);assert.deepEqual(Object.keys(options),['url']);navigated.push(options.url);tab={...tab,url:options.url};}},
-    scripting:{executeScript:async input=>{assert.equal(input.func,readIntramanagerPage);return [{result:read(input.args[0],{account}).result}];}}};
+    tabs:{query:async()=>[],get:async()=>tab,create:async options=>{created.push(options);tab={id:9,url:options.url,status:'complete',active:false};return tab;},update:async(id,options)=>{assert.equal(id,tab.id);assert.deepEqual(Object.keys(options),['url']);navigated.push(options.url);tab={...tab,url:options.url};}},
+    scripting:{executeScript:async input=>{assert.equal(input.func,readIntramanagerPage);return [{result:input.args[0].operation==='prepare'?{prepared:true}:read({...input.args[0],requestId:undefined},{account}).result}];}}};
   const job={...request,type:'intramanager'};
   await startIntramanager(job,(j,result)=>{results.push(result);closed=true;clearInterval(j.poll);clearTimeout(j.timeout);},()=>!closed);
-  if(!closed)await job.scan();
+  for(let i=0;i<4 && !closed;i++)await job.scan();
   assert(closed);return {created,navigated,results};
 }
-let fixture=await transport();assert.equal(fixture.results[0].success,true);assert.equal(fixture.created.length,0);assert.equal(fixture.navigated.length,1);
+let fixture=await transport();assert.equal(fixture.results[0].success,true);assert.equal(fixture.created.length,0);assert.equal(fixture.navigated.length,0);
 fixture=await transport({permission:false});assert.equal(fixture.created.length,0);assert.match(fixture.results[0].error,/tillad adgang/);
 fixture=await transport({account:'Anden Konto'});assert.equal(fixture.navigated.length,0);assert.match(fixture.results[0].error,/anden Intramanager-konto/);
 fixture=await transport({redacted:true});assert.equal(fixture.created.length,1,'do not overwrite an unrelated tab with a redacted URL');assert.equal(fixture.created[0].active,false);

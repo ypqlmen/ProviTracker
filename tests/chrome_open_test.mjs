@@ -24,9 +24,9 @@ function fixture({existing=false,pendingTab=false,duplicate=false}={}) {
       create:async options=>{assert.equal(options.url,url);assert.equal(options.active,false,'opening must preserve foreground');created.push(options);return add({id:nextId++,url:'about:blank',pendingUrl:options.url,status:'loading',active:false,autoDiscardable:true})},
       update:async(id,value)=>{assert.equal(Object.keys(value).join(','),'autoDiscardable');Object.assign(tabs.get(id),value)},sendMessage:async()=>{}},
     webNavigation:{getAllFrames:async({tabId})=>[{frameId:0,parentFrameId:-1,url:addresses.get(tabId)},...(workbookIdentity(addresses.get(tabId))? [{frameId:2,parentFrameId:0,url:'https://euc-excel.officeapps.live.com/x'}]:[])]},
-    scripting:{executeScript:async m=>{injected.push(m);assert.equal(workbookIdentity(addresses.get(m.target.tabId)),workbookIdentity(url),'never inject into authentication or unrelated pages');return [{result:{origin:'https://euc-excel.officeapps.live.com',sheet:'Ark1'}}]}},
+    scripting:{executeScript:async m=>{if(m.func?.name==='keepDocumentAwake')return [{result:{supported:true,held:true}}];injected.push(m);assert.equal(workbookIdentity(addresses.get(m.target.tabId)),workbookIdentity(url),'never inject into authentication or unrelated pages');return [{result:{origin:'https://euc-excel.officeapps.live.com',sheet:'Ark1'}}]}},
     alarms:{onAlarm:event(),create(){}}}});
-  return {created,injected,results,tabs,native:(id,workbookUrl=url)=>native({type:'probe',requestId:id,workbookUrl}),
+  return {created,injected,results,tabs,native:(id,workbookUrl=url,type='probe')=>native({type,requestId:id,workbookUrl}),
     tick:async()=>{intervals.at(-1)();for(let i=0;i<40;i++)await Promise.resolve()},
     load:(id=7)=>{Object.assign(tabs.get(id),{url,status:'complete'});delete tabs.get(id).pendingUrl;addresses.set(id,url)},
     login:(id=7)=>{delete tabs.get(id).url;delete tabs.get(id).pendingUrl;tabs.get(id).status='complete';addresses.set(id,'https://login.microsoftonline.com/tenant/oauth2/authorize')},

@@ -40,7 +40,7 @@ const li=document.createElement('li');li.setAttribute('role','listitem');li.text
 </script>'''
     with tempfile.TemporaryDirectory(prefix='provi-setup-') as temp:
         ext=Path(temp)/'extension';shutil.copytree(REPO/'chrome_extension',ext)
-        background=ext/'background.js';background.write_bytes(('''globalThis.fixtureResults=[];globalThis.fixtureProgress=[];
+        background=ext/'background.js';background.write_bytes(('''globalThis.fixtureIdentity=workbookIdentity;globalThis.fixtureResults=[];globalThis.fixtureProgress=[];
 chrome.runtime.connectNative=()=>({postMessage:m=>{if(m.type==='result')fixtureResults.push(m);if(m.type==='progress')fixtureProgress.push(m.phase)},onDisconnect:{addListener(){}},onMessage:{addListener:fn=>globalThis.fixtureNative=fn}});
 '''+background.read_bytes().decode('utf-8')).encode('utf-8'))
         with sync_playwright() as p:
@@ -54,22 +54,27 @@ chrome.runtime.connectNative=()=>({postMessage:m=>{if(m.type==='result')fixtureR
                         else:req.abort()
                     elif url.startswith(PANE):req.fulfill(content_type='text/html; charset=utf-8',body=page)
                     elif url.startswith(DIALOG):req.fulfill(content_type='text/html; charset=utf-8',body='''<div id="title"></div><label for="payload">payloadJson</label><input id="payload" type="text"><button onclick="parent.postMessage({type:'payload',payload:JSON.parse(document.getElementById('payload').value)},'https://euc-excel.officeapps.live.com')">Kør</button><script>addEventListener('message',e=>{if(e.data.name)document.getElementById('title').textContent='Angiv parametre for '+e.data.name})</script>''')
-                    elif url.startswith(EXCEL):req.fulfill(content_type='text/html; charset=utf-8',body='''<a role="tab" aria-selected="true" aria-label="Regneark Salg"><span sheet-title="Salg">Salg</span></a><iframe id="pane" src="'''+PANE+'''"></iframe><script>addEventListener('message',e=>{if(e.origin!=='''+json.dumps(OFFICE)+''')return;if(e.data.type==='parameters'){const f=document.createElement('iframe');f.id='dialog';f.src='''+json.dumps(DIALOG)+''';f.onload=()=>f.contentWindow.postMessage({name:e.data.name},'''+json.dumps(OFFICE)+''');document.body.append(f)}if(e.data.type==='payload'){document.getElementById('pane').contentWindow.postMessage(e.data,'''+json.dumps(OFFICE)+''');document.getElementById('dialog').remove()}})</script>''')
+                    elif url.startswith('https://login.microsoftonline.com/'):req.fulfill(content_type='text/html',body='<h1>Fixture login</h1>')
+                    elif url.startswith(EXCEL):req.fulfill(content_type='text/html; charset=utf-8',body='''<a role="tab" aria-selected="true" aria-label="Regneark Salg"><span sheet-title="Salg">Salg</span></a><button id="Automate" aria-selected="false" onmousedown="this.setAttribute('aria-selected','true')">Automatiser</button><button id="AutomateGroupViewScripts" onmousedown="if(document.getElementById('Automate').getAttribute('aria-selected')!=='true')return;const m=document.createElement('div');m.setAttribute('role','menuitem');m.textContent='Seneste scripts';m.onclick=()=>{document.getElementById('pane').src='''+json.dumps(PANE).replace(chr(34),'&quot;')+''';m.remove()};document.body.append(m);this.setAttribute('aria-expanded','true')">Få vist scripts</button><iframe id="pane"></iframe><script>addEventListener('message',e=>{if(e.origin!=='''+json.dumps(OFFICE)+''')return;if(e.data.type==='parameters'){const f=document.createElement('iframe');f.id='dialog';f.src='''+json.dumps(DIALOG)+''';f.onload=()=>f.contentWindow.postMessage({name:e.data.name},'''+json.dumps(OFFICE)+''');document.body.append(f)}if(e.data.type==='payload'){document.getElementById('pane').contentWindow.postMessage(e.data,'''+json.dumps(OFFICE)+''');document.getElementById('dialog').remove()}})</script>''')
                     elif url.startswith(BOOK):req.fulfill(content_type='text/html; charset=utf-8',body='<iframe src="'+EXCEL+'"></iframe>')
                     else:req.abort()
                 context.route('https://**/*',route)
                 context.set_default_timeout(10000)
                 service=context.service_workers[0] if context.service_workers else context.wait_for_event('serviceworker')
                 book=context.new_page();book.goto(BOOK);front=context.new_page();front.bring_to_front()
-                pane=book.frame_locator('iframe').frame_locator('#pane');pane.get_by_role('textbox',name='Filtrer scripts').wait_for()
+                service.evaluate('async url=>{const tabs=await chrome.tabs.query({});const t=tabs.find(t=>t.url===url);const identity=fixtureIdentity(url);await chrome.storage.session.set({["masterLaunch."+identity]:{tabId:t.id}});}',BOOK)
+                book.goto('https://login.microsoftonline.com/fixture')
                 def request(identity,success=True,registration=None):
                     print('Setup request:',identity,flush=True)
                     service.evaluate('m=>fixtureNative(m)',{'type':'register' if registration else 'install','requestId':identity,'workbookUrl':BOOK,**({'registration':registration} if registration else {})})
-                    deadline=time.monotonic()+40
-                    last=None
+                    deadline=time.monotonic()+45
+                    last=None;login_resumed=False
                     while time.monotonic()<deadline:
                         progress=service.evaluate('fixtureProgress.at(-1)')
                         if progress!=last:print('Setup phase:',progress,flush=True);last=progress
+                        if identity=='setup-first' and progress=='login' and not login_resumed:
+                            assert not service.evaluate('id=>fixtureResults.some(r=>r.requestId===id)',identity),'Login must not finish setup'
+                            book.goto(BOOK);front.bring_to_front();login_resumed=True
                         result=service.evaluate('id=>fixtureResults.find(r=>r.requestId===id)',identity)
                         if result:
                             assert result.get('success') is success,result
@@ -78,6 +83,9 @@ chrome.runtime.connectNative=()=>({postMessage:m=>{if(m.type==='result')fixtureR
                         front.wait_for_timeout(100)
                     raise AssertionError(('Timed out',service.evaluate('fixtureProgress'),[(f.url,f.locator('body').inner_text()[:500]) for f in book.frames]))
                 first=request('setup-first');assert first['status']=='checked' and first['row']==0
+                assert 'login' in service.evaluate('fixtureProgress'),'Same setup must resume after Microsoft login'
+                assert book.evaluate('async()=>{const q=await navigator.locks.query();return q.held.some(l=>l.name.startsWith("ProviTracker.background."));}'),'Master workbook must hold the background lease'
+                assert service.evaluate('async()=>{const t=await chrome.tabs.query({url:"https://5rmarketing-my.sharepoint.com/*"});return t[0].autoDiscardable===false;}')
                 frame=next(f for f in book.frames if f.url==PANE)
                 assert frame.evaluate('scripts["'+name+'"]').replace('\r\n','\n')==source.replace('\r\n','\n')
                 assert frame.evaluate('scripts.ExistingPersonalScript')=='// KEEP PERSONAL SCRIPT'

@@ -29,6 +29,7 @@ function fixture({existingDialog=false,reverts=0,wrongDialog=false,waiting=null,
  storage:{local:{get:async key=>({[key]:typeof stored==='undefined'?undefined:stored[key]}),set:async data=>Object.assign(stored,data)},session:{get:async key=>({[key]:stored[key]}),set:async values=>Object.assign(stored,values),remove:async key=>delete stored[key]}},
  tabs:{onUpdated:{addListener:fn=>updated=fn},onRemoved:{addListener:fn=>removed=fn},query:async()=>[{id:7,url,autoDiscardable:true,frozen,discarded}],get:async()=>({id:7,url:currentUrl,active:false,frozen,discarded}),sendMessage:async()=>{},update:async(id,value)=>{assert.equal(id,7);assert.equal(Object.keys(value).join(','),'autoDiscardable','never activate, reload or navigate the workbook');calls.push({protection:value.autoDiscardable});}},
  webNavigation:{getAllFrames:async()=>frames.filter(f=>f.frameId!==3 || dialog)},scripting:{executeScript:async input=>{
+ if(input.func?.name==='keepDocumentAwake')return [{result:{supported:true,held:true}}];
  if(input.files)return [{result:{sheet:'Salg ÆØÅ',origin:'https://euc-excel.officeapps.live.com'}}];
  assert.equal(input.func,officeStep);assert(!input.target.frameIds.includes(4),'pane outside verified Excel parent excluded');
  const phase=input.args[0],request=JSON.parse(input.args[1]);
@@ -41,7 +42,7 @@ function fixture({existingDialog=false,reverts=0,wrongDialog=false,waiting=null,
  }},alarms:{onAlarm:event(),create(){}}}});
  return {calls,phases,timeouts,native:m=>native(m),tick:async()=>{clock+=500;intervals.at(-1)();for(let i=0;i<20;i++)await Promise.resolve()},navigate:()=>currentUrl=url.replace('000000000001','000000000002'),receipt:r=>nextReceipt=r,
  freeze:()=>frozen=true,discard:()=>discarded=true,resume:()=>{frozen=false;discarded=false},
- leave:async()=>{currentUrl='https://example.com/';updated(7,{url:currentUrl},{id:7,url:currentUrl});for(let i=0;i<20;i++)await Promise.resolve()},stored};
+ close:()=>removed(7),leave:async()=>{currentUrl='https://example.com/';updated(7,{url:currentUrl},{id:7,url:currentUrl});for(let i=0;i<20;i++)await Promise.resolve()},stored};
 }
 let f=fixture();await f.native({type:'register',requestId:'request-a',workbookUrl:url,registration});
 await f.native({type:'reload-extension',version:upgraded});assert(!f.calls.includes('reload'));
@@ -73,3 +74,5 @@ assert(f.stored.lastFailure.events.some(e=>e.defaultTest===true && e.fields===1)
 assert(!JSON.stringify(f.stored.lastFailure).includes('SECRET'));
 const failedLog=JSON.stringify(f.stored.lastFailure);await f.native({type:'probe',requestId:'read-only',workbookUrl:url});assert.equal(JSON.stringify(f.stored.lastFailure),failedLog,'successful probes preserve failure evidence');
 console.log('Chrome sale transport: setup, fresh receipt identity, background tab, changed workbook, permitted pane and deferred updates passed.');
+
+f=fixture();await f.native({type:'register',requestId:'request-a',workbookUrl:url,registration});f.close();assert.match(f.calls.at(-1).error,/lukket/,'Closed workbook releases the pending job');

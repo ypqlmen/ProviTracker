@@ -47,11 +47,16 @@ async function workbookAvailable(job,tab) {
   const address=await tabUrl(tab);
   if(pending!==job) return false;
   if(loginOrigins.includes(originOf(address))) {
+    if(job.type==='install'){
+      if(!job.loginSince){job.loginSince=Date.now();job.connected=false;job.protected=false;job.openSince=null;job.phase='login';status='Log ind i Microsoft i masterark-fanen. Opsætningen fortsætter automatisk.';port?.postMessage({type:'progress',requestId:job.requestId,phase:'login'});}
+      return false;
+    }
     finish(job,{success:false,status:'chrome-login-required',error:'Microsoft kræver login i masterark-fanen i Chrome. Salget afventer. Log ind og godkend; automatisk registrering prøver derefter igen.'});return false;
   }
   const next=workbookIdentity(tab.pendingUrl);
   if(next && next!==job.identity) { finish(job,{success:false,error:'Chrome-fanen skiftede masterark. Kontrollér arket før genforsøg.'});return false; }
   if(workbookIdentity(address)===job.identity) {
+    if(job.loginSince){job.loginSince=null;job.phase='probe';job.progressPhase=null;}
     if(!job.protected) { await protectWorkbook(tab,job.identity);job.protected=true; }
     return true;
   }
@@ -70,9 +75,58 @@ function workbookFrames(frames) {
   }
   return frames.filter(frame => permitted(frame));
 }
-// Only this verified workbook is protected from Memory Saver. This does not
-// override Chrome's separate freezing policy; the guide supplies its site exception.
+// Protect only verified workbooks and the dedicated Intramanager tab.
 const protectionKey = id => 'masterTab.' + id;
+function keepDocumentAwake(release=false) {
+  if(release){globalThis.proviBackgroundLease?.release?.();delete globalThis.proviBackgroundLease;return {released:true};}
+  if(!navigator.locks)return {supported:false};
+  if(!globalThis.proviBackgroundLease){
+    const lease=globalThis.proviBackgroundLease={held:false};
+    navigator.locks.request('ProviTracker.background.'+crypto.randomUUID(),()=>new Promise(resolve=>{
+      lease.held=true;lease.release=()=>{lease.held=false;resolve();};
+    })).catch(()=>{delete globalThis.proviBackgroundLease;});
+  }
+  return {supported:true,held:globalThis.proviBackgroundLease.held};
+}
+async function protectBackgroundTab(tab) {
+  await chrome.tabs.update(tab.id,{autoDiscardable:false});
+  if(tab.status==='loading' || tab.discarded || tab.frozen)return;
+  await chrome.scripting.executeScript({target:{tabId:tab.id,frameIds:[0]},func:keepDocumentAwake}).catch(()=>{});
+}
+async function protectIntramanager(tab) {
+  if(originOf(tab.url)!=='https://5r.intramanager.com')return;
+  const key='intramanagerProtection.'+tab.id;
+  const saved=(await chrome.storage.session.get(key))[key];
+  if(!saved)await chrome.storage.session.set({[key]:{autoDiscardable:tab.autoDiscardable!==false}});
+  await protectBackgroundTab(tab);
+}
+async function releaseIntramanager(id,tab) {
+  const key='intramanagerProtection.'+id,saved=(await chrome.storage.session.get(key))[key];
+  if(!saved || (tab && originOf(tab.url)==='https://5r.intramanager.com'))return;
+  await chrome.storage.session.remove(key);
+  if(tab)await chrome.tabs.update(id,{autoDiscardable:saved.autoDiscardable}).catch(()=>{});
+}
+async function intramanagerConnection() {
+  if(!await chrome.permissions.contains({origins:['https://5r.intramanager.com/*']}))return {connected:false,state:'permission'};
+  const id=(await chrome.storage.session.get('intramanagerTab')).intramanagerTab;
+  if(!Number.isInteger(id))return {connected:false,state:'unverified'};
+  try {
+    const tab=await chrome.tabs.get(id);
+    if(originOf(tab.url)!=='https://5r.intramanager.com' || tab.url.includes('/login/'))return {connected:false,state:'login'};
+    if(tab.discarded || tab.frozen)return {connected:false,state:'sleeping'};
+    if(tab.status==='loading')return {connected:false,state:'loading'};
+    const result=await Promise.race([
+      chrome.scripting.executeScript({target:{tabId:id,frameIds:[0]},func:readIntramanagerProfile}),
+      new Promise(resolve=>setTimeout(()=>resolve([]),3000))]);
+    const profileName=result?.[0]?.result;
+    const account=(await chrome.storage.local.get('intramanagerAccount')).intramanagerAccount;
+    const normalize=s=>String(s || '').trim().replace(/\s+/g,' ').toLocaleLowerCase('da');
+    if(!account)return {connected:false,state:'unverified'};
+    if(profileName && normalize(account)!==normalize(profileName))return {connected:false,state:'account'};
+    return profileName?{connected:true,state:'connected',profileName}:{connected:false,state:'unverified'};
+  }catch{return {connected:false,state:'unverified'};}
+}
+function readIntramanagerProfile(){return document.querySelector('#mobile-navigation img[alt]')?.getAttribute('alt')?.trim() || null;}
 async function protectWorkbook(tab, identity) {
   tab=await chrome.tabs.get(tab.id);
   if (workbookIdentity(tab.url)!==identity) throw new Error('Workbook changed');
@@ -80,7 +134,7 @@ async function protectWorkbook(tab, identity) {
   const key=protectionKey(tab.id);
   const saved=(await chrome.storage.session.get(key))[key];
   if (!saved) await chrome.storage.session.set({[key]:{identity,autoDiscardable:tab.autoDiscardable!==false}});
-  await chrome.tabs.update(tab.id,{autoDiscardable:false});
+  await protectBackgroundTab(tab);
 }
 async function releaseWorkbook(id, tab) {
   const key=protectionKey(id);
@@ -90,9 +144,17 @@ async function releaseWorkbook(id, tab) {
   if(!tab || (tab.url && !loginOrigins.includes(originOf(tab.url)))) await chrome.storage.session.remove(launchKey(saved.identity));
   if (tab) await chrome.tabs.update(id,{autoDiscardable:saved.autoDiscardable}).catch(()=>{});
 }
+async function restoreProtection() {
+  const values=await chrome.storage.session.get(null);
+  const tabs=await chrome.tabs.query({});
+  for(const tab of tabs){
+    if(values[protectionKey(tab.id)]?.identity===workbookIdentity(tab.url) && workbookIdentity(tab.url))await protectWorkbook(tab,workbookIdentity(tab.url));
+    if(values.intramanagerTab===tab.id)await protectIntramanager(tab);
+  }
+}
 function sleeping(job, tab) {
   if (!tab.discarded && !tab.frozen) return false;
-  finish(job,{success:false,status:'chrome-sleeping',error:'Chrome har sat masterarket i dvale. Salget afventer automatisk. Tilføj 5rmarketing-my.sharepoint.com under Chrome → Indstillinger → Ydeevne → Hold altid disse websites aktive, og åbn masterark-fanen én gang.'});
+  finish(job,{success:false,status:'chrome-sleeping',error:'Chrome har sat masterarket i dvale. Salget afventer automatisk. Åbn masterark-fanen én gang. Udvidelsen beskytter derefter fanen mod automatisk dvale.'});
   return true;
 }
 function validSheetName(name) {
@@ -168,7 +230,11 @@ async function scanOffice(job) {
     const dialogs=office.filter(frame=>/\/dialog\.html(?:[?#]|$)/i.test(frame.url));
     const parameterPhase=['open','run','parameter','submit'].includes(job.phase);
     const installing=job.phase?.startsWith('install-');
-    const targets=installing ? (office.length ? office : excel) : parameterPhase && dialogs.length ? dialogs : office.length ? office : job.phase==='open' ? excel : [];
+    if(job.phase==='install-open'){
+      job.openSince ??= Date.now();
+      if(Date.now()-job.openSince>45000){finish(job,{success:false,error:'Office Scripts kunne ikke åbnes. Kontrollér at Automatiser → Få vist scripts → Seneste scripts kan åbnes i Excel. Gem forløbsrapporten fra appen.'});return;}
+    }
+    const targets=installing ? (job.phase==='install-open' ? [...office,...excel] : office) : parameterPhase && dialogs.length ? dialogs : office.length ? office : job.phase==='open' ? excel : [];
     job.officeMissing=targets.length===0;
     traceStep(job,'office-frames',{phase:job.phase,frames:frames.length,office:office.length,dialogs:dialogs.length,targets:targets.length});
     for(const frame of targets) {
@@ -233,7 +299,7 @@ async function scan(job) {
     // Check outside the injection lock: a suspended injected call can stay pending.
     if (sleeping(job,tab)) return;
     return job.connected ? scanOffice(job) : scanWorkbook(job);
-  } catch { finish(job,{success:false,error:pending.type==='intramanager'?'Intramanager-fanen blev lukket. Prøv forbindelsen igen.':'Masterarket blev lukket. Åbn det igen, og prøv fra Ordrer.'}); }
+  } catch { finish(job,{success:false,error:job.type==='intramanager'?'Intramanager-fanen blev lukket. Prøv forbindelsen igen.':'Masterarket blev lukket. Åbn det igen, og prøv fra Ordrer.'}); }
 }
 function reloadWhenIdle() {
   if (reloadTarget && !pending && !reloadRequested) {
@@ -261,6 +327,7 @@ function finish(job, result) {
   traceStep(job,'finished',{phase:job.phase,outcome:result.success?'result':'error',locked:job.scanning===true,inflight:job.inflight || 0});
   if(job.type==='install' || job.hadScriptUpdate){result.diagnostics={...diagnosticReport({...job,type:'install'},loadedVersion),scriptUpdated:job.scriptUpdated===true};chrome.storage.local.set({lastSetup:result.diagnostics}).catch(()=>{});}
   if(!result.success && job.type!=='intramanager') chrome.storage.local.set({lastFailure:diagnosticReport(job,loadedVersion)}).catch(()=>{});
+  if(job.type==='intramanager' && result.success && result.profileName)chrome.storage.local.set({intramanagerAccount:result.profileName}).catch(()=>{});
   pending = null;
   status = result.success ? (job.type==='intramanager' ? 'Intramanager er opdateret.' : job.type==='probe' ? 'Forbindelsen til masterarket virker.' : job.type==='install' ? 'Masterarket er opsat og kontrolleret uden at registrere salg.' : 'Excel har bekræftet registreringen.') : result.error;
   port?.postMessage({type:'result', requestId:job.requestId, worksheetName:job.registration?.worksheetName, extensionVersion:loadedVersion, ...result});
@@ -284,9 +351,10 @@ function connect() {
       status = 'Udvidelsen kunne ikke opdateres. Åbn Provi Tracker igen, og prøv Kontrollér Chrome.';
       return;
     }
+    if(pending && message.requestId && message.requestId!==pending.requestId && pending.expiresAt && pending.expiresAt*1000<Date.now())finish(pending,{success:false,error:'Den forrige Chrome-opgave udløb. Forbindelsen er frigivet.'});
     if(message.type==='intramanager' && !pending) {
       const job=pending={...message,startedAt:Date.now(),trace:[]};
-      try {await startIntramanager(job,finish,()=>pending===job);} catch {finish(job,{success:false,error:'Chrome-forbindelsen til Intramanager kunne ikke starte.'});}
+      try {await startIntramanager(job,finish,()=>pending===job,{protectTab:protectIntramanager});} catch {finish(job,{success:false,error:'Chrome-forbindelsen til Intramanager kunne ikke starte.'});}
       return;
     }
     if (!['probe','setup','install','register'].includes(message.type) || pending) return;
@@ -294,7 +362,7 @@ function connect() {
     if (!identity) return;
     const registration=['setup','install'].includes(message.type) ? {isTest:true,requestId:message.requestId} : message.registration;
     if(message.type==='register' && (!registration || registration.requestId!==message.requestId || typeof registration.registrationId!=='string' || registration.isTest===true)) return;
-    const job = pending = {requestId:message.requestId, identity, heard:false,type:message.type,registration,startedAt:Date.now(),trace:[]};
+    const job = pending = {requestId:message.requestId,expiresAt:message.expiresAt,identity,heard:false,type:message.type,registration,startedAt:Date.now(),trace:[]};
     traceStep(job,'start',{phase:message.type});
     try {
       const key='masterScript.'+identity,saved=(await chrome.storage.local.get(key))[key];
@@ -320,7 +388,7 @@ function connect() {
       // Re-read the current frames while Excel boots, including frames created
       // after the first scan. Never activate or reload the workbook tab.
       job.poll = setInterval(() => scan(job), 500);
-      job.timeout = setTimeout(() => finish(job, {success:false, error:job.phase?.startsWith('install-') ? 'Automatisk opsætning stoppede ved '+job.phase+'. Åbn forløbsrapporten i Provi Tracker. Ingen salg er registreret.' : job.connected
+      job.timeout = setTimeout(() => finish(job, {success:false, error:job.phase==='login' ? 'Microsoft-login blev ikke afsluttet inden for 10 minutter. Log ind og start opsætningen igen.' : job.phase?.startsWith('install-') ? 'Automatisk opsætning stoppede ved '+job.phase+'. Åbn forløbsrapporten i Provi Tracker. Ingen salg er registreret.' : job.connected
         ? (job.officeBlocked ? 'Chrome-udvidelsen mangler adgang til Excels scriptpanel. Genindlæs udvidelsen i Chrome, og prøv igen.' : job.officeMissing ? 'Excels scriptvindue blev ikke fundet. Åbn ProviTrackerSalesRegistrationV4 i kodeeditoren, og prøv igen.' : job.waiting==='parameter-script' ? 'Excels parametervindue blev ikke færdigindlæst. Åbn ProviTrackerSalesRegistrationV4, og prøv samme ordre igen.' : job.waiting==='parameter-field' ? 'Excel viser parametervinduet, men payloadJson-feltet er ikke klar til indtastning. Genindlæs masterarket, og prøv igen.' : job.waiting==='parameter-run' ? 'Salgsdataene er indsat, men Excel har ikke aktiveret Kør. Genindlæs masterarket, og prøv samme ordre igen.' : (['parameter','submit','run'].includes(job.phase) ? 'Excel stoppede ved scriptets parametre. Luk parametervinduet, kontrollér at Chrome-udvidelsen er opdateret, og prøv igen fra Ordrer.' : 'Excel bekræftede ikke registreringen. Åbn ProviTrackerSalesRegistrationV4 i kodeeditoren via Automatiser. Kontrollér arket før genforsøg.'))
         : job.excelBlocked && !job.excelRead
         ? 'Chrome-udvidelsen har ikke adgang til Excel-rammen. Kontrollér udvidelsens webstedsadgang til euc-excel.officeapps.live.com i Chrome, og prøv igen.'
@@ -328,7 +396,7 @@ function connect() {
         ? 'Chrome svarede fra SharePoint, men selve Excel-arket svarede ikke. Genindlæs masterarket i Chrome, kontrollér login, og prøv igen.'
         : job.heard
         ? 'Chrome svarede, men den valgte arkfane blev ikke fundet i Excel. Kontrollér at masterarket er færdigindlæst, vælg salgsarket, og prøv igen.'
-        : 'Udvidelsen svarede ikke fra masterarket. Genindlæs Provi Tracker-udvidelsen under chrome://extensions og derefter masterarket.'}), message.type==='probe' ? 22000 : message.type==='install' ? 270000 : job.hadScriptUpdate ? 390000 : 150000);
+        : 'Udvidelsen svarede ikke fra masterarket. Genindlæs Provi Tracker-udvidelsen under chrome://extensions og derefter masterarket.'}), message.type==='probe' ? 22000 : message.type==='install' ? 600000 : job.hadScriptUpdate ? 390000 : 150000);
       await scan(job);
     } catch {
       finish(job, {success:false, error:'Chrome-kontrollen blev afbrudt. Åbn masterarket, og prøv igen.'});
@@ -337,6 +405,7 @@ function connect() {
   poll();
 }
 chrome.runtime.onMessage.addListener((message, sender, reply) => {
+  if(message?.type==='intramanager-status' && (!sender.tab || sender.url===chrome.runtime.getURL('popup.html'))){intramanagerConnection().then(reply);return true;}
   if (message?.type === 'status' && !sender.tab) { reply({status,extensionVersion:loadedVersion}); connect(); return; }
   const job = pending;
   if (message?.type !== 'probe-result' || !job || job.connected || sender.tab?.id !== job.tabId ||
@@ -346,16 +415,20 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
   confirmWorkbook(job,message.sheet);
 });
 chrome.tabs.onUpdated.addListener((id, change, tab) => {
-  if (change.url) releaseWorkbook(id,tab).catch(()=>{});
+  if(change.url){releaseWorkbook(id,tab).catch(()=>{});releaseIntramanager(id,tab).catch(()=>{});}
+  if(change.status==='complete'){
+    chrome.storage.session.get(protectionKey(id)).then(saved=>{if(saved[protectionKey(id)]?.identity===workbookIdentity(tab.url))protectWorkbook(tab,workbookIdentity(tab.url)).catch(()=>{});});
+    chrome.storage.session.get('intramanagerTab').then(saved=>{if(saved.intramanagerTab===id)protectIntramanager(tab).catch(()=>{});});
+  }
   if (pending?.tabId===id && (change.discarded || change.frozen)) scan(pending);
 });
 chrome.tabs.onRemoved.addListener(id => {
-  releaseWorkbook(id,null).catch(()=>{});
+  releaseWorkbook(id,null).catch(()=>{});releaseIntramanager(id,null).catch(()=>{});
   if (pending?.tabId===id) finish(pending,{success:false,error:pending.type==='intramanager'?'Intramanager-fanen blev lukket. Prøv forbindelsen igen.':'Masterarket blev lukket. Åbn det igen, og prøv fra Ordrer.'});
 });
 setInterval(poll, 3000);
-chrome.alarms.onAlarm.addListener(() => { connect(); poll(); });
-chrome.runtime.onStartup.addListener(connect);
-chrome.runtime.onInstalled.addListener(connect);
+chrome.alarms.onAlarm.addListener(() => { connect(); poll();restoreProtection().catch(()=>{}); });
+chrome.runtime.onStartup.addListener(()=>{connect();restoreProtection().catch(()=>{});});
+chrome.runtime.onInstalled.addListener(()=>{connect();restoreProtection().catch(()=>{});});
 chrome.alarms.create('reconnect', {periodInMinutes:1});
 connect();

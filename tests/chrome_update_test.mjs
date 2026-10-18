@@ -23,7 +23,7 @@ function background() {
       webNavigation:{getAllFrames:async()=>[{frameId:0,parentFrameId:-1,url},{frameId:1,parentFrameId:0,url:'https://euc-excel.officeapps.live.com/x'},
         {frameId:2,parentFrameId:0,url:'https://unrelated.example/x'},{frameId:3,parentFrameId:1,url:'about:blank'},
         {frameId:4,parentFrameId:2,url:'about:blank'}]},
-      scripting:{executeScript:async m=>{injected.push(m);return []}},alarms:{onAlarm:event(),create:()=>{}}}
+      scripting:{executeScript:async m=>{if(m.func?.name==='keepDocumentAwake')return [{result:{held:true}}];injected.push(m);return []}},alarms:{onAlarm:event(),create:()=>{}}}
   });
   return {calls,injected,timers,native:m=>native(m),runtime:(m,s)=>runtime(m,s,()=>{})};
 }

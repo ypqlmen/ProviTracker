@@ -31,13 +31,15 @@ chrome.runtime.connectNative=()=>({postMessage:m=>{if(m.type==='result')fixtureR
                 account=[PROFILE];requests=[]
                 def route(req):
                     url=req.request.url;requests.append(url)
-                    from urllib.parse import urlsplit,parse_qs
-                    query=parse_qs(urlsplit(url).query)
-                    body='<div id="mobile-navigation"><img alt="'+account[0]+'"></div><input id="startdate" value="'+query.get('b',[''])[0]+'"><input id="stopdate" value="'+query.get('c',[''])[0]+'">'
-                    body+='<main id="main"><table><thead><tr>'+''.join('<th>'+s+'</th>' for s in ['Projekt','StartStop','LøntimerRingetimer','Salg','Points','Grundløn','Bonus','Provision'])+'</tr></thead><tbody>'
+                    table='<table><thead><tr>'+''.join('<th>'+s+'</th>' for s in ['Projekt','StartStop','LøntimerRingetimer','Salg','Points','Grundløn','Bonus','Provision'])+'</tr></thead><tbody>'
                     for row in [['Telenor Erhverv','dato','7 t. 30 min.<br>6 t. 00 min.','1','1','771,83','50,00','0,00'],['Sygdom Fuldtid - 50%','dato','4 t. 00 min.','0','0','411,64','0,00','388,80'],['Annullering - Beløb','dato','0 t. 00 min.','0','0','0,00','0,00','-380,40']]:
-                        body+='<tr>'+''.join('<td>'+s+'</td>' for s in row)+'</tr>'
-                    req.fulfill(status=200,content_type='text/html; charset=utf-8',body=body+'</tbody></table></main>')
+                        table+='<tr>'+''.join('<td>'+v+'</td>' for v in row)+'</tr>'
+                    table+='</tbody></table>'
+                    # Like the live page: URL date arguments are ignored. Søg must submit
+                    # the normal form; stale previous results stay visible during loading.
+                    body='<div id="mobile-navigation"><img alt="'+account[0]+'"></div><form id="form-search"><input id="startdate" value="01-10-2026"><input id="stopdate" value="18-10-2026"><input type="checkbox" name="g[]" checked><button type="submit">Søg</button></form><main id="main">'+table.replace('7 t. 30 min.','99 t. 00 min.')+'</main>'
+                    body+='<script>window.submits=0;document.getElementById("form-search").onsubmit=e=>{e.preventDefault();window.submits++;setTimeout(()=>{document.getElementById("main").innerHTML='+json.dumps(table)+'},1200)};</script>'
+                    req.fulfill(status=200,content_type='text/html; charset=utf-8',body=body)
                 context.route('https://5r.intramanager.com/**',route)
                 foreground=context.pages[0];foreground.bring_to_front()
                 service=context.service_workers[0] if context.service_workers else context.wait_for_event('serviceworker')
@@ -62,13 +64,24 @@ chrome.runtime.connectNative=()=>({postMessage:m=>{if(m.type==='result')fixtureR
                 assert result.get('success'),result
                 for key,value in {'hours':7.5,'phoneHours':6,'sickHours':4,'sickPay':800.44,'cancellations':-380.40,'payrollSchema':2}.items():assert result[key]==value,(key,result)
                 book=next(page for page in context.pages if page.url.startswith(BASE))
+                assert book.locator('#startdate').input_value()=='21-09-2026'
+                assert book.locator('#stopdate').input_value()=='20-10-2026'
+                assert book.evaluate('submits')==1
+                assert not book.locator('input[type=checkbox]').is_checked(),'Query must include all projects'
+                assert service.evaluate('async()=>{const t=await chrome.tabs.query({url:"https://5r.intramanager.com/*"});return t[0].autoDiscardable===false;}')
+                held=book.evaluate('async()=>{const q=await navigator.locks.query();return q.held.some(l=>l.name.startsWith("ProviTracker.background."));}')
+                assert held,'Inactive payroll tab must hold the background lease'
+                popup=context.new_page();popup.goto('chrome-extension://'+service.url.split('/')[2]+'/popup.html')
+                popup.get_by_role('button',name='Intramanager forbundet',exact=True).wait_for()
+                assert PROFILE in popup.locator('#intramanager-status').inner_text()
+                popup.close();foreground.bring_to_front()
                 account[0]='Anden Konto';book.reload();before=len(requests)
                 result=run({'type':'intramanager','operation':'hours','requestId':'wrong','expectedProfile':PROFILE,'fromDate':'21-08-2026','toDate':'20-09-2026'})
                 assert not result.get('success') and 'anden Intramanager-konto' in result.get('error',''),result
                 assert len(requests)==before,'Wrong account must stop before another query'
                 assert len([page for page in context.pages if page.url.startswith(BASE)])==1
                 assert service.evaluate('(async()=>{const t=await chrome.tabs.query({active:true});return t.every(x=>!x.url?.startsWith("https://5r.intramanager.com"));})()')
-                print('Actual background Chromium: profile binding, normal history navigation, full sick pay, negative cancellation and wrong-account stop passed.')
+                print('Actual background Chromium: UI date-form submission despite ignored URL query, fresh result after delayed AJAX (never stale hours), background lease, Memory Saver protection, actual connected popup,  profile binding, normal history navigation, full sick pay, negative cancellation and wrong-account stop passed.')
             finally:context.close()
 
 if __name__=='__main__':check()

@@ -6,6 +6,30 @@ export function readIntramanagerPage(request) {
   const normalize=s=>String(s || '').trim().replace(/\s+/g,' ').toLocaleLowerCase('da');
   if(!request.expectedProfile || normalize(profile)!==normalize(request.expectedProfile))
     return {error:'Intramanager er logget ind med en anden konto end den, du har valgt i Provi Tracker. Skift konto i Chrome.'};
+  if(request.operation==='prepare') {
+    const from=document.querySelector('#startdate'),to=document.querySelector('#stopdate'),form=document.querySelector('#form-search'),main=document.querySelector('#main');
+    if(!from || !to || !form || !main)return {waiting:true};
+    if(globalThis.proviIntramanagerQuery?.requestId===request.requestId)return {prepared:true};
+    const submit=[...form.querySelectorAll('button[type="submit"]')].filter(el=>/^(Søg|Search)$/.test(el.textContent.trim()));
+    if(submit.length!==1 || submit[0].disabled)return {waiting:true};
+    for(const el of form.querySelectorAll('input[name="g[]"]:checked'))el.click();
+    for(const [el,value]of [[from,request.fromDate],[to,request.toDate]]){
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(el,value);
+      el.dispatchEvent(new Event('input',{bubbles:true}));el.dispatchEvent(new Event('change',{bubbles:true}));
+    }
+    globalThis.proviIntramanagerQuery?.observer?.disconnect();
+    const oldTable=main.querySelector('table'),oldBody=main.querySelector('tbody');
+    const query=globalThis.proviIntramanagerQuery={requestId:request.requestId,ready:false};
+    query.observer=new MutationObserver(()=>{
+      const table=main.querySelector('table'),body=main.querySelector('tbody');
+      if((table && (table!==oldTable || body!==oldBody)) || /intet blev fundet/i.test(main.textContent)){
+        query.ready=true;query.observer.disconnect();
+      }
+    });
+    query.observer.observe(main,{childList:true,subtree:true,characterData:true});
+    submit[0].click();return {prepared:true};
+  }
+  if(request.requestId && (globalThis.proviIntramanagerQuery?.requestId!==request.requestId || !globalThis.proviIntramanagerQuery.ready))return {waiting:true};
   if(document.querySelector('#startdate')?.value!==request.fromDate || document.querySelector('#stopdate')?.value!==request.toDate) return {waiting:true};
   const main=document.querySelector('#main');if(!main) return {waiting:true};
   const noRows=/intet blev fundet/i.test(main.textContent);
@@ -36,7 +60,7 @@ export function readIntramanagerPage(request) {
   return {success:true,profileName:profile,periodFrom:request.fromDate,periodTo:request.toDate,payrollSchema:2,...total};
 }
 
-export async function startIntramanager(job,finish,current) {
+export async function startIntramanager(job,finish,current,{protectTab=async()=>{}}={}) {
   const origin='https://5r.intramanager.com/*',base='https://5r.intramanager.com/reports/history/';
   const done=result=>finish(job,result);
   if(!await chrome.permissions.contains({origins:[origin]})) {
@@ -45,6 +69,7 @@ export async function startIntramanager(job,finish,current) {
   const key='intramanagerTab';let tab;
   const saved=(await chrome.storage.session.get(key))[key];
   if(Number.isInteger(saved)) {try {const previous=await chrome.tabs.get(saved);if(previous.url && new URL(previous.url).origin==='https://5r.intramanager.com') tab=previous;}catch {}}
+  if(!tab){const candidates=await chrome.tabs.query({url:base+'*'});if(candidates.length===1)tab=candidates[0];}
   if(!tab) tab=await chrome.tabs.create({url:base,active:false});
   if(!current()) return;
   job.tabId=tab.id;job.phase='identity';
@@ -59,12 +84,13 @@ export async function startIntramanager(job,finish,current) {
       const url=new URL(tab.url);
       if(url.origin!=='https://5r.intramanager.com') {done({success:false,error:'Intramanager-fanen skiftede websted. Prøv forbindelsen igen.'});return;}
       if(url.pathname.startsWith('/login/')) {done({success:false,error:'Log ind på Intramanager i den nye Chrome-fane, og prøv igen.'});return;}
+      await protectTab(tab);
+      if((tab.frozen || tab.discarded) && !job.recoveredSleep){job.recoveredSleep=true;job.phase='identity';await chrome.tabs.update(tab.id,{url:base});return;}
       if(tab.frozen || tab.discarded) {done({success:false,error:'Åbn Intramanager-fanen én gang, og hold webstedet aktivt under Chromes ydeevneindstillinger.'});return;}
       if(tab.status==='loading') return;
       if(url.pathname!=='/reports/history/') {await chrome.tabs.update(tab.id,{url:base});return;}
-      if(job.phase==='results' && (url.searchParams.get('b')!==job.fromDate || url.searchParams.get('c')!==job.toDate)) return;
-      const argument=job.phase==='identity'?{operation:'profile'}:job;
-      const readings=await chrome.scripting.executeScript({target:{tabId:tab.id,frameIds:[0]},func:readIntramanagerPage,args:[{operation:argument.operation,expectedProfile:argument.expectedProfile,fromDate:argument.fromDate,toDate:argument.toDate}]});
+      const argument=job.phase==='identity'?{operation:'profile'}:job.phase==='prepare'?{...job,operation:'prepare'}:job;
+      const readings=await chrome.scripting.executeScript({target:{tabId:tab.id,frameIds:[0]},func:readIntramanagerPage,args:[{operation:argument.operation,expectedProfile:argument.expectedProfile,fromDate:argument.fromDate,toDate:argument.toDate,requestId:job.requestId}]});
       if(!current()) return;
       const result=readings[0]?.result;if(!result || result.waiting) return;
       if(result.error){done({success:false,error:result.error});return;}
@@ -72,14 +98,14 @@ export async function startIntramanager(job,finish,current) {
         if(job.operation==='profile'){done(result);return;}
         const normalize=s=>String(s || '').trim().replace(/\s+/g,' ').toLocaleLowerCase('da');
         if(normalize(result.profileName)!==normalize(job.expectedProfile)) {done({success:false,error:'Chrome er logget ind med en anden Intramanager-konto. Kontrollér det fulde kontonavn i Indstillinger.'});return;}
-        job.phase='results';
-        await chrome.tabs.update(tab.id,{url:base+'?'+new URLSearchParams({b:job.fromDate,c:job.toDate})});return;
+        job.phase='prepare';return;
       }
+      if(result.prepared){job.phase='results';return;}
       done(result);
     } catch { /* Normal page navigation can replace an execution context. */ }
     finally {scanning=false;}
   };
   job.scan=scan;job.poll=setInterval(scan,500);
-  job.timeout=setTimeout(()=>done({success:false,error:'Intramanager svarede ikke. Kontrollér login og webstedsadgang i Chrome.'}),45000);
+  job.timeout=setTimeout(()=>done({success:false,error:job.phase==='results'?'Intramanager indlæste ikke resultaterne for den valgte periode. Kontrollér at Søg virker i timehistorikken. De tidligere tal er bevaret.':'Intramanager svarede ikke. Kontrollér login og webstedsadgang i Chrome.'}),45000);
   await scan();
 }

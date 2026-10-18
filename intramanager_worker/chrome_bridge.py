@@ -242,7 +242,7 @@ def request_chrome(payload, kind):
     url = payload.get('workbookUrl', '')
     if kind!='intramanager' and not valid_workbook(url): raise ValueError('Gem et direkte link til masterarket med sourcedoc i adressen.')
     register_host()
-    if kind in {'install','register'}: sync_installed_extension()
+    if kind in {'install','register','intramanager'}: sync_installed_extension()
     folder = root()
     request_id = str(uuid.uuid4())
     if kind in {'setup','install'} and payload.get('registration', {}).get('requestId'):
@@ -257,17 +257,17 @@ def request_chrome(payload, kind):
         request_id = registration['requestId']
         if registration.get('isTest') is True or not isinstance(registration.get('orderNumber'), str) or not registration['orderNumber'].strip():
             raise ValueError('Ugyldig salgsregistrering.')
-    duration = 420 if kind=='register' else 300 if kind=='install' else 60 if kind=='intramanager' else 35 if kind == 'probe' else 180
+    duration = 420 if kind=='register' else 660 if kind=='install' else 60 if kind=='intramanager' else 35 if kind == 'probe' else 180
     envelope = {'type': kind, 'requestId': request_id, 'workbookUrl': url, 'expiresAt': time.time()+duration}
-    if kind in {'install','register'}: envelope['requiredExtensionVersion']=json.loads((extension_dir()/'manifest.json').read_text(encoding='utf-8'))['version']
+    if kind in {'install','register','intramanager'}: envelope['requiredExtensionVersion']=json.loads((extension_dir()/'manifest.json').read_text(encoding='utf-8'))['version']
     if kind not in {'probe','intramanager'}: envelope['registration'] = registration
     if kind=='intramanager':
         envelope.update({key:payload.get(key) for key in ['operation','fromDate','toDate','expectedProfile']})
         if not valid_intramanager_request(envelope): raise ValueError('Kontrollér kontonavn og periode for Intramanager i Chrome.')
     if len(json.dumps(envelope, ensure_ascii=False).encode('utf-8')) > LIMIT:
         raise ValueError('Salgsregistreringen er for lang til Chrome. Forkort bemærkningerne og prøv igen.')
-    if kind in {'install','register'} and not extension_version_loaded(envelope['requiredExtensionVersion']):
-        return {'success':False,'status':'chrome-update-required','requestId':request_id,'error':'Afventer den opdaterede Chrome-udvidelse. Åbn Chrome og klik på Provi Tracker-udvidelsen. Salget afventer, indtil den nye version er klar.'}
+    if kind in {'install','register','intramanager'} and not extension_version_loaded(envelope['requiredExtensionVersion']):
+        return {'success':False,'status':'chrome-update-required','requestId':request_id,'error':'Afventer den opdaterede Chrome-udvidelse. Åbn Chrome og klik på Provi Tracker-udvidelsen. Prøv hentningen igen, når den nye version er klar.' if kind=='intramanager' else 'Afventer den opdaterede Chrome-udvidelse. Åbn Chrome og klik på Provi Tracker-udvidelsen. Salget afventer, indtil den nye version er klar.'}
     request = folder / 'request.json'
     response = folder / 'response.json'
     with update_lock():
@@ -357,7 +357,7 @@ def native_main(origin):
             atomic_json(root() / 'response.json', result)
 
 
-SETUP_PHASES = {'probe','install-open','install-find','install-name','install-write','install-save','install-reopen','install-verify','open','run','parameter','submit','receipt'}
+SETUP_PHASES = {'login','probe','install-open','install-find','install-name','install-write','install-save','install-reopen','install-verify','open','run','parameter','submit','receipt'}
 def safe_setup_report(value):
     if not isinstance(value,dict): return {}
     report={'format':1,'kind':'install','extensionVersion':value.get('extensionVersion','') if isinstance(value.get('extensionVersion'),str) and value['extensionVersion'].replace('.','').isdigit() and len(value['extensionVersion'])<=24 else 'unknown'}
@@ -386,4 +386,4 @@ def safe_setup_report(value):
             if type(item.get(key)) is int: event[key]=max(0,min(item[key],3600000))
         report['events'].append(event)
     return report
-SETUP_REPORT_CODES = SETUP_PHASES | {'script-updated','start','tab','navigation','injection','injected','rejected','finished','workbook-frames','office-frames','scan-error','result','error','none','other','permission','frame-gone','context-gone','waiting','parameter-script','parameter-field','parameter-run','parameters','ready','started','filled','refill','submitted','installed','next'}
+SETUP_REPORT_CODES = SETUP_PHASES | {'office-dialog','script-updated','start','tab','navigation','injection','injected','rejected','finished','workbook-frames','office-frames','scan-error','result','error','none','other','permission','frame-gone','context-gone','waiting','parameter-script','parameter-field','parameter-run','parameters','ready','started','filled','refill','submitted','installed','next'}
