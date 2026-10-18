@@ -104,6 +104,17 @@ jobs:
           if (!$iscc) { throw 'Hosted Inno Setup 6 compiler not found' }
           "PROVI_ISCC=$iscc" | Out-File $env:GITHUB_ENV -Append
           (Get-Item $iscc).VersionInfo | Format-List ProductVersion, FileVersion
+      - name: Verify automatic script setup with real Monaco editor
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $env:PLAYWRIGHT_BROWSERS_PATH = Join-Path $env:RUNNER_TEMP 'provi-setup-browsers'
+          python -m playwright install chromium
+          if ($LASTEXITCODE -ne 0) { throw 'Editor fixture browser installation failed' }
+          $deps = Join-Path $env:RUNNER_TEMP 'provi-monaco'
+          npm.cmd install --prefix "$deps" monaco-editor@0.52.2 --ignore-scripts --no-audit --no-fund
+          if ($LASTEXITCODE -ne 0) { throw 'Editor fixture dependency failed' }
+          python tests/chrome_setup_integration.py --monaco "$deps/node_modules/monaco-editor/min/vs"
+          if ($LASTEXITCODE -ne 0) { throw 'Automatic script setup failed' }
       - name: Build application and run existing tests
         run: |
           $ErrorActionPreference = 'Stop'
@@ -209,15 +220,6 @@ jobs:
           $env:PLAYWRIGHT_BROWSERS_PATH = Join-Path $env:RUNNER_TEMP 'provi-trial-stage/intramanager_worker/b'
           python tests/chrome_intramanager_integration.py
           if ($LASTEXITCODE -ne 0) { throw 'Actual Chrome payroll reader failed' }
-      - name: Verify automatic script setup with real Monaco editor
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $env:PLAYWRIGHT_BROWSERS_PATH = Join-Path $env:RUNNER_TEMP 'provi-trial-stage/intramanager_worker/b'
-          $deps = Join-Path $env:RUNNER_TEMP 'provi-monaco'
-          npm.cmd install --prefix "$deps" monaco-editor@0.52.2 --ignore-scripts --no-audit --no-fund
-          if ($LASTEXITCODE -ne 0) { throw 'Editor fixture dependency failed' }
-          python tests/chrome_setup_integration.py --monaco "$deps/node_modules/monaco-editor/min/vs"
-          if ($LASTEXITCODE -ne 0) { throw 'Automatic script setup failed' }
       - name: Capture installed Midnight Grey interface with demo data
         run: |
           $installed = Join-Path $env:LOCALAPPDATA 'Programs/Provi Tracker/ProvisionTrackerV2.exe'

@@ -17,7 +17,7 @@ DIALOG=OFFICE+'/fixture/sdx/fa000000043/1/en-us_web/dialog.html'
 
 
 def run(monaco):
-    source=(REPO/'chrome_extension/excel_online_sales_registration_v4.ts').read_text()
+    source=(REPO/'chrome_extension/excel_online_sales_registration_v4.ts').read_bytes().decode('utf-8')
     name='ProviTrackerAutoV4_'+hashlib.sha256(source.encode()).hexdigest()[:10]
     page='''<script src="/vs/loader.js"></script><div id="app"></div><script>
 window.scripts={ExistingPersonalScript:'// KEEP PERSONAL SCRIPT'};window.saveCount=0;window.created=0;window.runs=0;window.failSave=false;window.mismatch=false;
@@ -40,9 +40,9 @@ const li=document.createElement('li');li.setAttribute('role','listitem');li.text
 </script>'''
     with tempfile.TemporaryDirectory(prefix='provi-setup-') as temp:
         ext=Path(temp)/'extension';shutil.copytree(REPO/'chrome_extension',ext)
-        background=ext/'background.js';background.write_text('''globalThis.fixtureResults=[];globalThis.fixtureProgress=[];
+        background=ext/'background.js';background.write_bytes(('''globalThis.fixtureResults=[];globalThis.fixtureProgress=[];
 chrome.runtime.connectNative=()=>({postMessage:m=>{if(m.type==='result')fixtureResults.push(m);if(m.type==='progress')fixtureProgress.push(m.phase)},onDisconnect:{addListener(){}},onMessage:{addListener:fn=>globalThis.fixtureNative=fn}});
-'''+background.read_text())
+'''+background.read_bytes().decode('utf-8')).encode('utf-8'))
         with sync_playwright() as p:
             context=p.chromium.launch_persistent_context(str(Path(temp)/'profile'),headless=True,channel='chromium',args=['--disable-extensions-except='+str(ext),'--load-extension='+str(ext)])
             try:
@@ -79,7 +79,7 @@ chrome.runtime.connectNative=()=>({postMessage:m=>{if(m.type==='result')fixtureR
                     raise AssertionError(('Timed out',service.evaluate('fixtureProgress'),[(f.url,f.locator('body').inner_text()[:500]) for f in book.frames]))
                 first=request('setup-first');assert first['status']=='checked' and first['row']==0
                 frame=next(f for f in book.frames if f.url==PANE)
-                assert frame.evaluate('scripts["'+name+'"]')==source
+                assert frame.evaluate('scripts["'+name+'"]')==source.replace('\r\n','\n')
                 assert frame.evaluate('scripts.ExistingPersonalScript')=='// KEEP PERSONAL SCRIPT'
                 assert frame.evaluate('created')==1 and frame.evaluate('saveCount')==1 and frame.evaluate('runs')==1
                 assert {'install-write','install-save','install-reopen','install-verify','receipt'}<=set(service.evaluate('fixtureProgress'))
