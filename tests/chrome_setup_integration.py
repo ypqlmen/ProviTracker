@@ -99,6 +99,7 @@ chrome.runtime.connectNative=()=>({postMessage:m=>{if(m.type==='result')fixtureR
                 assert frame.evaluate('scripts["'+updated_name+'"]').replace('\r\n','\n')==updated_source.replace('\r\n','\n')
                 assert frame.evaluate('sales.length')==1,'Updating and checking must not duplicate the sale'
                 assert updated['diagnostics']['scriptUpdated'] is True
+                assert {'probe','install-open','install-write','install-verify','receipt'} <= {stage['phase'] for stage in updated['diagnostics']['stages']}
                 assert len([e for e in updated['diagnostics']['events'] if e['event']=='script-updated'])==1
                 frame.evaluate('library()')
                 again=request('auto-sale-repeat',registration={**sale,'requestId':'auto-sale-repeat'})

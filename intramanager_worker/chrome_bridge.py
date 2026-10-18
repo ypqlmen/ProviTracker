@@ -367,6 +367,13 @@ def safe_setup_report(value):
     if isinstance(revision,str) and len(revision)==10 and all(c in '0123456789abcdef' for c in revision): report['scriptRevision']=revision
     if type(value.get('elapsedMs')) is int: report['elapsedMs']=max(0,min(value['elapsedMs'],3600000))
     report['phase']=value.get('phase') if isinstance(value.get('phase'),str) and value['phase'] in SETUP_PHASES else 'probe'
+    report['stages']=[]
+    for stage in value.get('stages',[])[:32] if isinstance(value.get('stages'),list) else []:
+        if not isinstance(stage,dict) or not isinstance(stage.get('phase'),str) or stage['phase'] not in SETUP_PHASES: continue
+        clean={'phase':stage['phase']}
+        for key in ['firstMs','lastMs','visits']:
+            if type(stage.get(key)) is int: clean[key]=max(0,min(stage[key],3600000))
+        report['stages'].append(clean)
     report['events']=[]
     for item in value.get('events',[])[:120] if isinstance(value.get('events'),list) else []:
         if not isinstance(item,dict): continue

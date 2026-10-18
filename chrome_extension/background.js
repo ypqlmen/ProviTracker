@@ -227,7 +227,7 @@ async function scan(job) {
   try {
     const tab=await chrome.tabs.get(job.tabId);
     if (pending!==job) return;
-    if((job.type==='install' || job.hadScriptUpdate) && job.progressPhase!==(job.phase || 'probe')){job.progressPhase=job.phase || 'probe';status=({probe:'Finder masterarket…','install-open':'Åbner Office Scripts…','install-find':'Finder opsætningsscriptet…','install-name':'Navngiver scriptet…','install-write':'Indsætter koden…','install-save':'Gemmer scriptet…','install-reopen':'Genåbner det gemte script…','install-verify':'Kontrollerer koden…',open:'Åbner kontrollen…',run:'Starter kontrollen…',parameter:'Udfylder kontrollen…',submit:'Sender kontrollen…',receipt:'Afventer Excel…'})[job.progressPhase] || 'Opsætter masterarket…';port?.postMessage({type:'progress',requestId:job.requestId,phase:job.progressPhase});}
+    if((job.type==='install' || job.hadScriptUpdate) && job.progressPhase!==(job.phase || 'probe')){job.progressPhase=job.phase || 'probe';const elapsed=Math.max(0,Date.now()-job.startedAt);job.phaseTimeline ??=[];const previous=job.phaseTimeline.find(step=>step.phase===job.lastStage);if(previous)previous.lastMs=elapsed;let stage=job.phaseTimeline.find(step=>step.phase===job.progressPhase);if(!stage){stage={phase:job.progressPhase,firstMs:elapsed,lastMs:elapsed,visits:0};job.phaseTimeline.push(stage);}stage.visits++;stage.lastMs=elapsed;job.lastStage=job.progressPhase;status=({probe:'Finder masterarket…','install-open':'Åbner Office Scripts…','install-find':'Finder opsætningsscriptet…','install-name':'Navngiver scriptet…','install-write':'Indsætter koden…','install-save':'Gemmer scriptet…','install-reopen':'Genåbner det gemte script…','install-verify':'Kontrollerer koden…',open:'Åbner kontrollen…',run:'Starter kontrollen…',parameter:'Udfylder kontrollen…',submit:'Sender kontrollen…',receipt:'Afventer Excel…'})[job.progressPhase] || 'Opsætter masterarket…';port?.postMessage({type:'progress',requestId:job.requestId,phase:job.progressPhase});}
     traceStep(job,'tab',{active:tab.active===true,discarded:tab.discarded===true,frozen:tab.frozen===true,locked:job.scanning===true,inflight:job.inflight || 0});
     if (!await workbookAvailable(job,tab)) return;
     // Check outside the injection lock: a suspended injected call can stay pending.
@@ -257,6 +257,7 @@ function finish(job, result) {
   if (pending !== job) return;
   clearInterval(job.poll);
   clearTimeout(job.timeout);
+  const lastStage=job.phaseTimeline?.find(step=>step.phase===job.lastStage);if(lastStage)lastStage.lastMs=Math.max(0,Date.now()-job.startedAt);
   traceStep(job,'finished',{phase:job.phase,outcome:result.success?'result':'error',locked:job.scanning===true,inflight:job.inflight || 0});
   if(job.type==='install' || job.hadScriptUpdate){result.diagnostics={...diagnosticReport({...job,type:'install'},loadedVersion),scriptUpdated:job.scriptUpdated===true};chrome.storage.local.set({lastSetup:result.diagnostics}).catch(()=>{});}
   if(!result.success && job.type!=='intramanager') chrome.storage.local.set({lastFailure:diagnosticReport(job,loadedVersion)}).catch(()=>{});

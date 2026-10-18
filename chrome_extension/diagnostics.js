@@ -19,10 +19,13 @@ export function traceStep(job,event,data={}) {
   if(job.trace.length>120) job.trace.shift();
 }
 export function diagnosticReport(job,version) {
-  return {format:1,extensionVersion:version,kind:['probe','setup','install','register'].includes(job.type)?job.type:'other',
+  const report={format:1,extensionVersion:version,kind:['probe','setup','install','register'].includes(job.type)?job.type:'other',
     ...(job.type==='install' && /^ProviTrackerAutoV4_[0-9a-f]{10}$/.test(job.scriptName || '')?{scriptVersion:4,scriptRevision:job.scriptName.slice(-10)}:{}),
     elapsedMs:Math.max(0,Date.now()-job.startedAt),phase:structuralInfo({phase:job.phase}).phase || 'probe',
+    stages:(job.phaseTimeline || []).slice(0,32).filter(step=>codes.includes(step.phase)).map(step=>({phase:step.phase,...Object.fromEntries(['firstMs','lastMs','visits'].filter(key=>Number.isInteger(step[key]) && step[key]>=0).map(key=>[key,Math.min(step[key],3600000)]))})),
     events:(job.trace || []).map(({signature,...item})=>item)};
+  while(report.events.length && new TextEncoder().encode(JSON.stringify(report)).length>12000)report.events.shift();
+  return report;
 }
 export function failureReason(error) {
   const message=String(error?.message || '');

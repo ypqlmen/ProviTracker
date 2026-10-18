@@ -9,7 +9,9 @@ for(let i=0;i<500;i++)traceStep(job,'injected',privateInfo);
 assert.equal(job.trace.length,1);assert.equal(job.trace[0].repeats,500);
 for(let i=0;i<500;i++)traceStep(job,'injected',{fields:i,phase:'parameter'});
 assert.equal(job.trace.length,120,'diagnostics must be bounded during repeated failures');
+job.phaseTimeline=[{phase:'install-open',firstMs:0,lastMs:100,visits:1,url:'SECRET'},{phase:'parameter',firstMs:100,lastMs:100000,visits:2,source:'SECRET'}];
 const report=diagnosticReport(job,'0.1.10');
+assert.deepEqual(report.stages,[{phase:'install-open',firstMs:0,lastMs:100,visits:1},{phase:'parameter',firstMs:100,lastMs:100000,visits:2}]);
 assert(!JSON.stringify(report).includes('SECRET'));
 assert(report.events.every(e=>!('signature' in e)));
 assert.equal(failureReason(Error('Cannot access contents of https://private/?token=SECRET')),'permission');
@@ -32,3 +34,7 @@ assert.match(dialog('Angiv parametre for AnotherScript').error,/andet script/);
 assert.match(dialog('Enter parameters for AnotherScript').error,/andet script/);
 assert.equal(dialog('Angiv parametre for ProviTrackerSalesRegistrationV4').waiting,'parameter-field');
 console.log('Bounded structural failure diagnostics exclude URLs, payloads, identities and raw errors.');
+
+const heavy={startedAt:Date.now(),type:'install',phase:'parameter',phaseTimeline:job.phaseTimeline,trace:[]};
+for(let i=0;i<120;i++)heavy.trace.push({event:'injected',phase:'parameter',frame:1000,ms:100000,repeats:1,matched:false,defaultTest:true,attached:true,readOnly:false,disabled:false,runEnabled:false,scriptMatched:true,fields:1,matches:1});
+const bounded=diagnosticReport(heavy,'0.1.15');assert(new TextEncoder().encode(JSON.stringify(bounded)).length<=12000);assert.deepEqual(bounded.stages,report.stages,'Complete phase history survives the detailed-event byte limit');
