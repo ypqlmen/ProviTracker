@@ -229,10 +229,20 @@ def valid_intramanager_result(value, query):
 def request_intramanager(payload):
     return request_chrome({**payload,'workbookUrl':'https://5r.intramanager.com/reports/history/'},'intramanager')
 
+def extension_version_loaded(required, seconds=12):
+    deadline=time.monotonic()+seconds
+    while time.monotonic()<deadline:
+        try:
+            if version_tuple(read_json(root()/'loaded.json').get('version','0')) >= version_tuple(required): return True
+        except ValueError: pass
+        time.sleep(.2)
+    return False
+
 def request_chrome(payload, kind):
     url = payload.get('workbookUrl', '')
     if kind!='intramanager' and not valid_workbook(url): raise ValueError('Gem et direkte link til masterarket med sourcedoc i adressen.')
     register_host()
+    if kind in {'install','register'}: sync_installed_extension()
     folder = root()
     request_id = str(uuid.uuid4())
     if kind in {'setup','install'} and payload.get('registration', {}).get('requestId'):
@@ -247,14 +257,17 @@ def request_chrome(payload, kind):
         request_id = registration['requestId']
         if registration.get('isTest') is True or not isinstance(registration.get('orderNumber'), str) or not registration['orderNumber'].strip():
             raise ValueError('Ugyldig salgsregistrering.')
-    duration = 300 if kind=='install' else 60 if kind=='intramanager' else 35 if kind == 'probe' else 180
+    duration = 420 if kind=='register' else 300 if kind=='install' else 60 if kind=='intramanager' else 35 if kind == 'probe' else 180
     envelope = {'type': kind, 'requestId': request_id, 'workbookUrl': url, 'expiresAt': time.time()+duration}
+    if kind in {'install','register'}: envelope['requiredExtensionVersion']=json.loads((extension_dir()/'manifest.json').read_text(encoding='utf-8'))['version']
     if kind not in {'probe','intramanager'}: envelope['registration'] = registration
     if kind=='intramanager':
         envelope.update({key:payload.get(key) for key in ['operation','fromDate','toDate','expectedProfile']})
         if not valid_intramanager_request(envelope): raise ValueError('Kontrollér kontonavn og periode for Intramanager i Chrome.')
     if len(json.dumps(envelope, ensure_ascii=False).encode('utf-8')) > LIMIT:
         raise ValueError('Salgsregistreringen er for lang til Chrome. Forkort bemærkningerne og prøv igen.')
+    if kind in {'install','register'} and not extension_version_loaded(envelope['requiredExtensionVersion']):
+        return {'success':False,'status':'chrome-update-required','requestId':request_id,'error':'Afventer den opdaterede Chrome-udvidelse. Åbn Chrome og klik på Provi Tracker-udvidelsen. Salget afventer, indtil den nye version er klar.'}
     request = folder / 'request.json'
     response = folder / 'response.json'
     with update_lock():
@@ -265,7 +278,7 @@ def request_chrome(payload, kind):
         last_phase = None
         deadline = time.monotonic() + duration
         while time.monotonic() < deadline:
-            if kind=='install':
+            if kind in {'install','register'}:
                 progress = read_json(folder / 'progress.json')
                 phase = progress.get('phase')
                 if progress.get('requestId')==request_id and phase in SETUP_PHASES and phase!=last_phase:
@@ -313,10 +326,16 @@ def native_main(origin):
                                 atomic_json(root() / 'loaded.json', {'version': loaded, 'checkedAt': time.time()})
                 except (OSError, ValueError, RuntimeError) as exc:
                     write_frame(sys.stdout.buffer, {'type': 'extension-update-error', 'error': str(exc)[:500]})
+            if live and request.get('requiredExtensionVersion'):
+                try: current_version=version_tuple(message.get('extensionVersion','0'))
+                except ValueError: current_version=(0,0,0,0)
+                if current_version < version_tuple(request['requiredExtensionVersion']):
+                    write_frame(sys.stdout.buffer,{'type':'reload-extension','version':request['requiredExtensionVersion']})
+                    continue
             if live and request.get('requestId') != last_id and (valid_intramanager_request(request) if request.get('type')=='intramanager' else valid_workbook(request.get('workbookUrl', ''))):
                 last_id = request['requestId']
                 write_frame(sys.stdout.buffer, request)
-        elif message.get('type') == 'progress' and live and request.get('type')=='install' and message.get('requestId')==last_id==request.get('requestId'):
+        elif message.get('type') == 'progress' and live and request.get('type') in {'install','register'} and message.get('requestId')==last_id==request.get('requestId'):
             if message.get('phase') in SETUP_PHASES:
                 atomic_json(root() / 'progress.json', {'requestId':last_id,'phase':message['phase']})
         elif message.get('type') == 'result' and live and message.get('requestId') == last_id == request.get('requestId'):
@@ -332,7 +351,7 @@ def native_main(origin):
                 success = valid_receipt(message, request.get('registration', {}))
                 result = {key:message.get(key) for key in ['requestId','scriptVersion','registrationId','orderNumber','row','status','worksheetName','worksheetId']}
                 result['success'] = success
-            if request.get('type')=='install': result['diagnostics']=safe_setup_report(message.get('diagnostics'))
+            if request.get('type') in {'install','register'} and isinstance(message.get('diagnostics'),dict): result['diagnostics']=safe_setup_report(message.get('diagnostics'))
             result['background'] = message.get('background') is True
             if not success: result['error'] = str(message.get('error', 'Excel bekræftede ikke salget. Kontrollér masterarket før genforsøg.'))[:500]
             atomic_json(root() / 'response.json', result)
@@ -342,6 +361,7 @@ SETUP_PHASES = {'probe','install-open','install-find','install-name','install-wr
 def safe_setup_report(value):
     if not isinstance(value,dict): return {}
     report={'format':1,'kind':'install','extensionVersion':value.get('extensionVersion','') if isinstance(value.get('extensionVersion'),str) and value['extensionVersion'].replace('.','').isdigit() and len(value['extensionVersion'])<=24 else 'unknown'}
+    if type(value.get('scriptUpdated')) is bool: report['scriptUpdated']=value['scriptUpdated']
     if value.get('scriptVersion')==4: report['scriptVersion']=4
     revision=value.get('scriptRevision')
     if isinstance(revision,str) and len(revision)==10 and all(c in '0123456789abcdef' for c in revision): report['scriptRevision']=revision
@@ -359,4 +379,4 @@ def safe_setup_report(value):
             if type(item.get(key)) is int: event[key]=max(0,min(item[key],3600000))
         report['events'].append(event)
     return report
-SETUP_REPORT_CODES = SETUP_PHASES | {'start','tab','navigation','injection','injected','rejected','finished','workbook-frames','office-frames','scan-error','result','error','none','other','permission','frame-gone','context-gone','waiting','parameter-script','parameter-field','parameter-run','parameters','ready','started','filled','refill','submitted','installed','next'}
+SETUP_REPORT_CODES = SETUP_PHASES | {'script-updated','start','tab','navigation','injection','injected','rejected','finished','workbook-frames','office-frames','scan-error','result','error','none','other','permission','frame-gone','context-gone','waiting','parameter-script','parameter-field','parameter-run','parameters','ready','started','filled','refill','submitted','installed','next'}

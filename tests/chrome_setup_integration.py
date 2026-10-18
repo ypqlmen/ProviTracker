@@ -20,13 +20,13 @@ def run(monaco):
     source=(REPO/'chrome_extension/excel_online_sales_registration_v4.ts').read_bytes().decode('utf-8')
     name='ProviTrackerAutoV4_'+hashlib.sha256(source.encode()).hexdigest()[:10]
     page='''<script src="/vs/loader.js"></script><div id="app"></div><script>
-window.scripts={ExistingPersonalScript:'// KEEP PERSONAL SCRIPT'};window.saveCount=0;window.created=0;window.runs=0;window.failSave=false;window.mismatch=false;
+window.scripts={ExistingPersonalScript:'// KEEP PERSONAL SCRIPT'};window.saveCount=0;window.created=0;window.runs=0;window.sales=[];window.failSave=false;window.mismatch=false;
 window.require.config({paths:{vs:'/vs'}});window.require(['vs/editor/editor.main'],()=>library());
 function button(label,fn){const b=document.createElement('button');b.setAttribute('aria-label',label);b.textContent=label;b.onclick=fn;return b}
 function clear(){if(window.code){window.code.dispose();window.code=null}document.getElementById('app').replaceChildren()}
 function library(){clear();const app=document.getElementById('app');const filter=document.createElement('input');filter.setAttribute('aria-label','Filtrer scripts');app.append(filter);
 app.append(button('Nyt script',()=>{const item=document.createElement('div');item.setAttribute('role','menuitem');item.textContent='Opret i Kodeeditor';item.onclick=()=>{window.created++;edit('Script '+created,'function main(workbook: ExcelScript.Workbook) { console.log("new draft"); }')};app.append(item)}));
-for(const [name,text]of Object.entries(scripts)){const article=document.createElement('article');article.setAttribute('aria-label','Script: '+name);article.append(button('Rediger',()=>edit(name,text)));app.append(article)}}
+for(const [name,text]of Object.entries(scripts)){const article=document.createElement('article');article.setAttribute('aria-label','Script: '+name);const heading=document.createElement('span');heading.textContent=name;article.append(heading);article.append(button('Rediger',()=>edit(name,text)));app.append(article)}}
 function edit(name,text){clear();window.currentName=name;const app=document.getElementById('app');app.append(button('Tilbage',library));const title=document.createElement('span');title.id='title';title.textContent=name;app.append(title);
 app.append(button('Omdøb',()=>{const input=document.createElement('input');input.setAttribute('aria-label','Angiv scriptnavn [påkrævet]');input.value=currentName;input.onkeydown=e=>{if(e.key==='Enter'){window.currentName=input.value;title.textContent=input.value;input.remove()}};app.append(input)}));
 const save=button('Scriptet er gemt',()=>{if(failSave)return;scripts[currentName]=code.getValue();if(mismatch)scripts[currentName]+='// tampered';window.saveCount++;save.setAttribute('aria-label','Scriptet er gemt');save.disabled=true});save.disabled=true;app.append(save);
@@ -34,8 +34,8 @@ app.append(button('Kør',()=>{window.runs++;parent.postMessage({type:'parameters
 window.code=monaco.editor.create(host,{value:text,language:'typescript',automaticLayout:true,accessibilitySupport:'on',ariaLabel:'editor',wordWrap:'on'});code.onDidChangeModelContent(()=>{save.disabled=false;save.setAttribute('aria-label','Gem script')});
 app.insertAdjacentHTML('beforeend','<ul id="output"></ul>');}
 addEventListener('message',e=>{if(e.origin!=='https://euc-excel.officeapps.live.com'||e.data.type!=='payload')return;
-const p=e.data.payload;if(!p.isTest)throw Error('SETUP MUST NOT SEND A SALE');
-const receipt={success:true,status:'checked',scriptVersion:4,row:0,worksheetName:p.worksheetName,worksheetId:'fixture-sheet',requestId:p.requestId,orderNumber:'',registrationId:''};
+const p=e.data.payload;if(!p.isTest && (!p.registrationId || !p.orderNumber))throw Error('Invalid sale');if(!p.isTest && !sales.some(x=>x.registrationId===p.registrationId))sales.push(p);
+const receipt={success:true,status:p.isTest?'checked':'registered',scriptVersion:4,row:p.isTest?0:125,worksheetName:p.worksheetName,worksheetId:'fixture-sheet',requestId:p.requestId,orderNumber:p.isTest?'':p.orderNumber,registrationId:p.isTest?'':p.registrationId};
 const li=document.createElement('li');li.setAttribute('role','listitem');li.textContent='PROVITRACKER_RESULT:'+JSON.stringify(receipt);document.getElementById('output').append(li)});
 </script>'''
     with tempfile.TemporaryDirectory(prefix='provi-setup-') as temp:
@@ -62,9 +62,9 @@ chrome.runtime.connectNative=()=>({postMessage:m=>{if(m.type==='result')fixtureR
                 service=context.service_workers[0] if context.service_workers else context.wait_for_event('serviceworker')
                 book=context.new_page();book.goto(BOOK);front=context.new_page();front.bring_to_front()
                 pane=book.frame_locator('iframe').frame_locator('#pane');pane.get_by_role('textbox',name='Filtrer scripts').wait_for()
-                def request(identity,success=True):
+                def request(identity,success=True,registration=None):
                     print('Setup request:',identity,flush=True)
-                    service.evaluate('m=>fixtureNative(m)',{'type':'install','requestId':identity,'workbookUrl':BOOK})
+                    service.evaluate('m=>fixtureNative(m)',{'type':'register' if registration else 'install','requestId':identity,'workbookUrl':BOOK,**({'registration':registration} if registration else {})})
                     deadline=time.monotonic()+40
                     last=None
                     while time.monotonic()<deadline:
@@ -79,7 +79,7 @@ chrome.runtime.connectNative=()=>({postMessage:m=>{if(m.type==='result')fixtureR
                     raise AssertionError(('Timed out',service.evaluate('fixtureProgress'),[(f.url,f.locator('body').inner_text()[:500]) for f in book.frames]))
                 first=request('setup-first');assert first['status']=='checked' and first['row']==0
                 frame=next(f for f in book.frames if f.url==PANE)
-                assert frame.evaluate('scripts["'+name+'"]')==source.replace('\r\n','\n')
+                assert frame.evaluate('scripts["'+name+'"]').replace('\r\n','\n')==source.replace('\r\n','\n')
                 assert frame.evaluate('scripts.ExistingPersonalScript')=='// KEEP PERSONAL SCRIPT'
                 assert frame.evaluate('created')==1 and frame.evaluate('saveCount')==1 and frame.evaluate('runs')==1
                 assert {'install-write','install-save','install-reopen','install-verify','receipt'}<=set(service.evaluate('fixtureProgress'))
@@ -88,13 +88,29 @@ chrome.runtime.connectNative=()=>({postMessage:m=>{if(m.type==='result')fixtureR
                 assert frame.evaluate('created')==1 and frame.evaluate('saveCount')==1,'Repeat must reuse the saved script'
                 # Identity representation is intentionally encapsulated; verify the actual stored binding.
                 stored=service.evaluate('chrome.storage.local.get(null)');assert any(isinstance(v,dict) and v.get('name')==name for v in stored.values()),stored
+                updated_source=source+'\n// New packaged script revision for the isolated update test.\n'
+                updated_name='ProviTrackerAutoV4_'+hashlib.sha256(updated_source.encode()).hexdigest()[:10]
+                service.evaluate('text=>{globalThis.fixtureFetch=fetch;globalThis.fetch=(...args)=>Promise.resolve(new Response(text,{status:200}));}',updated_source)
+                sale={'requestId':'auto-sale','registrationId':'fixture-sale-uuid','orderNumber':'FIXTURE-ONLY','worksheetName':'Salg'}
+                wrong=request('wrong-sheet-update',False,registration={**sale,'requestId':'wrong-sheet-update','worksheetName':'Another'});assert 'arkfanen Another' in wrong['error'];assert frame.evaluate('created')==1
+                updated=request('auto-sale',registration=sale);assert updated['status']=='registered' and updated['requestId']==sale['requestId'];assert updated['registrationId']==sale['registrationId']
+                assert frame.evaluate('created')==2 and frame.evaluate('saveCount')==2 and frame.evaluate('runs')==4
+                assert frame.evaluate('scripts["'+name+'"]') is not None,'Older script must remain'
+                assert frame.evaluate('scripts["'+updated_name+'"]').replace('\r\n','\n')==updated_source.replace('\r\n','\n')
+                assert frame.evaluate('sales.length')==1,'Updating and checking must not duplicate the sale'
+                assert updated['diagnostics']['scriptUpdated'] is True
+                assert len([e for e in updated['diagnostics']['events'] if e['event']=='script-updated'])==1
+                frame.evaluate('library()')
+                again=request('auto-sale-repeat',registration={**sale,'requestId':'auto-sale-repeat'})
+                assert again['status']=='registered' and frame.evaluate('created')==2 and frame.evaluate('runs')==5 and frame.evaluate('sales.length')==1,'Unchanged script must not reinstall; sale identity remains stable'
+                name=updated_name
                 frame.evaluate('code.setValue("// unsaved personal edit")')
                 unsaved=request('setup-unsaved',False);assert 'scriptændringer' in unsaved['error'];assert frame.evaluate('code.getValue()')=='// unsaved personal edit'
                 frame.evaluate('library()')
                 frame.evaluate('name=>{scripts[name]+="// externally modified";library()}',name)
                 failure=request('setup-modified',False);assert 'Koden i Excel' in failure['error']
-                assert frame.evaluate('created')==1 and frame.evaluate('saveCount')==1 and frame.evaluate('runs')==2,'Modified code must never be overwritten or run'
-                print('Actual background extension + Monaco passed: create, paste, full-code readback, save, reopen, write-free receipt, progress, repeat, personal-script preservation unsaved-edit protection and modified-code rejection.')
+                assert frame.evaluate('created')==2 and frame.evaluate('saveCount')==2 and frame.evaluate('runs')==5,'Modified code must never be overwritten or run'
+                print('Actual background extension + Monaco passed: create, paste, full-code readback, save, reopen, write-free receipt, progress, repeat, personal-script preservation unsaved-edit protection modified-code rejection, automatic script revision update, old-version preservation and one sale after update.')
             finally:context.close()
 
 if __name__=='__main__':

@@ -3589,8 +3589,8 @@ private:
         if (salesRegistrationStatusLabel) salesRegistrationStatusLabel->setText(setup
             ? "Kontrollerer salgsregistreringsscriptet i dit åbne masterark i Chrome. Der skrives ingen salg."
             : "Registrerer salget i masterarket...");
-        if(automaticSetup){
-            if(masterSetupLog)masterSetupLog->appendPlainText("Starter automatisk opsætning. Eksisterende scripts bevares.");
+        if(automaticSetup || !setup){
+            if(automaticSetup && masterSetupLog)masterSetupLog->appendPlainText("Starter automatisk opsætning. Eksisterende scripts bevares.");
             auto buffer=std::make_shared<QByteArray>();
             connect(process,&QProcess::readyReadStandardError,this,[this,process,buffer](){
                 buffer->append(process->readAllStandardError());
@@ -3614,13 +3614,14 @@ private:
                     && result.value("orderNumber").toString() == orderNumber && result.value("registrationId").toString() == registrationId
                     && result.value("row").toInt() >= 16));
             const QString error = result.value("error").toString("Excel bekræftede ikke registreringen. Kontrollér masterarket og prøv igen.");
+            if(!setup && !result.value("diagnostics").toObject().isEmpty())masterSetupReport=result.value("diagnostics").toObject();
             if(automaticSetup){masterSetupReport=result.value("diagnostics").toObject();if(masterSetupReport.isEmpty())masterSetupReport=QJsonObject{{"format",1},{"kind","install"},{"phase","probe"},{"events",QJsonArray{}}};masterSetupReport["success"]=ok;if(masterSetupLog)masterSetupLog->appendPlainText(ok?"Klar. Excel har bekræftet opsætningen; ingen salg er registreret.":"Stoppet: "+error);}
             if (!setup) {
                 const int index = salesRegistrationIndex(repo.orders, registrationId);
                 if (index >= 0) {
                     const QString worksheetName = result.value("worksheetName").toString();
                     if (ok && !worksheetName.isEmpty()) repo.orders[index].masterRegistration["worksheetName"] = worksheetName;
-                    repo.orders[index].masterRegistrationState = ok ? "registered" : (status == "chrome-sleeping" || status == "chrome-login-required") ? "waiting-browser" : "error";
+                    repo.orders[index].masterRegistrationState = ok ? "registered" : (status == "chrome-sleeping" || status == "chrome-login-required" || status == "chrome-update-required") ? "waiting-browser" : "error";
                     repo.orders[index].masterRegistrationError = ok ? QString() : error;
                 }
                 repo.saveOrders();
@@ -3638,7 +3639,7 @@ private:
         connect(process, &QProcess::errorOccurred, this, [finish](QProcess::ProcessError error) {
             if (error == QProcess::FailedToStart) finish(QJsonObject{{"error", "Browserhjælperen kunne ikke starte. Geninstaller den nyeste Provi Tracker-version."}});
         });
-        QTimer::singleShot(automaticSetup ? 330000 : 210000, process, [process]() { if (process->state() != QProcess::NotRunning) process->kill(); });
+        QTimer::singleShot(!setup ? 450000 : automaticSetup ? 330000 : 210000, process, [process]() { if (process->state() != QProcess::NotRunning) process->kill(); });
         process->start(intramanagerWorkerPath(), {"--stdin-json"});
     }
 

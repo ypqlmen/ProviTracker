@@ -1,4 +1,4 @@
-# Salgsregistrering i Chrome – testversion 0.1.13
+# Salgsregistrering i Chrome – testversion 0.1.14
 
 Provi Tracker overfører nye salgsregistreringer gennem brugerens eksisterende Chrome-login. Ordrekøen bruger Chrome i stedet for en separat Microsoft-browser. Funktionen er endnu kun i testversionen; den offentlige opdateringskanal ændres ikke af Windows-prøvebygningen.
 
@@ -6,7 +6,7 @@ Provi Tracker overfører nye salgsregistreringer gennem brugerens eksisterende C
 
 1. Installer den nye Windows-testversion. Åbn **Indstillinger → Salgsregistrering** i Provi Tracker.
 2. Gem sælgerinitialer og det direkte masterark-link med `sourcedoc`. Åbn dette masterark én gang i Chrome, og log ind.
-3. Vælg **Installer Chrome-udvidelse**. Følg programmets guide: åbn `chrome://extensions`, behold **Udviklertilstand** aktiveret, og vælg **Indlæs udpakket** med den mappesti, programmet kopierer. Det kræver ingen administratorinstallation. Hvis udvidelsen allerede er installeret, bruges samme mappe og samme udvidelses-ID. Kontrollér version **0.1.13** og adgang til Excel og scriptpanelet; Chrome kan bede om ny webstedsadgang ved denne opdatering.
+3. Vælg **Installer Chrome-udvidelse**. Følg programmets guide: åbn `chrome://extensions`, behold **Udviklertilstand** aktiveret, og vælg **Indlæs udpakket** med den mappesti, programmet kopierer. Det kræver ingen administratorinstallation. Hvis udvidelsen allerede er installeret, bruges samme mappe og samme udvidelses-ID. Kontrollér version **0.1.14** og adgang til Excel og scriptpanelet; Chrome kan bede om ny webstedsadgang ved denne opdatering.
 4. Gem det direkte link til masterarket i appen. Vælg **Forbind masterark → Opsæt automatisk i Chrome**.
 5. Følg trinene i dialogen. Udvidelsen genbruger eller opretter sit eget versionsbestemte `ProviTrackerAutoV4_…`-script, indsætter den medfølgende kode, læser hele koden tilbage, gemmer, genåbner og kontrollerer den igen. Eksisterende og ændrede scripts overskrives ikke. En skrivefri kørsel skal kvittere fra Excel, før appen melder klar.
 6. Slå **Registrer automatisk i masterarket** til, og gem indstillingerne.
@@ -53,3 +53,6 @@ Udvidelsen genkender `payloadJson` via feltets label, navn eller tilgængelighed
 
 ## Automatisk opsætning – afprøvning
 Den isolerede Chrome-prøve bruger den rigtige Monaco-editor og udvidelsen med krydsdomæne-rammer. Den verificerer ny oprettelse, fuld kodetilbage­læsning, gemning/genåbning, kontrolkvittering uden salg, genbrug, bevarelse af andre scripts og stop ved ændret eller ugemt kode. Den erstatter ikke afprøvning af automatisk opsætning i en brugers autentificerede Microsoft-session.
+
+## Automatiske scriptopdateringer
+Efter første automatiske opsætning sammenligner udvidelsen scriptets versionsfingeraftryk med den kode, der følger med den installerede udgave. Ved en ændring oprettes en ny navngivet version inden næste salgsregistrering. Koden kontrolleres efter gemning/genåbning, og en skrivefri kontrol skal kvittere, før det oprindelige salg må fortsætte. Registreringsnummer, forespørgselsnummer og den oprindelige arkfane bevares. Den tidligere scriptversion slettes eller overskrives ikke. En fejl under opdateringen stopper salget og gemmer en strukturel rapport. Den native forbindelse venter på den nye udvidelsesversion, før en opdateringskrævende anmodning sendes. Ældre manuelt opsatte V4-scripts skal overgå med **Opsæt automatisk i Chrome** én gang.

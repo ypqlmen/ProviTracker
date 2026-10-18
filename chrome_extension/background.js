@@ -110,7 +110,7 @@ async function confirmWorkbook(job, sheetName) {
       if (job.registration.worksheetName && job.registration.worksheetName!==sheetName) {
         finish(job,{success:false,error:'Salget tilhører arkfanen '+job.registration.worksheetName+'. Vælg den før genforsøg.'});return;
       }
-      job.registration.worksheetName=sheetName;job.connected=true;job.phase=job.type==='install'?'install-open':'open';
+      job.registration.worksheetName=sheetName;job.connected=true;job.phase=(job.type==='install' || job.autoUpdate)?'install-open':'open';
     }
   } catch { finish(job, {success:false, error:'Masterarket blev lukket under kontrollen.'}); }
 }
@@ -206,9 +206,13 @@ async function scanOffice(job) {
         if(result.receipt && validReceipt(result.receipt,job.registration)) {
           const current=await chrome.tabs.get(job.tabId);
           if(!await workbookAvailable(job,current)) return;
-          if(job.type==='install'){
+          if(job.type==='install' || job.autoUpdate){
             if(!job.installed)return;
             await chrome.storage.local.set({['masterScript.'+job.identity]:{name:job.scriptName}});
+            if(job.autoUpdate){
+              job.scriptUpdated=true;job.autoUpdate=false;job.registration={...job.saleAfterUpdate,worksheetName:job.registration.worksheetName};delete job.saleAfterUpdate;job.phase='open';job.parameterSince=null;
+              traceStep(job,'script-updated',{phase:'open',codeMatched:true});return;
+            }
           }
           finish(job,{...result.receipt,background:!current.active});return;
         }
@@ -223,7 +227,7 @@ async function scan(job) {
   try {
     const tab=await chrome.tabs.get(job.tabId);
     if (pending!==job) return;
-    if(job.type==='install' && job.progressPhase!==(job.phase || 'probe')){job.progressPhase=job.phase || 'probe';status=({probe:'Finder masterarket…','install-open':'Åbner Office Scripts…','install-find':'Finder opsætningsscriptet…','install-name':'Navngiver scriptet…','install-write':'Indsætter koden…','install-save':'Gemmer scriptet…','install-reopen':'Genåbner det gemte script…','install-verify':'Kontrollerer koden…',open:'Åbner kontrollen…',run:'Starter kontrollen…',parameter:'Udfylder kontrollen…',submit:'Sender kontrollen…',receipt:'Afventer Excel…'})[job.progressPhase] || 'Opsætter masterarket…';port?.postMessage({type:'progress',requestId:job.requestId,phase:job.progressPhase});}
+    if((job.type==='install' || job.hadScriptUpdate) && job.progressPhase!==(job.phase || 'probe')){job.progressPhase=job.phase || 'probe';status=({probe:'Finder masterarket…','install-open':'Åbner Office Scripts…','install-find':'Finder opsætningsscriptet…','install-name':'Navngiver scriptet…','install-write':'Indsætter koden…','install-save':'Gemmer scriptet…','install-reopen':'Genåbner det gemte script…','install-verify':'Kontrollerer koden…',open:'Åbner kontrollen…',run:'Starter kontrollen…',parameter:'Udfylder kontrollen…',submit:'Sender kontrollen…',receipt:'Afventer Excel…'})[job.progressPhase] || 'Opsætter masterarket…';port?.postMessage({type:'progress',requestId:job.requestId,phase:job.progressPhase});}
     traceStep(job,'tab',{active:tab.active===true,discarded:tab.discarded===true,frozen:tab.frozen===true,locked:job.scanning===true,inflight:job.inflight || 0});
     if (!await workbookAvailable(job,tab)) return;
     // Check outside the injection lock: a suspended injected call can stay pending.
@@ -254,7 +258,7 @@ function finish(job, result) {
   clearInterval(job.poll);
   clearTimeout(job.timeout);
   traceStep(job,'finished',{phase:job.phase,outcome:result.success?'result':'error',locked:job.scanning===true,inflight:job.inflight || 0});
-  if(job.type==='install'){result.diagnostics=diagnosticReport(job,loadedVersion);chrome.storage.local.set({lastSetup:result.diagnostics}).catch(()=>{});}
+  if(job.type==='install' || job.hadScriptUpdate){result.diagnostics={...diagnosticReport({...job,type:'install'},loadedVersion),scriptUpdated:job.scriptUpdated===true};chrome.storage.local.set({lastSetup:result.diagnostics}).catch(()=>{});}
   if(!result.success && job.type!=='intramanager') chrome.storage.local.set({lastFailure:diagnosticReport(job,loadedVersion)}).catch(()=>{});
   pending = null;
   status = result.success ? (job.type==='intramanager' ? 'Intramanager er opdateret.' : job.type==='probe' ? 'Forbindelsen til masterarket virker.' : job.type==='install' ? 'Masterarket er opsat og kontrolleret uden at registrere salg.' : 'Excel har bekræftet registreringen.') : result.error;
@@ -292,17 +296,22 @@ function connect() {
     const job = pending = {requestId:message.requestId, identity, heard:false,type:message.type,registration,startedAt:Date.now(),trace:[]};
     traceStep(job,'start',{phase:message.type});
     try {
-      if(job.type==='install'){
+      const key='masterScript.'+identity,saved=(await chrome.storage.local.get(key))[key];
+      const managed=/^ProviTrackerAutoV4_[0-9a-f]{10}$/.test(saved?.name || '');
+      job.scriptName=managed?saved.name:'ProviTrackerSalesRegistrationV4';
+      if(job.type==='install' || (job.type==='register' && managed)){
         const response=await fetch(chrome.runtime.getURL('excel_online_sales_registration_v4.ts'));
         if(!response.ok)throw Error('Missing packaged script');
         job.source=await response.text();
         if(!job.source.includes('PROVITRACKER_RESULT:') || job.source.length<1000)throw Error('Invalid packaged script');
         const digest=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(job.source));
         const version=Array.from(new Uint8Array(digest)).map(n=>n.toString(16).padStart(2,'0')).join('').slice(0,10);
-        job.scriptName='ProviTrackerAutoV4_'+version;
-      }else{
-        const key='masterScript.'+identity,saved=(await chrome.storage.local.get(key))[key];
-        job.scriptName=/^ProviTrackerAutoV4_[0-9a-f]{10}$/.test(saved?.name || '')?saved.name:'ProviTrackerSalesRegistrationV4';
+        const expected='ProviTrackerAutoV4_'+version;
+        if(job.type==='install')job.scriptName=expected;
+        else if(job.scriptName!==expected){
+          job.autoUpdate=true;job.hadScriptUpdate=true;job.saleAfterUpdate=job.registration;
+          job.registration={isTest:true,requestId:crypto.randomUUID(),...(job.saleAfterUpdate.worksheetName?{worksheetName:job.saleAfterUpdate.worksheetName}:{})};job.scriptName=expected;
+        }
       }
       const tab=await selectWorkbook(job,message.workbookUrl);
       if (pending !== job || !tab) return;
@@ -318,7 +327,7 @@ function connect() {
         ? 'Chrome svarede fra SharePoint, men selve Excel-arket svarede ikke. Genindlæs masterarket i Chrome, kontrollér login, og prøv igen.'
         : job.heard
         ? 'Chrome svarede, men den valgte arkfane blev ikke fundet i Excel. Kontrollér at masterarket er færdigindlæst, vælg salgsarket, og prøv igen.'
-        : 'Udvidelsen svarede ikke fra masterarket. Genindlæs Provi Tracker-udvidelsen under chrome://extensions og derefter masterarket.'}), message.type==='probe' ? 22000 : message.type==='install' ? 270000 : 150000);
+        : 'Udvidelsen svarede ikke fra masterarket. Genindlæs Provi Tracker-udvidelsen under chrome://extensions og derefter masterarket.'}), message.type==='probe' ? 22000 : message.type==='install' ? 270000 : job.hadScriptUpdate ? 390000 : 150000);
       await scan(job);
     } catch {
       finish(job, {success:false, error:'Chrome-kontrollen blev afbrudt. Åbn masterarket, og prøv igen.'});

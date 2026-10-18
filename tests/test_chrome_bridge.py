@@ -167,18 +167,28 @@ class ChromeBridgeTests(unittest.TestCase):
             bridge.atomic_json(Path(folder)/'unicode.json',data)
             self.assertEqual(bridge.read_json(Path(folder)/'unicode.json'),data)
 
+    def test_waits_for_new_extension_before_dispatching_sale(self):
+        with tempfile.TemporaryDirectory() as folder,patch.object(bridge,'root',return_value=Path(folder)):
+            root=Path(folder);bridge.atomic_json(root/'loaded.json',{'version':'0.1.13'})
+            def loaded(_):
+                self.assertFalse((root/'request.json').exists())
+                bridge.atomic_json(root/'loaded.json',{'version':'0.1.14'})
+            with patch.object(bridge.time,'sleep',side_effect=loaded):self.assertTrue(bridge.extension_version_loaded('0.1.14'))
+            self.assertFalse(bridge.extension_version_loaded('0.1.15',seconds=0))
+
     def test_setup_progress_is_bound_and_report_is_redacted(self):
         with tempfile.TemporaryDirectory() as folder:
-            root=Path(folder);request={'type':'install','requestId':'fresh','registration':{'isTest':True,'requestId':'fresh'},'expiresAt':time.time()+30,'workbookUrl':'https://5rmarketing-my.sharepoint.com/a?sourcedoc={535121b9-ed93-447b-9f89-7e8d575d03e4}'}
+            root=Path(folder);request={'requiredExtensionVersion':'0.1.14','type':'install','requestId':'fresh','registration':{'isTest':True,'requestId':'fresh'},'expiresAt':time.time()+30,'workbookUrl':'https://5rmarketing-my.sharepoint.com/a?sourcedoc={535121b9-ed93-447b-9f89-7e8d575d03e4}'}
             bridge.atomic_json(root/'request.json',request)
             stdin,stdout=io.BytesIO(),io.BytesIO()
             report={'extensionVersion':'0.1.13','kind':'install','phase':'install-save','events':[{'event':'injected','phase':'install-save','codeMatched':True,'source':'SECRET','url':'SECRET','requestId':'SECRET'}],'source':'SECRET'}
-            messages=[{'type':'poll'},{'type':'progress','requestId':'stale','phase':'install-write'},{'type':'progress','requestId':'fresh','phase':'install-save'},
+            messages=[{'type':'poll','extensionVersion':'0.1.13'},{'type':'poll','extensionVersion':'0.1.14'},{'type':'progress','requestId':'stale','phase':'install-write'},{'type':'progress','requestId':'fresh','phase':'install-save'},
                 {'type':'result','requestId':'fresh','success':True,'scriptVersion':4,'worksheetName':'Salg','worksheetId':'sheet-1','row':0,'status':'checked','orderNumber':'','registrationId':'','diagnostics':report}]
             for message in messages:bridge.write_frame(stdin,message)
             stdin.seek(0)
             with patch.object(bridge,'root',return_value=root),patch.object(bridge,'prepare_native_stdio'),patch.object(bridge.sys,'stdin',SimpleNamespace(buffer=stdin)),patch.object(bridge.sys,'stdout',SimpleNamespace(buffer=stdout)):
                 bridge.native_main('chrome-extension://'+bridge.extension_id()+'/')
+            stdout.seek(0);self.assertEqual(bridge.read_frame(stdout),{'type':'reload-extension','version':'0.1.14'});self.assertEqual(bridge.read_frame(stdout),request)
             self.assertEqual(bridge.read_json(root/'progress.json'),{'requestId':'fresh','phase':'install-save'})
             result=bridge.read_json(root/'response.json');self.assertTrue(result['success']);self.assertNotIn('SECRET',json.dumps(result['diagnostics']));self.assertTrue(result['diagnostics']['events'][0]['codeMatched'])
             self.assertEqual(bridge.safe_setup_report({'events':[{'event':[],'codeMatched':'SECRET'}]})['events'],[{}])

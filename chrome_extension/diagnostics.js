@@ -1,7 +1,7 @@
 // Structural metadata only: never retain page text, URLs or sale payloads.
 const flags=['active','discarded','frozen','locked','matched','defaultTest','attached','readOnly','disabled','runEnabled','scriptMatched','titleKnown','codeMatched','saved','reopened'];
 const counts=['frames','office','dialogs','targets','fields','matches','frame','inflight'];
-const codes=['install','install-open','install-find','install-name','install-write','install-save','install-reopen','install-verify','installed','next','open','run','parameter','submit','receipt','probe','setup','register','waiting','parameter-script','parameter-field','parameter-run','parameters','ready','started','filled','refill','submitted','error','none','result','permission','frame-gone','context-gone','other','timeout','start','tab','navigation','injection','injected','rejected','finished','workbook-frames','office-frames','scan-error'];
+const codes=['script-updated','install','install-open','install-find','install-name','install-write','install-save','install-reopen','install-verify','installed','next','open','run','parameter','submit','receipt','probe','setup','register','waiting','parameter-script','parameter-field','parameter-run','parameters','ready','started','filled','refill','submitted','error','none','result','permission','frame-gone','context-gone','other','timeout','start','tab','navigation','injection','injected','rejected','finished','workbook-frames','office-frames','scan-error'];
 export function structuralInfo(data={}) {
   const result={};
   for(const key of flags) if(typeof data[key]==='boolean') result[key]=data[key];
