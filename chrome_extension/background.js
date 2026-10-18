@@ -60,6 +60,9 @@ async function workbookAvailable(job,tab) {
     if(!job.protected) { await protectWorkbook(tab,job.identity);job.protected=true; }
     return true;
   }
+  // Microsoft returns through the tenant's sign-in relay before reopening the workbook.
+  // Recognize only that relay; never inject there or accept another workbook.
+  if(job.loginSince && originOf(address)===workbookOrigins[0] && /\/(?:_forms\/|_layouts\/15\/authenticate\.aspx)/i.test(new URL(address).pathname))return false;
   // A newly created tab can still report about:blank while its saved URL loads.
   if(!job.connected && (next===job.identity || (job.created && tab.status==='loading' && (!address || address==='about:blank')))) return false;
   finish(job,{success:false,error:'Chrome-fanen skiftede til et andet ark under kontrollen. Prøv igen.'});return false;
