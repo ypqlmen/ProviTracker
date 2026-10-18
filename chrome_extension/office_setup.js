@@ -15,10 +15,15 @@ export function installStep(phase, source, scriptName, requestId) {
   const next=phase=>({next:phase});
   const activate=el=>{
     if(!enabled(el))return false;
-    const now=Date.now(),last=state.activation;
-    if(last?.el===el && now-last.at<1200)return false;
-    const retry=last?.el===el;
-    state.activation={el,at:now};
+    // React/Fluent may replace a menu node after a click. Keep attempts by
+    // semantic control identity, not a detached element reference. Retrying the
+    // replacement must still advance to keyboard activation.
+    const key=JSON.stringify([phase,el.id || el.getAttribute('data-unique-id') || '',el.getAttribute('role') || el.tagName,label(el).toLocaleLowerCase()]);
+    state.activations ??= new Map();
+    const now=Date.now(),last=state.activations.get(key);
+    if(last && now-last.at<1200)return false;
+    const retry=!!last;
+    state.activations.set(key,{at:now});
     // Inactive Chrome tabs can update activeElement without emitting focus
     // events. Fluent menus need the same focus lifecycle as a normal click.
     const seen=new Set(),observe=event=>seen.add(event.type);
@@ -30,7 +35,7 @@ export function installStep(phase, source, scriptName, requestId) {
     }
     if(!el.isConnected)return false;
     if(retry){
-      for(const type of ['keydown','keyup'])el.dispatchEvent(new KeyboardEvent(type,{key:'Enter',code:'Enter',keyCode:13,which:13,bubbles:true,cancelable:true}));
+      for(const type of ['keydown','keyup'])el.dispatchEvent(new KeyboardEvent(type,{key:'Enter',code:'Enter',keyCode:13,which:13,bubbles:true,cancelable:true,composed:true}));
     }else{
       for(const type of ['pointerdown','mousedown','pointerup','mouseup'])el.dispatchEvent(type.startsWith('pointer')?new PointerEvent(type,{bubbles:true,composed:true,pointerId:1,pointerType:'mouse',isPrimary:true,button:0,buttons:type.endsWith('down')?1:0}):new MouseEvent(type,{bubbles:true,composed:true,button:0,buttons:type.endsWith('down')?1:0,view:window}));
       el.click();

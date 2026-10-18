@@ -77,6 +77,8 @@ def main(worker, installer):
                 wait_for(context, lambda: read_json(root / 'loaded.json').get('version') == initial,
                     'initial native-host connection')
                 assert any(w.url.startswith('chrome-extension://'+extension_id+'/') for w in context.service_workers)
+                connected=next(w for w in context.service_workers if w.url.startswith('chrome-extension://'+extension_id+'/'))
+                connected.evaluate('chrome.storage.local.set({intramanagerAccount:"Sofie Opdatering"})')
                 # Exercise app replacement while Chrome holds the packaged native host open.
                 log = root / 'integration-installer.log'
                 result = subprocess.run([str(installer), '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART',
@@ -102,6 +104,7 @@ def main(worker, installer):
                     'automatic extension reload and native-host reconnection')
                 workers = [w for w in context.service_workers if w.url.startswith('chrome-extension://'+extension_id+'/')]
                 assert workers and workers[-1].evaluate('chrome.runtime.getManifest().version') == updated
+                assert workers[-1].evaluate('async()=>{const s=await chrome.storage.local.get("intramanagerAccount");return s.intramanagerAccount;}')=='Sofie Opdatering', 'Updating must retain the confirmed Intramanager account'
                 assert page.evaluate('window.proviUntouched') == 'keep-me', 'A workbook tab must not be reloaded'
                 assert context.pages == [page], 'Extension update must not open or activate extra tabs'
                 print(f'Actual Chromium/native-host automatic update passed: {initial} -> {updated}; open tab preserved')

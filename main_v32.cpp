@@ -2577,7 +2577,7 @@ private:
         connect(navigation,&QListWidget::currentRowChanged,tabs,&QTabWidget::setCurrentIndex);
         connect(tabs,&QTabWidget::currentChanged,navigation,[navigation](int row){navigation->setCurrentRow(row);});
         connect(navigation,&QListWidget::currentRowChanged,this,[title,subtitle,navigation](int row){if(row<0)return;const auto text=navigation->item(row)->text();title->setText(text);
-            const QMap<QString,QString> descriptions={{"Indstillinger","Dit arbejdsrum. Dine indstillinger."}};subtitle->setText(descriptions.value(text));subtitle->setVisible(!subtitle->text().isEmpty());});navigation->setCurrentRow(0);
+            const QMap<QString,QString> descriptions;subtitle->setText(descriptions.value(text));subtitle->setVisible(!subtitle->text().isEmpty());});navigation->setCurrentRow(0);
         connect(newOrderBtn,&QPushButton::clicked,this,[this](){createOrder();});qApp->installEventFilter(this);
     }
 

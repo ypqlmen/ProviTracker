@@ -68,12 +68,12 @@ window.galleryClicks=0;window.menuKeyRuns=0;
 const view=document.getElementById('AutomateGroupViewScripts');
 view.onmousedown=()=>{
  if(document.getElementById('Automate').getAttribute('aria-selected')!=='true')return;
- const m=document.createElement('button');m.setAttribute('role','menuitem');m.textContent='Recent Scripts';
+ const make=()=>{const m=document.createElement('button');m.setAttribute('role','menuitem');m.setAttribute('data-unique-id','Ribbon-AutomateRecentScripts');m.textContent='Recent Scripts';
  m.addEventListener('focusin',()=>m.focusSeen=true);
  const open=()=>{if(document.activeElement!==m || !m.focusSeen)return;document.getElementById('pane').src=__PANE__;m.remove();view.setAttribute('aria-expanded','false')};
- m.onclick=()=>{window.galleryClicks++;}; // A click alone deliberately does not open the menu item.
+ m.onclick=()=>{window.galleryClicks++;m.replaceWith(make());}; // React may replace a menu item after an ignored click.
  m.onkeydown=e=>{if(e.key==='Enter'){window.menuKeyRuns++;open()}};
- document.body.append(m);view.setAttribute('aria-expanded','true');
+ return m;};document.body.append(make());view.setAttribute('aria-expanded','true');
  const hidden=document.createElement('div');hidden.style.display='none';hidden.innerHTML='<button role="menuitem">Recent Scripts</button>';document.body.append(hidden);
 };
 addEventListener('message',e=>{if(e.origin!==__OFFICE__)return;
@@ -113,7 +113,7 @@ addEventListener('message',e=>{if(e.origin!==__OFFICE__)return;
                 assert book.evaluate('async()=>{const q=await navigator.locks.query();return q.held.some(l=>l.name.startsWith("ProviTracker.background."));}'),'Master workbook must hold the background lease'
                 assert service.evaluate('async()=>{const t=await chrome.tabs.query({url:"https://5rmarketing-my.sharepoint.com/*"});return t[0].autoDiscardable===false;}')
                 excel_frame=next(f for f in book.frames if f.url==EXCEL)
-                assert excel_frame.evaluate('galleryClicks')==1 and excel_frame.evaluate('menuKeyRuns')==1,'Recent Scripts requires focus, ignores hidden duplicate and recovers with Enter'
+                assert excel_frame.evaluate('galleryClicks')==1 and excel_frame.evaluate('menuKeyRuns')==1,'Recent Scripts must recover with Enter even when the menu node was replaced after a click'
                 frame=next(f for f in book.frames if f.url==PANE)
                 assert frame.evaluate('scripts["'+name+'"]').replace('\r\n','\n')==source.replace('\r\n','\n')
                 assert frame.evaluate('scripts.ExistingPersonalScript')=='// KEEP PERSONAL SCRIPT'

@@ -66,14 +66,9 @@ export async function startIntramanager(job,finish,current,{protectTab=async()=>
   if(!await chrome.permissions.contains({origins:[origin]})) {
     done({success:false,error:'Åbn Provi Tracker-udvidelsen i Chrome, vælg Forbind Intramanager, og tillad adgang til 5r.intramanager.com.'});return;
   }
-  const key='intramanagerTab';let tab;
-  const saved=(await chrome.storage.session.get(key))[key];
-  if(Number.isInteger(saved)) {try {const previous=await chrome.tabs.get(saved);if(previous.url && new URL(previous.url).origin==='https://5r.intramanager.com') tab=previous;}catch {}}
-  if(!tab){const candidates=await chrome.tabs.query({url:base+'*'});if(candidates.length===1)tab=candidates[0];}
-  if(!tab) tab=await chrome.tabs.create({url:base,active:false});
+  const tab=await selectIntramanagerTab({create:true});
   if(!current()) return;
   job.tabId=tab.id;job.phase='identity';
-  await chrome.storage.session.set({[key]:tab.id});
   let scanning=false;
   const scan=async()=>{
     if(!current() || scanning) return;scanning=true;
@@ -108,4 +103,28 @@ export async function startIntramanager(job,finish,current,{protectTab=async()=>
   job.scan=scan;job.poll=setInterval(scan,500);
   job.timeout=setTimeout(()=>done({success:false,error:job.phase==='results'?'Intramanager indlæste ikke resultaterne for den valgte periode. Kontrollér at Søg virker i timehistorikken. De tidligere tal er bevaret.':'Intramanager svarede ikke. Kontrollér login og webstedsadgang i Chrome.'}),45000);
   await scan();
+}
+
+// Tab IDs belong to a browser session. The confirmed account belongs to the
+// extension installation and is retained by Chrome across reloads and updates.
+let selectingTab=null;
+export async function selectIntramanagerTab({create=false}={}) {
+  if(selectingTab)return selectingTab;
+  selectingTab=(async()=>{
+    const base='https://5r.intramanager.com/reports/history/';
+    const belongs=tab=>{try{return new URL(tab.url).origin==='https://5r.intramanager.com';}catch{return false;}};
+    const saved=(await chrome.storage.session.get('intramanagerTab')).intramanagerTab;
+    if(Number.isInteger(saved)){
+      try{const tab=await chrome.tabs.get(saved);if(belongs(tab))return tab;}catch{/* Closed or from the previous browser session. */}
+    }
+    const tabs=(await chrome.tabs.query({url:'https://5r.intramanager.com/*'})).filter(belongs);
+    // Reuse an existing history tab without changing the user's other pages.
+    // The caller must verify the profile again before reading any payroll.
+    let tab=tabs.filter(t=>new URL(t.url).pathname==='/reports/history/').sort((a,b)=>a.id-b.id)[0];
+    if(!tab)tab=tabs.filter(t=>new URL(t.url).pathname.startsWith('/login/')).sort((a,b)=>a.id-b.id)[0];
+    if(!tab && create)tab=await chrome.tabs.create({url:base,active:false});
+    if(tab)await chrome.storage.session.set({intramanagerTab:tab.id});
+    return tab || null;
+  })();
+  try{return await selectingTab;}finally{selectingTab=null;}
 }
