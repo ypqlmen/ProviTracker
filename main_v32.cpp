@@ -3530,7 +3530,7 @@ private:
         QDialog dialog(this);dialog.setObjectName("masterSetupDialog");dialog.setWindowTitle("Forbind masterark");dialog.resize(650,650);
         auto* layout=new QVBoxLayout(&dialog);layout->setContentsMargins(26,24,26,24);layout->setSpacing(16);
         layout->addWidget(premiumLabel("Dit masterark. Klar fra appen.","sectionTitle"));
-        auto* intro=premiumLabel("Udvidelsen åbner dit gemte masterark i Chrome, opretter sit eget script og kontrollerer opsætningen. Log ind i Microsoft, hvis browseren beder om det. Der registreres ingen salg under opsætningen.","muted");intro->setWordWrap(true);layout->addWidget(intro);
+        auto* intro=premiumLabel("Udvidelsen åbner dit gemte masterark i Chrome, opretter sit eget script og kontrollerer opsætningen. Log ind i Microsoft, hvis browseren beder om det.","muted");intro->setWordWrap(true);layout->addWidget(intro);
         auto* start=new QPushButton("Opsæt automatisk i Chrome");start->setProperty("primary",true);layout->addWidget(start);
         auto* check=new QPushButton("Kontrollér eksisterende opsætning");layout->addWidget(check);
         masterSetupLog=new QPlainTextEdit;masterSetupLog->setReadOnly(true);masterSetupLog->setStyleSheet("QPlainTextEdit{background:#20242C;border:1px solid #363D49;border-radius:14px;padding:12px;color:#C7D1E2;}");masterSetupLog->setMinimumHeight(170);masterSetupLog->setPlaceholderText("Forløbet vises her, når opsætningen starter.");layout->addWidget(masterSetupLog,1);
