@@ -4,7 +4,11 @@ export function officeStep(phase, payloadJson, scriptName = 'ProviTrackerSalesRe
   const text = el => (el.getAttribute('aria-label') || el.textContent || '').replace(/\s+/g,' ').trim();
   const usable=el=>{
     if(el.disabled || el.closest('[aria-hidden="true"],[hidden]'))return false;
-    for(let parent=el;parent;parent=parent.parentElement){const style=getComputedStyle(parent);if(style.display==='none' || style.visibility==='hidden')return false;}
+    // Excel's floating ribbon menus override visibility:hidden on their
+    // portal ancestors. Only the target's computed visibility is decisive;
+    // display:none on any ancestor still hides the entire subtree.
+    if(['hidden','collapse'].includes(getComputedStyle(el).visibility))return false;
+    for(let parent=el;parent;parent=parent.parentElement)if(getComputedStyle(parent).display==='none')return false;
     return true;
   };
   const find = (selector, names) => {

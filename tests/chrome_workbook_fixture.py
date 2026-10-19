@@ -21,7 +21,7 @@ def open_workbook(context, create=True):
             body = '<a role="tab" aria-label="Regneark Salg ÆØÅ" aria-selected="true"><span sheet-title="Salg ÆØÅ">Salg ÆØÅ</span></a>'
             body += '<button id="Automate" aria-selected="false" onclick="this.setAttribute(\'aria-selected\',\'true\')">Automatiser</button>'
             body += '<button id="AutomateGroupViewScripts" aria-expanded="false" onclick="this.setAttribute(\'aria-expanded\',\'true\');document.getElementById(\'recent\').hidden=false">Få vist scripts</button>'
-            body += '<button id="recent" hidden role="menuitem" onclick="this.hidden=true;document.getElementById(\'pane\').src='+repr(OFFICE_INDEX)+'">Seneste scripts</button><iframe id="pane"></iframe>'
+            body += '<div style="display:contents;visibility:hidden"><button id="recent" style="visibility:visible" hidden role="menuitem" onclick="this.hidden=true;document.getElementById(\'pane\').src='+repr(OFFICE_INDEX)+'">Seneste scripts</button></div><iframe id="pane"></iframe>'
             body += '<script>addEventListener("message",e=>{if(e.origin!=='+json.dumps(OFFICE_ORIGIN)+')return;if(e.data.type==="parameters"){const f=document.createElement("iframe");f.id="dialog";f.src='+json.dumps(OFFICE_DIALOG)+';document.body.append(f)}if(e.data.type==="payload"){document.getElementById("pane").contentWindow.postMessage(e.data,'+json.dumps(OFFICE_ORIGIN)+');document.getElementById("dialog").remove()}})</script>'
         elif route.request.url.startswith(OFFICE_INDEX):
             # Transport fixture only: V4 workbook logic is tested independently in Node.
@@ -108,7 +108,7 @@ def check_native_workbook(context, worker, extension_id):
             workbook.evaluate('window.proviUntouched = "keep-workbook"')
             assert workbook.evaluate('window.proviUntouched') == 'keep-workbook', 'Probe must preserve the workbook'
             print('Native background workbook probe passed.',flush=True)
-            check_native_sales(context, worker, workbook, foreground)
+            workbook = check_native_sales(context, worker, workbook, foreground)
             print('Actual Chromium/native-host workbook probe passed: cross-origin selected sheet, background tab, extension reload')
         finally:
             if process.poll() is None:
@@ -129,14 +129,23 @@ def check_native_workbook(context, worker, extension_id):
 
 
 def check_native_sales(context, worker, workbook, foreground):
-    def run(action, registration, expected_success=True, workbook_url=WORKBOOK_URL):
+    def run(action, registration, expected_success=True, workbook_url=WORKBOOK_URL, cold=False):
+        nonlocal workbook
         print('Native fixture step:',action,'success expected:',expected_success,flush=True)
         process=subprocess.Popen([str(worker),'--stdin-json'],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,encoding='utf-8')
         try:
             process.stdin.write(json.dumps({'action':action,'workbookUrl':workbook_url,'registration':registration},ensure_ascii=False))
             process.stdin.close()
             deadline=time.monotonic()+190
-            while process.poll() is None and time.monotonic()<deadline:foreground.wait_for_timeout(100)
+            while process.poll() is None and time.monotonic()<deadline:
+                foreground.wait_for_timeout(100)
+                if cold and workbook is None:
+                    matches=[page for page in context.pages if page.url==WORKBOOK_URL]
+                    if matches:
+                        assert len(matches)==1,'Cold registration must open exactly one saved workbook'
+                        workbook=matches[0]
+                        # Same routing attachment limitation as the probe above.
+                        workbook.reload()
             assert process.poll() is not None,'Native sale timed out'
             output,errors=process.stdout.read(),process.stderr.read()
             assert process.returncode==0,errors
@@ -202,6 +211,18 @@ def check_native_sales(context, worker, workbook, foreground):
         print('Native login wait, existing login-tab reuse and resumed setup passed.',flush=True)
     finally:
         context.unroute(login_url)
+    # A real registration request must also traverse the ribbon when its
+    # workbook was closed, without first probing or manually opening Excel.
+    workbook.close();workbook=None
+    cold_sale={**sale,'registrationId':'00000000-0000-4000-8000-000000000111','requestId':'00000000-0000-4000-8000-000000000112'}
+    cold_result=run('chrome-register',cold_sale,cold=True)
+    assert cold_result['status']=='registered' and cold_result['registrationId']==cold_sale['registrationId'],cold_result
+    pane=next(f for f in workbook.frames if f.url.startswith(OFFICE_INDEX))
+    assert pane.evaluate('sales.length')==1 and pane.evaluate('preview.registrationId')==cold_sale['registrationId']
+    assert service.evaluate('async()=> (await chrome.tabs.query({url:"https://5rmarketing-my.sharepoint.com/*"}))[0].active') is False
+    cold_retry=run('chrome-register',{**cold_sale,'requestId':'00000000-0000-4000-8000-000000000113'})
+    assert cold_retry['status']=='already_registered' and pane.evaluate('sales.length')==1
+    print('Cold native registration passed: extension opens saved URL in background, traverses real ribbon controls and registers once.',flush=True)
     # Developer-only structural checks remain, without user-facing export controls.
     report=service.evaluate("async()=> (await chrome.storage.local.get('lastFailure')).lastFailure")
     assert report['kind']=='register'
@@ -221,3 +242,4 @@ def check_native_sales(context, worker, workbook, foreground):
     finally:
         popup.close()
     print('Actual Chromium/native host + Office controls transport passed: gallery, setup, parameters, fresh receipt, retry, background tab')
+    return workbook

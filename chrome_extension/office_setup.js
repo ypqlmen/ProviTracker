@@ -5,7 +5,11 @@ export function installStep(phase, source, scriptName, requestId) {
   const label=el=>(el.getAttribute('aria-label') || el.textContent || '').replace(/\s+/g,' ').trim();
   const visible=el=>{
     if(el.closest('[hidden],[aria-hidden="true"]'))return false;
-    for(let parent=el;parent;parent=parent.parentElement){const style=getComputedStyle(parent);if(style.display==='none' || style.visibility==='hidden')return false;}
+    // Excel's floating ribbon menus override visibility:hidden on their
+    // portal ancestors. Only the target's computed visibility is decisive;
+    // display:none on any ancestor still hides the entire subtree.
+    if(['hidden','collapse'].includes(getComputedStyle(el).visibility))return false;
+    for(let parent=el;parent;parent=parent.parentElement)if(getComputedStyle(parent).display==='none')return false;
     return true;
   };
   const unique=(selector,names)=>{const all=[...document.querySelectorAll(selector)].filter(el=>visible(el)&&names.some(name=>name.toLocaleLowerCase()===label(el).toLocaleLowerCase()));return all.length===1?all[0]:null;};
@@ -66,6 +70,17 @@ export function installStep(phase, source, scriptName, requestId) {
   const saved=()=>{const control=unique('button',['Scriptet er gemt','Script saved']);return control && !enabled(control);};
   const dirty=()=>enabled(button(['Gem script','Save script']));
   const back=()=>button(['Tilbage','Back']);
+  // Excel shows this informational notice on the first save of a new script.
+  // Dismiss only the known notice for the draft this job created; other
+  // dialogs (including permission prompts) must remain untouched.
+  if(phase==='install-save' && state.createClicked && state.saveRequested){
+    const notices=[...document.querySelectorAll('[role="dialog"]')].filter(el=>visible(el) && [...el.querySelectorAll('h1,h2,h3,[role="heading"]')].some(h=>['Tilknyttet script','Associated script'].includes(label(h))));
+    if(notices.length===1){
+      const controls=[...notices[0].querySelectorAll('button')].filter(el=>visible(el) && label(el)==='OK');
+      if(controls.length===1 && enabled(controls[0]))controls[0].click();
+      return null;
+    }
+  }
   if(phase==='install-open'){
     if(editor && visible(editor)){
       if(dirty())return {error:'Gem eller fjern dine åbne scriptændringer i Excel, før automatisk opsætning startes.'};
@@ -84,7 +99,7 @@ export function installStep(phase, source, scriptName, requestId) {
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(filter,'');filter.dispatchEvent(new Event('input',{bubbles:true}));filter.dispatchEvent(new Event('change',{bubbles:true}));state.libraryReady=false;return null;
     }
     if(!state.libraryReady){state.libraryReady=true;return null;}
-    const cards=[...document.querySelectorAll('article')].filter(el=>visible(el)&&label(el)==='Script: '+scriptName);
+    const cards=[...document.querySelectorAll('article,[role="article"]')].filter(el=>visible(el)&&label(el)==='Script: '+scriptName);
     if(cards.length>1)return {error:'Der findes flere opsætningsscripts med samme navn. Åbn det korrekte script i Excel, og kontrollér opsætningen manuelt.'};
     if(cards.length===1){
       const edit=[...cards[0].querySelectorAll('button')].filter(el=>visible(el)&&['Rediger','Edit'].includes(label(el)));
@@ -104,9 +119,23 @@ export function installStep(phase, source, scriptName, requestId) {
     if(named.length===1)return next('install-write');
     const input=unique('input',['Angiv scriptnavn [påkrævet]','Enter script name [required]']);
     if(input){
+      // The live rename field commits React's input state only after focus
+      // and a complete replacement event. Merely changing its DOM value leaves
+      // the original draft name in the model and Enter restores that old name.
+      const seen=new Set(),observe=event=>seen.add(event.type);
+      for(const type of ['focus','focusin'])input.addEventListener(type,observe);
+      input.focus({preventScroll:true});
+      for(const type of ['focus','focusin']){input.removeEventListener(type,observe);if(!seen.has(type))input.dispatchEvent(new FocusEvent(type,{bubbles:type==='focusin',composed:true}));}
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,scriptName);
-      input.dispatchEvent(new Event('input',{bubbles:true}));input.dispatchEvent(new Event('change',{bubbles:true}));
-      input.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',code:'Enter',keyCode:13,which:13,bubbles:true,cancelable:true}));input.blur();return null;
+      input.dispatchEvent(new InputEvent('input',{data:scriptName,inputType:'insertReplacementText',bubbles:true,composed:true}));
+      input.dispatchEvent(new Event('change',{bubbles:true}));
+      for(const type of ['keydown','keyup'])input.dispatchEvent(new KeyboardEvent(type,{key:'Enter',code:'Enter',keyCode:13,which:13,bubbles:true,cancelable:true,composed:true}));
+      if(input.isConnected){
+        seen.clear();for(const type of ['blur','focusout'])input.addEventListener(type,observe);
+        input.blur();
+        for(const type of ['blur','focusout']){input.removeEventListener(type,observe);if(!seen.has(type))input.dispatchEvent(new FocusEvent(type,{bubbles:type==='focusout',composed:true}));}
+      }
+      return null;
     }
     const rename=button(['Omdøb','Rename']);if(enabled(rename))rename.click();return null;
   }
@@ -132,7 +161,7 @@ export function installStep(phase, source, scriptName, requestId) {
     const code=readCode(),matched=normalize(code)===normalize(source);
     if(!matched)return {error:'Koden i Excel stemmer ikke med den medfølgende Provi Tracker-version. Scriptet er ikke kørt. Brug manuel opsætning eller kontakt support.',controls:{codeMatched:false}};
     if(phase==='install-save'){
-      const save=button(['Gem script','Save script']);if(enabled(save)){save.click();return null;}
+      const save=button(['Gem script','Save script']);if(enabled(save)){state.saveRequested=true;save.click();return null;}
       if(saved() && !dirty()){
         const control=back();if(enabled(control)){state.libraryReady=false;control.click();return next('install-reopen');}
       }

@@ -20,7 +20,7 @@ def run(monaco):
     source=(REPO/'chrome_extension/excel_online_sales_registration_v4.ts').read_bytes().decode('utf-8')
     name='ProviTrackerAutoV4_'+hashlib.sha256(source.encode()).hexdigest()[:10]
     page='''<script src="/vs/loader.js"></script><div id="app"></div><script>
-window.scripts={ExistingPersonalScript:'// KEEP PERSONAL SCRIPT'};window.saveCount=0;window.created=0;window.runs=0;window.sales=[];window.failSave=false;window.mismatch=false;
+window.scripts={ExistingPersonalScript:'// KEEP PERSONAL SCRIPT'};window.saveCount=0;window.noticeCount=0;window.created=0;window.runs=0;window.sales=[];window.failSave=false;window.mismatch=false;
 window.require.config({paths:{vs:'/vs'}});window.require(['vs/editor/editor.main'],()=>library());
 function button(label,fn){const b=document.createElement('button');b.setAttribute('aria-label',label);b.textContent=label;b.onclick=fn;return b}
 function clear(){if(window.code){window.code.dispose();window.code=null}document.getElementById('app').replaceChildren()}
@@ -28,10 +28,10 @@ function library(recent=false){clear();const app=document.getElementById('app');
 const tab=button('6 Recent Scripts',()=>{if(document.activeElement===tab && tab.focusSeen)library(true)});tab.setAttribute('role','tab');tab.setAttribute('aria-selected',String(recent));tab.addEventListener('focusin',()=>tab.focusSeen=true);app.append(tab);const filter=document.createElement('input');filter.setAttribute('aria-label','Filtrer scripts');app.append(filter);
 app.append(button('Nyt script',()=>{const item=document.createElement('div');item.setAttribute('role','menuitem');item.textContent='Opret i Kodeeditor';item.onclick=()=>{window.created++;edit('Script '+created,'function main(workbook: ExcelScript.Workbook) { console.log("new draft"); }')};app.append(item)}));
 if(!recent)return;
-for(const [name,text]of Object.entries(scripts)){const article=document.createElement('article');article.setAttribute('aria-label','Script: '+name);const heading=document.createElement('span');heading.textContent=name;article.append(heading);article.append(button('Rediger',()=>edit(name,text)));app.append(article)}}
-function edit(name,text){clear();window.currentName=name;const app=document.getElementById('app');app.append(button('Tilbage',()=>library()));const title=document.createElement('span');title.id='title';title.textContent=name;app.append(title);
-app.append(button('Omdøb',()=>{const input=document.createElement('input');input.setAttribute('aria-label','Angiv scriptnavn [påkrævet]');input.value=currentName;input.onkeydown=e=>{if(e.key==='Enter'){window.currentName=input.value;title.textContent=input.value;input.remove()}};app.append(input)}));
-const save=button('Scriptet er gemt',()=>{if(failSave)return;scripts[currentName]=code.getValue();if(mismatch)scripts[currentName]+='// tampered';window.saveCount++;save.setAttribute('aria-label','Scriptet er gemt');save.disabled=true});save.disabled=true;app.append(save);
+for(const [name,text]of Object.entries(scripts)){const article=document.createElement('div');article.setAttribute('role','article');article.setAttribute('aria-label','Script: '+name);const heading=document.createElement('span');heading.textContent=name;article.append(heading);article.append(button('Rediger',()=>edit(name,text)));app.append(article)}}
+function edit(name,text){clear();window.currentName=name;const app=document.getElementById('app');app.append(button('Tilbage',()=>{if(!document.querySelector('[role=dialog]'))library()}));const title=document.createElement('span');title.id='title';title.textContent=name;app.append(title);
+app.append(button('Omdøb',()=>{const input=document.createElement('input');input.setAttribute('aria-label','Angiv scriptnavn [påkrævet]');input.value=currentName;input.addEventListener('input',e=>{if(document.activeElement===input && e instanceof InputEvent && e.inputType==='insertReplacementText' && e.data===input.value)input.pendingValue=input.value});const commit=()=>{if(input.pendingValue!==input.value)return;window.currentName=input.pendingValue;title.textContent=currentName;input.remove()};input.onblur=commit;input.onkeydown=e=>{if(e.key==='Enter')commit()};app.append(input)}));
+const save=button('Scriptet er gemt',()=>{if(failSave)return;scripts[currentName]=code.getValue();if(mismatch)scripts[currentName]+='// tampered';window.saveCount++;save.setAttribute('aria-label','Scriptet er gemt');save.disabled=true;const notice=document.createElement('div');notice.setAttribute('role','dialog');notice.innerHTML='<h2>Tilknyttet script</h2>';for(const el of [...app.children])el.setAttribute('aria-hidden','true');notice.append(button('OK',()=>{window.noticeCount++;for(const el of [...app.children])el.removeAttribute('aria-hidden');notice.remove()}));app.append(notice)});save.disabled=true;app.append(save);
 app.append(button('Kør',()=>{window.runs++;parent.postMessage({type:'parameters',name:currentName},'*')}));const host=document.createElement('div');host.style='height:450px;width:650px';app.append(host);
 window.code=monaco.editor.create(host,{value:text,language:'typescript',automaticLayout:true,accessibilitySupport:'on',ariaLabel:'editor',wordWrap:'on'});code.onDidChangeModelContent(()=>{save.disabled=false;save.setAttribute('aria-label','Gem script')});
 app.insertAdjacentHTML('beforeend','<ul id="output"></ul>');}
@@ -68,12 +68,12 @@ window.galleryClicks=0;window.menuKeyRuns=0;
 const view=document.getElementById('AutomateGroupViewScripts');
 view.onmousedown=()=>{
  if(document.getElementById('Automate').getAttribute('aria-selected')!=='true')return;
- const make=()=>{const m=document.createElement('button');m.setAttribute('role','menuitem');m.setAttribute('data-unique-id','Ribbon-AutomateRecentScripts');m.textContent='Recent Scripts';
+ const make=()=>{const m=document.createElement('button');m.setAttribute('role','menuitem');m.setAttribute('data-unique-id','Ribbon-AutomateRecentScripts');m.textContent='Recent Scripts';m.style.visibility='visible';
  m.addEventListener('focusin',()=>m.focusSeen=true);
  const open=()=>{if(document.activeElement!==m || !m.focusSeen)return;document.getElementById('pane').src=__PANE__;m.remove();view.setAttribute('aria-expanded','false')};
  m.onclick=()=>{window.galleryClicks++;m.replaceWith(make());}; // React may replace a menu item after an ignored click.
  m.onkeydown=e=>{if(e.key==='Enter'){window.menuKeyRuns++;open()}};
- return m;};document.body.append(make());view.setAttribute('aria-expanded','true');
+ return m;};const host=document.createElement('div');host.style='display:contents;visibility:hidden';host.append(make());document.body.append(host);view.setAttribute('aria-expanded','true');
  const hidden=document.createElement('div');hidden.style.display='none';hidden.innerHTML='<button role="menuitem">Recent Scripts</button>';document.body.append(hidden);
 };
 addEventListener('message',e=>{if(e.origin!==__OFFICE__)return;
@@ -113,11 +113,11 @@ addEventListener('message',e=>{if(e.origin!==__OFFICE__)return;
                 assert book.evaluate('async()=>{const q=await navigator.locks.query();return q.held.some(l=>l.name.startsWith("ProviTracker.background."));}'),'Master workbook must hold the background lease'
                 assert service.evaluate('async()=>{const t=await chrome.tabs.query({url:"https://5rmarketing-my.sharepoint.com/*"});return t[0].autoDiscardable===false;}')
                 excel_frame=next(f for f in book.frames if f.url==EXCEL)
-                assert excel_frame.evaluate('galleryClicks')==1 and excel_frame.evaluate('menuKeyRuns')==1,'Recent Scripts must recover with Enter even when the menu node was replaced after a click'
+                assert excel_frame.evaluate('galleryClicks')==1 and excel_frame.evaluate('menuKeyRuns')==1,"Visible Recent Scripts inside Excel's hidden-visibility portal must survive replacement and recover with Enter"
                 frame=next(f for f in book.frames if f.url==PANE)
                 assert frame.evaluate('scripts["'+name+'"]').replace('\r\n','\n')==source.replace('\r\n','\n')
                 assert frame.evaluate('scripts.ExistingPersonalScript')=='// KEEP PERSONAL SCRIPT'
-                assert frame.evaluate('created')==1 and frame.evaluate('saveCount')==1 and frame.evaluate('runs')==1
+                assert frame.evaluate('created')==1 and frame.evaluate('saveCount')==1 and frame.evaluate('runs')==1 and frame.evaluate('noticeCount')==1
                 assert {'install-write','install-save','install-reopen','install-verify','receipt'}<=set(service.evaluate('fixtureProgress'))
                 assert 'PROVITRACKER_RESULT' not in json.dumps(first['diagnostics']),'Diagnostics must exclude source'
                 second=request('setup-repeat');assert second['status']=='checked'
@@ -130,7 +130,7 @@ addEventListener('message',e=>{if(e.origin!==__OFFICE__)return;
                 sale={'requestId':'auto-sale','registrationId':'fixture-sale-uuid','orderNumber':'FIXTURE-ONLY','worksheetName':'Salg'}
                 wrong=request('wrong-sheet-update',False,registration={**sale,'requestId':'wrong-sheet-update','worksheetName':'Another'});assert 'arkfanen Another' in wrong['error'];assert frame.evaluate('created')==1
                 updated=request('auto-sale',registration=sale);assert updated['status']=='registered' and updated['requestId']==sale['requestId'];assert updated['registrationId']==sale['registrationId']
-                assert frame.evaluate('created')==2 and frame.evaluate('saveCount')==2 and frame.evaluate('runs')==4
+                assert frame.evaluate('created')==2 and frame.evaluate('saveCount')==2 and frame.evaluate('runs')==4 and frame.evaluate('noticeCount')==2
                 assert frame.evaluate('scripts["'+name+'"]') is not None,'Older script must remain'
                 assert frame.evaluate('scripts["'+updated_name+'"]').replace('\r\n','\n')==updated_source.replace('\r\n','\n')
                 assert frame.evaluate('sales.length')==1,'Updating and checking must not duplicate the sale'

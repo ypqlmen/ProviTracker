@@ -1,4 +1,4 @@
-# Salgsregistrering i Chrome – testversion 0.1.20
+# Salgsregistrering i Chrome – testversion 0.1.21
 
 Provi Tracker overfører nye salgsregistreringer gennem brugerens eksisterende Chrome-login. Ordrekøen bruger Chrome i stedet for en separat Microsoft-browser. Funktionen er endnu kun i testversionen; den offentlige opdateringskanal ændres ikke af Windows-prøvebygningen.
 
@@ -6,7 +6,7 @@ Provi Tracker overfører nye salgsregistreringer gennem brugerens eksisterende C
 
 1. Installer den nye Windows-testversion. Åbn **Indstillinger → Salgsregistrering** i Provi Tracker.
 2. Gem sælgerinitialer og det direkte masterark-link med `sourcedoc`. Åbn dette masterark én gang i Chrome, og log ind.
-3. Vælg **Installer Chrome-udvidelse**. Følg programmets guide: åbn `chrome://extensions`, behold **Udviklertilstand** aktiveret, og vælg **Indlæs udpakket** med den mappesti, programmet kopierer. Det kræver ingen administratorinstallation. Hvis udvidelsen allerede er installeret, bruges samme mappe og samme udvidelses-ID. Kontrollér version **0.1.20** og adgang til Excel og scriptpanelet; Chrome kan bede om ny webstedsadgang ved denne opdatering.
+3. Vælg **Installer Chrome-udvidelse**. Følg programmets guide: åbn `chrome://extensions`, behold **Udviklertilstand** aktiveret, og vælg **Indlæs udpakket** med den mappesti, programmet kopierer. Det kræver ingen administratorinstallation. Hvis udvidelsen allerede er installeret, bruges samme mappe og samme udvidelses-ID. Kontrollér version **0.1.21** og adgang til Excel og scriptpanelet; Chrome kan bede om ny webstedsadgang ved denne opdatering.
 4. Gem det direkte link til masterarket i appen. Vælg **Forbind masterark → Opsæt automatisk i Chrome**.
 5. Følg trinene i dialogen. Udvidelsen genbruger eller opretter sit eget versionsbestemte `ProviTrackerAutoV4_…`-script, indsætter den medfølgende kode, læser hele koden tilbage, gemmer, genåbner og kontrollerer den igen. Eksisterende og ændrede scripts overskrives ikke. En skrivefri kørsel skal kvittere fra Excel, før appen melder klar.
 6. Slå **Registrer automatisk i masterarket** til, og gem indstillingerne.
@@ -61,3 +61,10 @@ Efter første automatiske opsætning sammenligner udvidelsen scriptets versionsf
 Den bekræftede konto gemmes i udvidelsens vedvarende lager. Fanen genfindes ved en ny Chrome-session og efter opdateringer, selv om det tidligere fanenummer er forældet. Hvis fanen er lukket, åbnes timehistorikken igen i baggrunden. Kun fanenummer og den oprindelige dvalebeskyttelse er midlertidige. Kontonavnet kontrolleres på ny før hver hentning; et kontoskift giver stop. Et udløbet login bevarer tilknytningen og viser, at brugeren skal logge ind, frem for at bede om ny opsætning. Browserens cookies eller MFA omgås eller kopieres ikke.
 
 Menuaktivering husker det konkrete menupunkt på tværs af genoprettede DOM-elementer. Et ignoreret klik på Seneste scripts kan derfor efterfølges af fokuseret Enter, selv om Excel har erstattet knappen. Den udvidede isolerede prøve reproducerede fastlåsningen med den tidligere kode og passerer med den nye logik. Det er ikke i sig selv en bekræftelse af alle fejlsituationer i Microsofts autentificerede webapp.
+
+## Bekræftet Excel-rettelse i 0.1.21
+Den autentificerede Chromium-prøve reproducerede fastlåsningen i den lille menu under Få vist scripts: det synlige menupunkt overstyrer `visibility:hidden` på Excels portalforældre. Synlighed afgøres nu af selve kontrollens beregnede synlighed, mens `display:none`, `hidden` og `aria-hidden` stadig afvises. Det gælder både opsætning og almindelig registrering.
+
+Samme prøve afslørede, at scriptkort er `div` med rollen `article`, at navngivning kræver fulde fokus-/inputhændelser, og at Excels informationsdialog Tilknyttet script skal lukkes efter den nye kladdes gemning. Kun den kendte informationsdialog efter egen gemmehandling håndteres; øvrige dialoger godkendes ikke automatisk. Den medfølgende kode bruger Excels fire-mellemrumsformatering. Compiler-normaliseret JavaScript var identisk før/efter formateringen, og den fulde kodekontrol er uændret.
+
+I rigtig Microsoft Excel bestod ny oprettelse, kodeindsættelse, gemning, automatisk lukning af informationsdialogen, genåbning, fuld kodekontrol og frisk skrivefri V4-kvittering med `row:0`. Prøven startede uden en åben masterark-fane og afsluttede i en inaktiv baggrundsfane. Der blev ikke indsat testsalg i virksomhedens ark. Windows-prøven anvender fortsat syntetiske salg til at kontrollere native transport, automatisk åbning og genforsøg uden dubletter.
