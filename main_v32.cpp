@@ -29,8 +29,8 @@
 #include "updater_script.h"
 #include "sales_registration.h"
 
-static constexpr const char* APP_VERSION = "2.0.0";
-static constexpr int APP_BUILD_VERSION = 20000;
+static constexpr const char* APP_VERSION = "2.0.1";
+static constexpr int APP_BUILD_VERSION = 20001;
 static constexpr const char* UPDATE_APPCAST_URL = "https://raw.githubusercontent.com/ypqlmen/ProviTracker/main/appcast.xml";
 
 static QString psSingleQuoted(QString value) {
@@ -1092,7 +1092,12 @@ public:
                     }
                     if(auto* sections=findChild<QTabWidget*>("settingsTabs")){
                         const QStringList names={"05-settings.png","08-settings-payroll.png","09-settings-intramanager.png","10-settings-masterark.png","11-settings-account.png"};
-                        for(int j=0;j<sections->count();++j){sections->setCurrentIndex(j);qApp->processEvents();saveWidget(this,QDir(outputDir).filePath(names[j]));}
+                        for(int j=0;j<sections->count();++j){sections->setCurrentIndex(j);qApp->processEvents();saveWidget(this,QDir(outputDir).filePath(names[j]));
+                            if(sections->tabText(j)=="Masterark")if(auto* scroll=qobject_cast<QScrollArea*>(sections->widget(j))){
+                                scroll->verticalScrollBar()->setValue(scroll->verticalScrollBar()->maximum());qApp->processEvents();saveWidget(this,QDir(outputDir).filePath("31-mail-settings.png"));
+                                resize(1000,640);qApp->processEvents();scroll->verticalScrollBar()->setValue(scroll->verticalScrollBar()->maximum());qApp->processEvents();saveWidget(this,QDir(outputDir).filePath("32-mail-settings-compact.png"));resize(1280,900);scroll->verticalScrollBar()->setValue(0);
+                            }
+                        }
                     }
 
                 }
@@ -1140,7 +1145,7 @@ public:
             pages->setCurrentIndex(1);resize(1000,640);qApp->processEvents();if(ordersList->count()>2){ordersList->setCurrentRow(2);ordersList->scrollToItem(ordersList->item(2),QAbstractItemView::PositionAtCenter);}qApp->processEvents();saveWidget(this,QDir(outputDir).filePath("26-orders-compact.png"));resize(1280,900);
             orderSearchEdit->setText("no-matching-order-123");qApp->processEvents();if(selectedOrderRepoIndex()!=-1)qFatal("Hidden order remained selected");saveWidget(this,QDir(outputDir).filePath("27-orders-no-results.png"));orderSearchEdit->clear();
             orderStatusFilter->setCurrentIndex(3);qApp->processEvents();saveWidget(this,QDir(outputDir).filePath("28-orders-status.png"));
-            for(int row=0;row<ordersList->count();++row)if(!ordersList->item(row)->isHidden()){ordersList->setCurrentRow(row);if(repo.orders[selectedOrderRepoIndex()].masterRegistrationState!="error")qFatal("Status filter selected the wrong order");break;}orderStatusFilter->setCurrentIndex(0);
+            for(int row=0;row<ordersList->count();++row)if(!ordersList->item(row)->isHidden()){ordersList->setCurrentRow(row);const auto& order=repo.orders[selectedOrderRepoIndex()];if(order.masterRegistrationState!="error" && order.salesMailState!="error" && order.salesMailState!="uncertain" && order.salesMailState!="changed")qFatal("Status filter selected the wrong order");break;}orderStatusFilter->setCurrentIndex(0);
             if(repo.orders.size()>1){const auto original=repo.orders[1].id;repo.orders[1].id=repo.orders[0].id;refreshOrders();
                 for(int row=0;row<ordersList->count();++row)if(ordersList->item(row)->data(Qt::UserRole).toMap().value("repoIndex").toInt()==1){ordersList->setCurrentRow(row);break;}
                 if(selectedOrderRepoIndex()!=1)qFatal("Duplicate order number selected another order");repo.orders[1].id=original;refreshOrders();}
@@ -1161,6 +1166,7 @@ private:
     ProviCloudClient cloudClient;
     bool startupAborted = false;
     bool masterRegistrationRunning = false;
+    bool salesMailRunning = false;
     QString cloudUsername;
     QString cloudToken;
     QByteArray cloudSecretKey;
@@ -1238,6 +1244,9 @@ private:
     QLineEdit* masterWorkbookUrlEdit = nullptr;
     QCheckBox* salesRegistrationEnabledCheck = nullptr;
     QLabel* salesRegistrationStatusLabel = nullptr;
+    QLineEdit* salesMailRecipientEdit = nullptr;
+    QCheckBox* salesMailEnabledCheck = nullptr;
+    QLabel* salesMailStatusLabel = nullptr;
     QPointer<QPlainTextEdit> masterSetupLog;
 
     struct IntramanagerFetchResult {
@@ -2534,7 +2543,7 @@ private:
     }
 
     void logoutCloudUser() {
-        if (masterRegistrationRunning) {
+        if (masterRegistrationRunning || salesMailRunning) {
             QMessageBox::information(this, "Salgsregistrering", "Vent, til registreringen i Chrome er afsluttet.");
             return;
         }
@@ -2651,17 +2660,17 @@ private:
         orderStatusFilter=new QComboBox;orderStatusFilter->addItem("Alle statusser",QString());orderStatusFilter->addItem("Afventer masterark","pending");orderStatusFilter->addItem("Registreret","registered");orderStatusFilter->addItem("Kræver handling","error");filters->addWidget(orderStatusFilter);layout->addLayout(filters);
         auto* heading=new QHBoxLayout;heading->setSpacing(12);heading->addWidget(premiumLabel("Alle ordrer","sectionTitle"));ordersCountLabel=premiumLabel("","badge");heading->addWidget(ordersCountLabel);heading->addStretch();layout->addLayout(heading);
         auto* actions=new QHBoxLayout;actions->setSpacing(9);auto* refreshBtn=new QPushButton;refreshBtn->setIcon(premiumIcon("refresh"));refreshBtn->setToolTip("Opdater ordrer");refreshBtn->setAccessibleName("Opdater ordrer");actions->addWidget(refreshBtn);actions->addStretch();
-        auto* editBtn=new QPushButton("Rediger");auto* registerBtn=new QPushButton("Registrer / prøv igen");auto* deleteBtn=new QPushButton("Slet");deleteBtn->setProperty("destructive",true);for(auto* button:{editBtn,registerBtn,deleteBtn})actions->addWidget(button);layout->addLayout(actions);
+        auto* editBtn=new QPushButton("Rediger");auto* registerBtn=new QPushButton("Registrer / prøv igen");auto* deleteBtn=new QPushButton("Slet");auto* mailBtn=new QPushButton("Mail");mailBtn->setToolTip("Kontrollér eller prøv mailafsendelsen igen");actions->addWidget(mailBtn);deleteBtn->setProperty("destructive",true);for(auto* button:{editBtn,registerBtn,deleteBtn})actions->addWidget(button);layout->addLayout(actions);
         ordersList=new PremiumOrdersList;layout->addWidget(ordersList,1);
         connect(orderSearchEdit,&QLineEdit::textChanged,this,[this](){applyOrderFilter();});connect(orderStatusFilter,&QComboBox::currentIndexChanged,this,[this](){applyOrderFilter();});
-        const auto updateActions=[this,editBtn,registerBtn,deleteBtn](){const bool selected=!ordersList->selectedItems().isEmpty() && ordersList->currentItem() && !ordersList->currentItem()->isHidden();for(auto* button:{editBtn,registerBtn,deleteBtn})button->setEnabled(selected);};connect(ordersList,&QListWidget::itemSelectionChanged,this,updateActions);updateActions();
+        const auto updateActions=[this,editBtn,registerBtn,deleteBtn,mailBtn](){const bool selected=!ordersList->selectedItems().isEmpty() && ordersList->currentItem() && !ordersList->currentItem()->isHidden();for(auto* button:{editBtn,registerBtn,deleteBtn,mailBtn})button->setEnabled(selected);};connect(ordersList,&QListWidget::itemSelectionChanged,this,updateActions);updateActions();
         connect(ordersList,&QListWidget::itemDoubleClicked,this,[this](){editSelectedOrder();});
-        connect(refreshBtn,&QPushButton::clicked,this,[this](){refreshOrders();});connect(editBtn,&QPushButton::clicked,this,[this](){editSelectedOrder();});connect(registerBtn,&QPushButton::clicked,this,[this](){retrySelectedMasterRegistration();});connect(deleteBtn,&QPushButton::clicked,this,[this](){deleteSelectedOrder();});return page;
+        connect(refreshBtn,&QPushButton::clicked,this,[this](){refreshOrders();});connect(editBtn,&QPushButton::clicked,this,[this](){editSelectedOrder();});connect(registerBtn,&QPushButton::clicked,this,[this](){retrySelectedMasterRegistration();});connect(mailBtn,&QPushButton::clicked,this,[this](){retrySelectedSalesMail();});connect(deleteBtn,&QPushButton::clicked,this,[this](){deleteSelectedOrder();});return page;
     }
 
     void applyOrderFilter() {
         if(!ordersList || !orderSearchEdit)return;const QString query=orderSearchEdit->text().simplified();const QString status=orderStatusFilter->currentData().toString();int visible=0;
-        for(int row=0;row<ordersList->count();++row){auto* item=ordersList->item(row);const auto data=item->data(Qt::UserRole).toMap();const QString state=data.value("state").toString();const QString category=state=="registered"?state:state=="error"?state:QString("pending");
+        for(int row=0;row<ordersList->count();++row){auto* item=ordersList->item(row);const auto data=item->data(Qt::UserRole).toMap();const QString state=data.value("state").toString();const QString mailState=data.value("mailState").toString();const QString category=(mailState=="error" || mailState=="uncertain" || mailState=="changed")?QString("error"):state=="registered"?state:state=="error"?state:QString("pending");
             bool match=status.isEmpty() || status==category;for(const auto& word:query.split(' ',Qt::SkipEmptyParts))if(!item->text().contains(word,Qt::CaseInsensitive))match=false;
             item->setHidden(!match);if(match)++visible;}
         if(ordersList->currentItem() && ordersList->currentItem()->isHidden()){ordersList->clearSelection();ordersList->setCurrentRow(-1);}
@@ -2872,7 +2881,7 @@ private:
             installer->start(intramanagerWorkerPath(), {"--stdin-json"});
         });
         connect(probeChromeBtn, &QPushButton::clicked, this, [this, probeChromeBtn]() {
-            saveSalesRegistrationSettingsFromUi();
+            if(!saveSalesRegistrationSettingsFromUi())return;
             if (!isMasterWorkbookUrl(repo.settings.masterWorkbookUrl)) {
                 salesRegistrationStatusLabel->setText("Gem dit masterark-link først.");
                 return;
@@ -2918,6 +2927,16 @@ private:
         salesRegistrationCard.second->addLayout(salesRegForm);
 
 
+        auto mailCard=createCard("Salgs reg på mail");
+        auto* mailForm=new QFormLayout;configureSettingsForm(mailForm);
+        salesMailRecipientEdit=new QLineEdit;salesMailRecipientEdit->setPlaceholderText("Modtagerens mailadresse");configureSettingsField(salesMailRecipientEdit);
+        salesMailEnabledCheck=new QCheckBox("Send automatisk salgs reg efter registrering");salesMailEnabledCheck->setFocusPolicy(Qt::NoFocus);
+        salesMailStatusLabel=premiumLabel("Forbind sælgerens arbejdsmail i Outlook.","muted");salesMailStatusLabel->setTextFormat(Qt::PlainText);salesMailStatusLabel->setWordWrap(true);
+        auto* connectOutlookBtn=new QPushButton("Forbind Outlook i Chrome");auto* saveMailBtn=new QPushButton("Gem mailindstillinger");saveMailBtn->setProperty("primary",true);
+        mailForm->addRow("Modtager",salesMailRecipientEdit);mailForm->addRow(salesMailEnabledCheck);mailForm->addRow(createSettingsButtonGrid(QVector<QPushButton*>{connectOutlookBtn,saveMailBtn},2));mailForm->addRow(salesMailStatusLabel);mailCard.second->addLayout(mailForm);
+        connect(connectOutlookBtn,&QPushButton::clicked,this,[this](){runOutlookWorker(true);});
+        connect(saveMailBtn,&QPushButton::clicked,this,[this](){if(saveSalesRegistrationSettingsFromUi()){salesMailStatusLabel->setText("Mailindstillinger er gemt. Afsender: "+repo.settings.salesMailSender);processMasterQueue();}});
+
         auto sellerCard=createCard("Konto");
         accountIdentityLabel=premiumLabel("","sectionTitle");accountIdentityLabel->setWordWrap(true);sellerCard.second->addWidget(accountIdentityLabel);
         cloudAccountStatusLabel=premiumLabel("","muted");cloudAccountStatusLabel->setWordWrap(true);sellerCard.second->addWidget(cloudAccountStatusLabel);
@@ -2931,7 +2950,7 @@ private:
             for(auto* card:cards){card->setSizePolicy(QSizePolicy::Expanding,QSizePolicy::Maximum);stack->addWidget(card);}stack->addStretch();row->addWidget(column,1);row->addStretch(0);scroll->setWidget(body);categories->addTab(scroll,name);
         };
         addSettingsPage("Generelt",{goalCard.first});addSettingsPage("Løn",{payrollCard.first});
-        addSettingsPage("Intramanager",{intramanagerCard.first});addSettingsPage("Masterark",{salesRegistrationCard.first});addSettingsPage("Konto",{sellerCard.first});outerLayout->addWidget(categories);
+        addSettingsPage("Intramanager",{intramanagerCard.first});addSettingsPage("Masterark",{salesRegistrationCard.first,mailCard.first});addSettingsPage("Konto",{sellerCard.first});outerLayout->addWidget(categories);
 
         connect(saveGoalBtn, &QPushButton::clicked, this, [this]() {
             repo.settings.bonus.monthlyTargetPoints = targetSpin->value();
@@ -2978,7 +2997,7 @@ private:
         });
 
         connect(saveSalesRegistrationBtn, &QPushButton::clicked, this, [this]() {
-            saveSalesRegistrationSettingsFromUi();
+            if(!saveSalesRegistrationSettingsFromUi())return;
             if (salesRegistrationStatusLabel) {
                 salesRegistrationStatusLabel->setText("Salgsregistrering er gemt.");
                 QTimer::singleShot(0, this, [this]() { processMasterQueue(); });
@@ -2986,7 +3005,7 @@ private:
         });
 
         connect(testSalesRegistrationBtn, &QPushButton::clicked, this, [this]() {
-            saveSalesRegistrationSettingsFromUi();
+            if(!saveSalesRegistrationSettingsFromUi())return;
             showMasterScriptGuide();
         });
 
@@ -3413,8 +3432,8 @@ private:
         if(!ordersList)return;ordersList->clear();const auto indices=activeOrderIndicesSorted();
         for(const int repoIndex:indices){const auto& order=repo.orders[repoIndex];double points=0;const QString products=orderProductsSummary(order,&points);qint64 units=0;for(const auto& product:order.items)units+=product.quantity;
             const QString company=order.companyName.isEmpty()?"Ordre "+order.id:order.companyName;
-            const QVariantMap data={{"company",company},{"id",order.id},{"date",order.createdAt.toString("dd-MM-yyyy HH:mm")},{"products",products},{"note",order.note},{"points",points},{"pointsText",money(points)},{"units",units},{"status",salesRegistrationStateText(order)},{"state",order.masterRegistrationState},{"repoIndex",repoIndex}};
-            auto* item=new QListWidgetItem(company+" "+order.id+" "+products+" "+order.note+" "+data.value("date").toString()+" "+data.value("status").toString(),ordersList);item->setData(Qt::UserRole,data);item->setToolTip(order.masterRegistrationError.isEmpty()?company+"\n"+order.id+"\n"+products:order.masterRegistrationError);
+            const QVariantMap data={{"company",company},{"id",order.id},{"date",order.createdAt.toString("dd-MM-yyyy HH:mm")},{"products",products},{"note",order.note},{"points",points},{"pointsText",money(points)},{"units",units},{"status",masterRegistrationStateText(order)},{"mailStatus",salesMailStatusText(order)},{"mailState",order.salesMailState},{"mailRecipient",order.salesMail.value("recipient").toString()},{"state",order.masterRegistrationState},{"repoIndex",repoIndex}};
+            auto* item=new QListWidgetItem(company+" "+order.id+" "+products+" "+order.note+" "+data.value("date").toString()+" "+data.value("status").toString()+" "+data.value("mailStatus").toString(),ordersList);item->setData(Qt::UserRole,data);item->setToolTip(!order.salesMailError.isEmpty()?order.salesMailError:order.masterRegistrationError.isEmpty()?company+"\n"+order.id+"\n"+products:order.masterRegistrationError);
         }
         ordersList->setCurrentRow(-1);applyOrderFilter();
     }
@@ -3424,7 +3443,13 @@ private:
         if(accountIdentityLabel){const auto* seller=activeSalesperson();accountIdentityLabel->setText(cloudUsername.isEmpty()?(seller?seller->name:QString("Demo")):cloudUsername);}
     }
 
-    void saveSalesRegistrationSettingsFromUi() {
+    bool saveSalesRegistrationSettingsFromUi() {
+        const bool enabled=salesMailEnabledCheck && salesMailEnabledCheck->isChecked();
+        const QString recipient=salesMailRecipientEdit?salesMailRecipientEdit->text().trimmed():repo.settings.salesMailRecipient;
+        if(enabled && (!isSalesMailAddress(recipient) || !isSalesMailAddress(repo.settings.salesMailSender) || !salesRegistrationEnabledCheck->isChecked())){
+            QMessageBox::warning(this,"Salgs reg på mail","Vælg en gyldig modtager, forbind Outlook og slå automatisk registrering i masterarket til først.");return false;
+        }
+        repo.settings.salesMailEnabled=enabled;repo.settings.salesMailRecipient=recipient;
         if (defaultSellerInitialsEdit) {
             repo.settings.defaultSellerInitials = defaultSellerInitialsEdit->text().trimmed();
         }
@@ -3435,9 +3460,14 @@ private:
             repo.settings.masterRegistrationEnabled = salesRegistrationEnabledCheck->isChecked();
         }
         repo.saveSettings();
+        return true;
     }
 
     void refreshSettingsUi() {
+        if(salesMailRecipientEdit)salesMailRecipientEdit->setText(repo.settings.salesMailRecipient);
+        if(salesMailEnabledCheck)salesMailEnabledCheck->setChecked(repo.settings.salesMailEnabled);
+        if(salesMailStatusLabel)salesMailStatusLabel->setText(repo.settings.salesMailSender.isEmpty()?"Forbind sælgerens arbejdsmail i Outlook.":"Tilknyttet "+repo.settings.salesMailSender);
+
         updateCloudAccountStatus();
 
         if (targetSpin) targetSpin->setValue(repo.settings.bonus.monthlyTargetPoints);
@@ -3521,7 +3551,7 @@ private:
         updater->start(intramanagerWorkerPath(), {"--stdin-json"});
     }
 
-    void prepareMasterRegistration(Order& order) {
+    void prepareMasterRegistration(Order& order, bool newOrder = false) {
         const QString identity = order.masterRegistration.value("registrationId").toString();
         const QString worksheetName = order.masterRegistration.value("worksheetName").toString();
         order.masterRegistration = makeSalesRegistration(order, repo.products);
@@ -3530,6 +3560,7 @@ private:
         order.masterRegistrationState = "pending";
         order.masterRegistrationError.clear();
         order.masterWorkbookUrl = repo.settings.masterWorkbookUrl.trimmed();
+        prepareSalesMail(order,repo.settings,newOrder);
     }
 
     QString masterSetupPhaseText(const QString& phase) const {
@@ -3556,7 +3587,7 @@ private:
     }
 
     void runMasterWorker(bool setup, QString registrationId = QString(), bool automaticSetup = false) {
-        if (masterRegistrationRunning) return;
+        if (masterRegistrationRunning || salesMailRunning) return;
         if (cloudUsername.isEmpty()) {
             QMessageBox::information(this, "Salgsregistrering", "Log ind i Provi Tracker først.");
             return;
@@ -3564,6 +3595,7 @@ private:
         QJsonObject registration;
         QString url = repo.settings.masterWorkbookUrl;
         QString orderNumber;
+        bool wasRegistered=false;
         if (!setup) {
             const int index = salesRegistrationIndex(repo.orders, registrationId);
             if (index < 0) {
@@ -3574,7 +3606,8 @@ private:
             orderNumber = registration.value("orderNumber").toString();
             url = repo.orders[index].masterWorkbookUrl;
             if (registration.value("schemaVersion").toInt() != 3 || orderNumber.isEmpty()) return;
-            repo.orders[index].masterRegistrationState = "transferring";
+            wasRegistered=repo.orders[index].masterRegistrationState=="registered";
+            if(!wasRegistered)repo.orders[index].masterRegistrationState = "transferring";
             repo.saveOrders();
         }
         if (!isMasterWorkbookUrl(url)) {
@@ -3612,7 +3645,7 @@ private:
             process->write(QJsonDocument(input).toJson(QJsonDocument::Compact));
             process->closeWriteChannel();
         });
-        const auto finish = [this, process, setup, automaticSetup, registrationId, orderNumber, requestId, url](QJsonObject result) {
+        const auto finish = [this, process, setup, automaticSetup, registrationId, orderNumber, requestId, url, wasRegistered](QJsonObject result) {
             masterRegistrationRunning = false;
             const QString status = result.value("status").toString();
             const bool ok = result.value("success").toBool() && result.value("scriptVersion").toInt() == 4
@@ -3629,8 +3662,16 @@ private:
                 if (index >= 0) {
                     const QString worksheetName = result.value("worksheetName").toString();
                     if (ok && !worksheetName.isEmpty()) repo.orders[index].masterRegistration["worksheetName"] = worksheetName;
-                    repo.orders[index].masterRegistrationState = ok ? "registered" : (status == "chrome-sleeping" || status == "chrome-login-required" || status == "chrome-update-required") ? "waiting-browser" : "error";
+                    repo.orders[index].masterRegistrationState = (ok || wasRegistered) ? "registered" : (status == "chrome-sleeping" || status == "chrome-login-required" || status == "chrome-update-required") ? "waiting-browser" : "error";
                     repo.orders[index].masterRegistrationError = ok ? QString() : error;
+                    auto& order=repo.orders[index];
+                    if(!order.salesMail.isEmpty() && order.salesMailState!="sent"){
+                        const auto mail=result.value("mail").toObject();
+                        if(ok && validSalesMailSnapshot(mail,result,order)){
+                            order.salesMail["html"]=mail.value("html");order.salesMail["text"]=mail.value("text");order.salesMailState="pending";order.salesMailError.clear();
+                        }else if(ok || wasRegistered){order.salesMailState="error";order.salesMailError=result.value("mailError").toString("Salget er registreret, men mailudsnittet mangler. Prøv mailen igen.");}
+                    }
+
                 }
                 repo.saveOrders();
                 refreshOrders();
@@ -3652,6 +3693,8 @@ private:
     }
 
     void processMasterQueue() {
+        processSalesMailQueue();
+        if(salesMailRunning)return;
         if (masterRegistrationRunning || !repo.settings.masterRegistrationEnabled) return;
         for (const auto& order : repo.orders) {
             if ((order.masterRegistrationState == "pending" || order.masterRegistrationState == "transferring" || order.masterRegistrationState == "waiting-browser") && isMasterWorkbookUrl(order.masterWorkbookUrl)) {
@@ -3662,9 +3705,96 @@ private:
         }
     }
 
+    void runOutlookWorker(bool connectAccount, const QString& registrationId = QString()) {
+        if(masterRegistrationRunning || salesMailRunning || cloudUsername.isEmpty())return;
+        QJsonObject input{{"action","chrome-outlook"},{"operation",connectAccount?"connect":"send"}};
+        const QString requestId=QUuid::createUuid().toString(QUuid::WithoutBraces);input["requestId"]=requestId;
+        QString recipient,sender;
+        if(!connectAccount){
+            const int index=salesRegistrationIndex(repo.orders,registrationId);if(index<0)return;
+            auto& order=repo.orders[index];
+            if(order.masterRegistrationState!="registered" || order.salesMail.isEmpty())return;
+            recipient=order.salesMail.value("recipient").toString();sender=order.salesMail.value("senderEmail").toString();
+            if(!isSalesMailAddress(recipient) || !isSalesMailAddress(sender) || order.salesMail.value("html").toString().isEmpty()){
+                order.salesMailState="error";order.salesMailError="Mailadressen, Outlook-forbindelsen eller mailudsnittet mangler.";repo.saveOrders();refreshOrders();return;
+            }
+            input["expectedSender"]=sender;input["mail"]=order.salesMail;
+            input["reviewedRetry"]=order.salesMail.value("reviewedRetry").toBool(false);
+            order.salesMailState="sending";order.salesMailError.clear();salesMailRunning=true;repo.saveOrders();
+            if(repo.cloudPersistenceEnabled && !flushCloudSaveSync()){
+                salesMailRunning=false;const int current=salesRegistrationIndex(repo.orders,registrationId);if(current>=0){repo.orders[current].salesMailState="pending";repo.orders[current].salesMailError="Mailen afventer, at køen kan gemmes i skyen.";}repo.saveOrders();refreshOrders();return;
+            }
+        }
+        salesMailRunning=true;
+        if(salesMailStatusLabel)salesMailStatusLabel->setText(connectAccount?"Forbinder Outlook i Chrome. Godkend adgang eller login i browseren.":"Sender salgs reg fra Outlook…");
+        refreshOrders();
+        auto* process=new QProcess(this);auto completed=std::make_shared<bool>(false);
+        connect(process,&QProcess::started,this,[process,input](){process->write(QJsonDocument(input).toJson(QJsonDocument::Compact));process->closeWriteChannel();});
+        const auto finish=[this,process,completed,connectAccount,registrationId,requestId,recipient,sender](QJsonObject result){
+            if(*completed)return;*completed=true;salesMailRunning=false;
+            const QString status=result.value("status").toString();
+            const bool identity=result.value("requestId").toString()==requestId;
+            bool ok=result.value("success").toBool() && identity;
+            if(connectAccount){
+                ok=ok && status=="outlook-connected" && isSalesMailAddress(result.value("senderEmail").toString());
+                if(ok){repo.settings.salesMailSender=result.value("senderEmail").toString();repo.saveSettings();}
+                if(salesMailStatusLabel)salesMailStatusLabel->setText(ok?"Tilknyttet "+repo.settings.salesMailSender:result.value("error").toString("Outlook kunne ikke forbindes. Kontrollér browseren."));
+            }else{
+                ok=ok && (status=="mail-sent" || status=="mail-already-sent") && result.value("registrationId").toString()==registrationId
+                    && result.value("recipient").toString().compare(recipient,Qt::CaseInsensitive)==0 && result.value("senderEmail").toString().compare(sender,Qt::CaseInsensitive)==0;
+                const int index=salesRegistrationIndex(repo.orders,registrationId);
+                if(index>=0){auto& order=repo.orders[index];
+                    ok=applySalesMailResult(order,result,requestId);
+                    repo.saveOrders();
+                    if(salesMailStatusLabel)salesMailStatusLabel->setText(ok?"Outlook har bekræftet afsendelsen af salgs reg.":order.salesMailError);
+                }
+                refreshOrders();
+            }
+            process->deleteLater();
+            if(ok)QTimer::singleShot(200,this,[this](){processMasterQueue();});
+        };
+        connect(process,QOverload<int,QProcess::ExitStatus>::of(&QProcess::finished),this,[process,finish](int,QProcess::ExitStatus){finish(QJsonDocument::fromJson(process->readAllStandardOutput()).object());});
+        connect(process,&QProcess::errorOccurred,this,[finish,requestId](QProcess::ProcessError error){if(error==QProcess::FailedToStart)finish(QJsonObject{{"requestId",requestId},{"success",false},{"notSent",true},{"status","mail-not-sent"},{"error","Browserhjælperen kunne ikke starte. Geninstaller Provi Tracker."}});});
+        QTimer::singleShot(connectAccount?690000:180000,process,[process](){if(process->state()!=QProcess::NotRunning)process->kill();});
+        process->start(intramanagerWorkerPath(),{"--stdin-json"});
+    }
+
+    void processSalesMailQueue(){
+        if(masterRegistrationRunning || salesMailRunning)return;
+        bool recovered=false;
+        for(auto& order:repo.orders)if(order.salesMailState=="sending"){
+            order.salesMailState="uncertain";order.salesMailError="Programmet blev afbrudt under afsendelsen. Kontrollér Sendt post før genforsøg.";recovered=true;
+        }
+        if(recovered){repo.saveOrders();refreshOrders();}
+        if(!repo.settings.salesMailEnabled)return;
+        for(const auto& order:repo.orders)if(order.masterRegistrationState=="registered" && !order.salesMail.isEmpty()
+            && (order.salesMailState=="pending" || order.salesMailState=="waiting-browser")){
+            runOutlookWorker(false,order.masterRegistration.value("registrationId").toString());return;
+        }
+    }
+
+    void retrySelectedSalesMail(){
+        const int index=selectedOrderRepoIndex();if(index<0 || masterRegistrationRunning || salesMailRunning)return;
+        auto& order=repo.orders[index];if(order.salesMail.isEmpty()){QMessageBox::information(this,"Salgs reg","Denne ordre er ikke oprettet med automatisk mailafsendelse.");return;}
+        if(order.salesMailState=="sent"){QMessageBox::information(this,"Salgs reg","Mailen er allerede sendt til "+order.salesMail.value("recipient").toString()+".");return;}
+        if(order.masterRegistrationState!="registered"){QMessageBox::information(this,"Salgs reg","Registrer og kontrollér salget i masterarket først.");return;}
+        if(order.salesMailState=="uncertain"){
+            QMessageBox box(QMessageBox::Question,"Kontrollér afsendelsen","Kontrollér Sendt post i Outlook. Mailen kan være sendt, selv om programmet ikke modtog kvitteringen.",QMessageBox::NoButton,this);
+            auto* open=box.addButton("Åbn Outlook",QMessageBox::ActionRole);auto* sent=box.addButton("Mailen er sendt",QMessageBox::AcceptRole);auto* retry=box.addButton("Ikke sendt – prøv igen",QMessageBox::DestructiveRole);box.addButton("Annuller",QMessageBox::RejectRole);box.exec();
+            if(box.clickedButton()==open){QDesktopServices::openUrl(QUrl("https://outlook.office.com/mail/"));return;}
+            if(box.clickedButton()==sent){order.salesMailState="sent";order.salesMail["confirmation"]="manual";order.salesMail.remove("html");order.salesMail.remove("text");order.salesMailError.clear();saveOrdersAndSyncCloud();refreshOrders();return;}
+            if(box.clickedButton()!=retry)return;
+            order.salesMail["reviewedRetry"]=true;
+        }
+        const auto id=order.masterRegistration.value("registrationId").toString();
+        order.salesMailState="pending";order.salesMailError.clear();saveOrdersAndSyncCloud();refreshOrders();
+        if(order.salesMail.value("html").toString().isEmpty())runMasterWorker(false,id);
+        else runOutlookWorker(false,id);
+    }
+
     void retrySelectedMasterRegistration() {
         const int index = selectedOrderRepoIndex();
-        if (index < 0 || masterRegistrationRunning) return;
+        if (index < 0 || masterRegistrationRunning || salesMailRunning) return;
         auto& order = repo.orders[index];
         if (order.masterRegistrationState == "registered" || order.masterRegistrationState == "changed") {
             QMessageBox::information(this, "Salgsregistrering", salesRegistrationStateText(order)
@@ -3691,7 +3821,7 @@ private:
         OrderEditorDialog dlg(repo, s->id, std::nullopt, this);
         if (dlg.exec() == QDialog::Accepted) {
             Order order = dlg.getOrder();
-            prepareMasterRegistration(order);
+            prepareMasterRegistration(order,true);
             repo.orders.push_back(order);
             saveOrdersAndSyncCloud();
             processMasterQueue();
@@ -3706,7 +3836,7 @@ private:
     }
 
     void editSelectedOrder() {
-        if (masterRegistrationRunning) return;
+        if (masterRegistrationRunning || salesMailRunning) return;
         const int repoIndex = selectedOrderRepoIndex();
         if (repoIndex < 0) return;
         const auto* s = activeSalesperson();
@@ -3719,11 +3849,13 @@ private:
             updated.masterRegistrationState = previous.masterRegistrationState;
             updated.masterRegistrationError = previous.masterRegistrationError;
             updated.masterWorkbookUrl = previous.masterWorkbookUrl;
+            updated.salesMail=previous.salesMail;updated.salesMailState=previous.salesMailState;updated.salesMailError=previous.salesMailError;
             if (makeSalesRegistration(updated, repo.products) != makeSalesRegistration(previous, repo.products)) {
                 if (previous.masterRegistrationState == "pending" || previous.masterRegistration.isEmpty()) {
                     prepareMasterRegistration(updated);
                 } else {
                     updated.masterRegistrationState = "changed";
+                    if(!updated.salesMail.isEmpty() && updated.salesMailState!="sent"){updated.salesMailState="changed";updated.salesMailError="Ordren er rettet. Kontrollér masterarket før mailafsendelse.";}
                     updated.masterRegistrationError = "Ordren er rettet. Kontrollér den tidligere registrering i masterarket.";
                 }
             }
@@ -3734,7 +3866,7 @@ private:
     }
 
     void deleteSelectedOrder() {
-        if (masterRegistrationRunning) return;
+        if (masterRegistrationRunning || salesMailRunning) return;
         const int repoIndex = selectedOrderRepoIndex();
         if (repoIndex < 0) return;
         if (confirmQuestion(this, "Slet ordre", "Er du sikker på, at du vil slette den valgte ordre?")) {
@@ -3975,7 +4107,7 @@ private:
 
 protected:
     void closeEvent(QCloseEvent* event) override {
-        if (masterRegistrationRunning) {
+        if (masterRegistrationRunning || salesMailRunning) {
             QMessageBox::information(this, "Salgsregistrering", "Vent, til registreringen i Chrome er afsluttet.");
             event->ignore();
             return;

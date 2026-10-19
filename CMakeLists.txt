@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(ProvisionTrackerV2 VERSION 2.0.0 LANGUAGES CXX)
+project(ProvisionTrackerV2 VERSION 2.0.1 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -40,6 +40,9 @@ endif()
 
 include(CTest)
 if(BUILD_TESTING)
+    add_executable(SalesMailTests tests/sales_mail_test.cpp)
+    target_link_libraries(SalesMailTests PRIVATE Qt6::Core)
+    add_test(NAME SalesMailTests COMMAND SalesMailTests)
     add_executable(OrderProductSelectionTests tests/order_product_selection_test.cpp)
     target_link_libraries(OrderProductSelectionTests PRIVATE Qt6::Core)
     add_test(NAME OrderProductSelectionTests COMMAND OrderProductSelectionTests)

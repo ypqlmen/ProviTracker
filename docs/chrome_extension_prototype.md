@@ -1,19 +1,19 @@
-# Salgsregistrering i Chrome – testversion 0.1.21
+# Salgsregistrering i Chrome – testversion 0.1.22
 
 Provi Tracker overfører nye salgsregistreringer gennem brugerens eksisterende Chrome-login. Ordrekøen bruger Chrome i stedet for en separat Microsoft-browser. Funktionen er endnu kun i testversionen; den offentlige opdateringskanal ændres ikke af Windows-prøvebygningen.
 
 ## Brugerens opsætning
 
-1. Installer den nye Windows-testversion. Åbn **Indstillinger → Salgsregistrering** i Provi Tracker.
+1. Installer den nye Windows-testversion. Åbn **Indstillinger → Masterark** i Provi Tracker.
 2. Gem sælgerinitialer og det direkte masterark-link med `sourcedoc`. Åbn dette masterark én gang i Chrome, og log ind.
-3. Vælg **Installer Chrome-udvidelse**. Følg programmets guide: åbn `chrome://extensions`, behold **Udviklertilstand** aktiveret, og vælg **Indlæs udpakket** med den mappesti, programmet kopierer. Det kræver ingen administratorinstallation. Hvis udvidelsen allerede er installeret, bruges samme mappe og samme udvidelses-ID. Kontrollér version **0.1.21** og adgang til Excel og scriptpanelet; Chrome kan bede om ny webstedsadgang ved denne opdatering.
+3. Vælg **Installer Chrome-udvidelse**. Følg programmets guide: åbn `chrome://extensions`, behold **Udviklertilstand** aktiveret, og vælg **Indlæs udpakket** med den mappesti, programmet kopierer. Det kræver ingen administratorinstallation. Hvis udvidelsen allerede er installeret, bruges samme mappe og samme udvidelses-ID. Kontrollér version **0.1.22** og adgang til Excel og scriptpanelet; Chrome kan bede om ny webstedsadgang ved denne opdatering.
 4. Gem det direkte link til masterarket i appen. Vælg **Forbind masterark → Opsæt automatisk i Chrome**.
 5. Følg trinene i dialogen. Udvidelsen genbruger eller opretter sit eget versionsbestemte `ProviTrackerAutoV4_…`-script, indsætter den medfølgende kode, læser hele koden tilbage, gemmer, genåbner og kontrollerer den igen. Eksisterende og ændrede scripts overskrives ikke. En skrivefri kørsel skal kvittere fra Excel, før appen melder klar.
 6. Slå **Registrer automatisk i masterarket** til, og gem indstillingerne.
 
 Opsætningsvinduet viser det aktuelle trin og eventuelle fejl direkte. Microsoft-login/MFA skal fortsat godkendes af brugeren. Ved blokeret Office Scripts stopper opsætningen med besked; en manuel reservevej findes i samme dialog.
 
-Udvidelsen bruger almindelige synlige felter og editorens tastatur-/kopi-/indsæt-hændelser. Den læser ikke systemets udklipsholder og kræver ingen nye Chrome-rettigheder. Et genforsøg genbruger det uændrede gemte script. Et afbrudt forløb med ufuldstændig kode kræver manuel kontrol; løsningen overskriver ikke koden automatisk.
+Udvidelsen bruger almindelige synlige felter og editorens tastatur-/kopi-/indsæt-hændelser. Den læser ikke systemets udklipsholder og anvender de eksisterende Excel-rettigheder. Den valgfrie mailfunktion kræver særskilt Outlook-adgang; se [mailguiden](sales_mail_trial.md). Et genforsøg genbruger det uændrede gemte script. Et afbrudt forløb med ufuldstændig kode kræver manuel kontrol; løsningen overskriver ikke koden automatisk.
 
 Chrome og Microsoft-login skal være aktive. Udvidelsen beskytter de verificerede masterark og sin Intramanager-fane mod Memory Saver og automatisk frysning med en dokumentbundet Web Lock. En allerede frossen masterark-fane skal åbnes én gang; en sovende Intramanager-fane genindlæses automatisk. Opsætning og salg kan foregå i en baggrundsfane; daglig MFA omgås ikke.
 
@@ -62,7 +62,7 @@ Den bekræftede konto gemmes i udvidelsens vedvarende lager. Fanen genfindes ved
 
 Menuaktivering husker det konkrete menupunkt på tværs af genoprettede DOM-elementer. Et ignoreret klik på Seneste scripts kan derfor efterfølges af fokuseret Enter, selv om Excel har erstattet knappen. Den udvidede isolerede prøve reproducerede fastlåsningen med den tidligere kode og passerer med den nye logik. Det er ikke i sig selv en bekræftelse af alle fejlsituationer i Microsofts autentificerede webapp.
 
-## Bekræftet Excel-rettelse i 0.1.21
+## Bekræftet Excel-rettelse i 0.1.22
 Den autentificerede Chromium-prøve reproducerede fastlåsningen i den lille menu under Få vist scripts: det synlige menupunkt overstyrer `visibility:hidden` på Excels portalforældre. Synlighed afgøres nu af selve kontrollens beregnede synlighed, mens `display:none`, `hidden` og `aria-hidden` stadig afvises. Det gælder både opsætning og almindelig registrering.
 
 Samme prøve afslørede, at scriptkort er `div` med rollen `article`, at navngivning kræver fulde fokus-/inputhændelser, og at Excels informationsdialog Tilknyttet script skal lukkes efter den nye kladdes gemning. Kun den kendte informationsdialog efter egen gemmehandling håndteres; øvrige dialoger godkendes ikke automatisk. Den medfølgende kode bruger Excels fire-mellemrumsformatering. Compiler-normaliseret JavaScript var identisk før/efter formateringen, og den fulde kodekontrol er uændret.

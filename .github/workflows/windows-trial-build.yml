@@ -3,7 +3,7 @@ name: Windows trial build
 on:
   workflow_dispatch:
   push:
-    branches: [main, codex/windows-trial-build, codex/release-1.6, codex/fix-autoupdate, codex/master-registration, codex/hotfix-remove-kvikoc]
+    branches: [main, codex/windows-trial-build, codex/release-1.6, codex/fix-autoupdate, codex/master-registration, codex/hotfix-remove-kvikoc, codex/sales-registration-mail]
     paths:
       - '.github/workflows/windows-trial-build.yml'
       - 'updater_script.h'
@@ -67,6 +67,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Excel V4 active worksheet tests failed' }
           node tests/excel_sales_registration_v3_test.cjs
           if ($LASTEXITCODE -ne 0) { throw 'Excel V3 registration tests failed' }
+          node tests/chrome_outlook_test.mjs
+          if ($LASTEXITCODE -ne 0) { throw 'Chrome Outlook mail tests failed' }
           node tests/chrome_intramanager_test.mjs
           if ($LASTEXITCODE -ne 0) { throw 'Chrome Intramanager tests failed' }
           node tests/chrome_sales_test.mjs
@@ -218,6 +220,8 @@ jobs:
       - name: Verify background Chrome payroll reader
         run: |
           $env:PLAYWRIGHT_BROWSERS_PATH = Join-Path $env:RUNNER_TEMP 'provi-trial-stage/intramanager_worker/b'
+          python tests/chrome_outlook_integration.py
+          if ($LASTEXITCODE -ne 0) { throw 'Background Outlook mail fixture failed' }
           python tests/chrome_intramanager_integration.py
           if ($LASTEXITCODE -ne 0) { throw 'Actual Chrome payroll reader failed' }
       - name: Capture installed Midnight Grey interface with demo data

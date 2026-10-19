@@ -1,3 +1,4 @@
+import {startOutlook,outlookStatus,isOutlookOrigin,cleanupOutlook,selectOutlookTab} from './outlook.js';
 import {startIntramanager,selectIntramanagerTab} from './intramanager.js';
 import {workbookIdentity} from './identity.js';
 import {installStep} from './office_setup.js';
@@ -96,6 +97,18 @@ async function protectBackgroundTab(tab) {
   if(tab.status==='loading' || tab.discarded || tab.frozen)return;
   await chrome.scripting.executeScript({target:{tabId:tab.id,frameIds:[0]},func:keepDocumentAwake}).catch(()=>{});
 }
+async function protectOutlook(tab){
+  if(!isOutlookOrigin(originOf(tab.url)))return;
+  const key='outlookProtection.'+tab.id;
+  if(!(await chrome.storage.session.get(key))[key])await chrome.storage.session.set({[key]:{autoDiscardable:tab.autoDiscardable!==false}});
+  await protectBackgroundTab(tab);
+}
+async function releaseOutlook(id,tab){
+  const key='outlookProtection.'+id,saved=(await chrome.storage.session.get(key))[key];
+  if(!saved || (tab && isOutlookOrigin(originOf(tab.url))))return;
+  await chrome.storage.session.remove(key);
+  if(tab)await chrome.tabs.update(id,{autoDiscardable:saved.autoDiscardable}).catch(()=>{});
+}
 async function protectIntramanager(tab) {
   if(originOf(tab.url)!=='https://5r.intramanager.com')return;
   const key='intramanagerProtection.'+tab.id;
@@ -110,6 +123,7 @@ async function releaseIntramanager(id,tab) {
   if(tab)await chrome.tabs.update(id,{autoDiscardable:saved.autoDiscardable}).catch(()=>{});
 }
 async function intramanagerConnection() {
+  const mail=await outlookStatus();if(mail.bound && mail.permission){const tab=await selectOutlookTab();if(tab)await protectOutlook(tab);}
   const account=(await chrome.storage.local.get('intramanagerAccount')).intramanagerAccount;
   const bound=typeof account==='string' && account.trim().length>0;
   const state=value=>({connected:false,bound,state:value,...(bound?{profileName:account}:{})});
@@ -301,7 +315,7 @@ async function scanOffice(job) {
   finally { job.scanning=false; }
 }
 async function scan(job) {
-  if(job.type==='intramanager') return job.scan?.();
+  if(['intramanager','outlook'].includes(job.type)) return job.scan?.();
   if (pending!==job || job.finishing) return;
   try {
     const tab=await chrome.tabs.get(job.tabId);
@@ -337,16 +351,17 @@ async function finish(job, result) {
   job.finishing=true;
   clearInterval(job.poll);
   clearTimeout(job.timeout);
+  if(job.type==='outlook')await cleanupOutlook(job);
   const lastStage=job.phaseTimeline?.find(step=>step.phase===job.lastStage);if(lastStage)lastStage.lastMs=Math.max(0,Date.now()-job.startedAt);
   traceStep(job,'finished',{phase:job.phase,outcome:result.success?'result':'error',locked:job.scanning===true,inflight:job.inflight || 0});
   if(job.type==='install' || job.hadScriptUpdate){result.diagnostics={...diagnosticReport({...job,type:'install'},loadedVersion),scriptUpdated:job.scriptUpdated===true};chrome.storage.local.set({lastSetup:result.diagnostics}).catch(()=>{});}
-  if(!result.success && job.type!=='intramanager') chrome.storage.local.set({lastFailure:diagnosticReport(job,loadedVersion)}).catch(()=>{});
+  if(!result.success && !['intramanager','outlook'].includes(job.type)) chrome.storage.local.set({lastFailure:diagnosticReport(job,loadedVersion)}).catch(()=>{});
   if(job.type==='intramanager' && result.success && result.profileName){
     try{await chrome.storage.local.set({intramanagerAccount:result.profileName});}
     catch{result={success:false,error:'Chrome kunne ikke gemme kontotilknytningen. Prøv forbindelsen igen.'};}
   }
   pending = null;
-  status = result.success ? (job.type==='intramanager' ? 'Intramanager er opdateret.' : job.type==='probe' ? 'Forbindelsen til masterarket virker.' : job.type==='install' ? 'Masterarket er opsat og kontrolleret uden at registrere salg.' : 'Excel har bekræftet registreringen.') : result.error;
+  status = result.success ? (job.type==='outlook' ? (job.operation==='connect'?'Outlook er tilknyttet.':'Outlook har bekræftet afsendelsen.') : job.type==='intramanager' ? 'Intramanager er opdateret.' : job.type==='probe' ? 'Forbindelsen til masterarket virker.' : job.type==='install' ? 'Masterarket er opsat og kontrolleret uden at registrere salg.' : 'Excel har bekræftet registreringen.') : result.error;
   port?.postMessage({type:'result', requestId:job.requestId, worksheetName:job.registration?.worksheetName, extensionVersion:loadedVersion, ...result});
   reloadWhenIdle();
 }
@@ -369,6 +384,12 @@ function connect() {
       return;
     }
     if(pending && message.requestId && message.requestId!==pending.requestId && pending.expiresAt && pending.expiresAt*1000<Date.now())finish(pending,{success:false,error:'Den forrige Chrome-opgave udløb. Forbindelsen er frigivet.'});
+    if(message.type==='outlook' && !pending){
+      const job=pending={...message,startedAt:Date.now()};
+      try{await startOutlook(job,finish,()=>pending===job,{protectTab:protectOutlook});}
+      catch{finish(job,{success:false,status:'mail-uncertain',error:'Outlook-forbindelsen blev afbrudt. Kontrollér Sendt post før genforsøg.'});}
+      return;
+    }
     if(message.type==='intramanager' && !pending) {
       const job=pending={...message,startedAt:Date.now(),trace:[]};
       try {await startIntramanager(job,finish,()=>pending===job,{protectTab:protectIntramanager});} catch {finish(job,{success:false,error:'Chrome-forbindelsen til Intramanager kunne ikke starte.'});}
@@ -422,8 +443,17 @@ function connect() {
   poll();
 }
 chrome.runtime.onMessage.addListener((message, sender, reply) => {
-  if(message?.type==='intramanager-status' && (!sender.tab || sender.url===chrome.runtime.getURL('popup.html'))){intramanagerConnection().then(reply);return true;}
-  if (message?.type === 'status' && !sender.tab) { reply({status,extensionVersion:loadedVersion}); connect(); return; }
+  const ownPopup=!sender.tab || sender.url?.split('#')[0]===chrome.runtime.getURL('popup.html');
+  if(message?.type==='outlook-status' && ownPopup){outlookStatus().then(reply);return true;}
+  if(message?.type==='outlook-connect' && ownPopup){
+    if(pending){reply({started:pending.type==='outlook' && pending.operation==='connect'});return;}
+    const job=pending={type:'outlook',operation:'connect',requestId:crypto.randomUUID(),expiresAt:Date.now()/1000+660};
+    startOutlook(job,finish,()=>pending===job,{protectTab:protectOutlook}).catch(()=>finish(job,{success:false,error:'Outlook kunne ikke forbindes.'}));
+    reply({started:true});return;
+  }
+
+  if(message?.type==='intramanager-status' && ownPopup){intramanagerConnection().then(reply);return true;}
+  if (message?.type === 'status' && ownPopup) { reply({status,extensionVersion:loadedVersion}); connect(); return; }
   const job = pending;
   if (message?.type !== 'probe-result' || !job || job.connected || sender.tab?.id !== job.tabId ||
       message.requestId !== job.requestId || workbookIdentity(sender.tab.url) !== job.identity) return;
@@ -432,15 +462,17 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
   confirmWorkbook(job,message.sheet);
 });
 chrome.tabs.onUpdated.addListener((id, change, tab) => {
-  if(change.url){releaseWorkbook(id,tab).catch(()=>{});releaseIntramanager(id,tab).catch(()=>{});}
+  if(change.url){releaseWorkbook(id,tab).catch(()=>{});releaseIntramanager(id,tab).catch(()=>{});releaseOutlook(id,tab).catch(()=>{});}
   if(change.status==='complete'){
     chrome.storage.session.get(protectionKey(id)).then(saved=>{if(saved[protectionKey(id)]?.identity===workbookIdentity(tab.url))protectWorkbook(tab,workbookIdentity(tab.url)).catch(()=>{});});
+    chrome.storage.session.get('outlookTab').then(saved=>{if(saved.outlookTab===id)protectOutlook(tab).catch(()=>{});});
     chrome.storage.session.get('intramanagerTab').then(saved=>{if(saved.intramanagerTab===id)protectIntramanager(tab).catch(()=>{});});
   }
   if (pending?.tabId===id && (change.discarded || change.frozen)) scan(pending);
 });
 chrome.tabs.onRemoved.addListener(id => {
-  releaseWorkbook(id,null).catch(()=>{});releaseIntramanager(id,null).catch(()=>{});
+  releaseWorkbook(id,null).catch(()=>{});releaseIntramanager(id,null).catch(()=>{});releaseOutlook(id,null).catch(()=>{});
+  if(pending?.tabId===id && pending.type==='outlook'){finish(pending,{success:false,status:pending.armed?'mail-uncertain':'mail-not-sent',notSent:!pending.armed,error:'Outlook-fanen blev lukket. Kontrollér mailens status før genforsøg.'});return;}
   if (pending?.tabId===id) finish(pending,{success:false,error:pending.type==='intramanager'?'Intramanager-fanen blev lukket. Prøv forbindelsen igen.':'Masterarket blev lukket. Åbn det igen, og prøv fra Ordrer.'});
 });
 setInterval(poll, 3000);
