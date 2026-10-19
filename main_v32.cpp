@@ -29,8 +29,8 @@
 #include "updater_script.h"
 #include "sales_registration.h"
 
-static constexpr const char* APP_VERSION = "1.6.2";
-static constexpr int APP_BUILD_VERSION = 10602;
+static constexpr const char* APP_VERSION = "2.0.0";
+static constexpr int APP_BUILD_VERSION = 20000;
 static constexpr const char* UPDATE_APPCAST_URL = "https://raw.githubusercontent.com/ypqlmen/ProviTracker/main/appcast.xml";
 
 static QString psSingleQuoted(QString value) {
@@ -1651,7 +1651,7 @@ private:
             const auto document=QJsonDocument::fromJson(process->readAllStandardOutput());
             done(document.isObject()?document.object():QJsonObject{{"success",false},{"error","Chrome returnerede ikke et gyldigt svar fra Intramanager."}});process->deleteLater();
         });
-        connect(process,&QProcess::errorOccurred,this,[process,done](QProcess::ProcessError error){if(error==QProcess::FailedToStart){done({{"success",false},{"error","Chrome-forbindelsen kunne ikke starte. Geninstaller trial-versionen."}});process->deleteLater();}});
+        connect(process,&QProcess::errorOccurred,this,[process,done](QProcess::ProcessError error){if(error==QProcess::FailedToStart){done({{"success",false},{"error","Chrome-forbindelsen kunne ikke starte. Geninstaller Provi Tracker."}});process->deleteLater();}});
         QTimer::singleShot(95000,process,[process](){if(process->state()!=QProcess::NotRunning)process->kill();});
         process->start(intramanagerWorkerPath(),{"--stdin-json"});
     }
@@ -2566,7 +2566,7 @@ private:
         for(const auto& link:links){new QListWidgetItem(premiumIcon(link.second),link.first,navigation);}
         side->addWidget(navigation,1);side->addWidget(premiumDivider());
         activeSalespersonLabel=premiumLabel("","cardTitle");activeSalespersonLabel->setWordWrap(true);side->addSpacing(8);side->addWidget(activeSalespersonLabel);
-        side->addWidget(premiumLabel(QString("Provi Tracker · Test %1").arg(APP_VERSION),"caption"));root->addWidget(sidebar);
+        side->addWidget(premiumLabel(QString("Provi Tracker · %1").arg(APP_VERSION),"caption"));root->addWidget(sidebar);
         auto* content=new QVBoxLayout;content->setContentsMargins(30,27,30,22);content->setSpacing(24);
         auto* top=new QHBoxLayout;auto* titleBlock=new QVBoxLayout;titleBlock->setSpacing(6);auto* title=premiumLabel("Overblik","pageTitle");auto* subtitle=premiumLabel("","muted");subtitle->hide();titleBlock->addWidget(title);titleBlock->addWidget(subtitle);top->addLayout(titleBlock);top->addStretch();
         auto* date=premiumLabel(QLocale(QLocale::Danish).toString(QDate::currentDate(),"d. MMMM yyyy"),"muted");top->addWidget(date);top->addSpacing(15);
@@ -2866,7 +2866,7 @@ private:
                 if (error != QProcess::FailedToStart) return;
                 installChromeBtn->setEnabled(true);
                 installer->deleteLater();
-                QMessageBox::warning(this, "Chrome-udvidelse", "Hjælperen kunne ikke starte. Geninstaller den nyeste testversion.");
+                QMessageBox::warning(this, "Chrome-udvidelse", "Hjælperen kunne ikke starte. Geninstaller den nyeste version af Provi Tracker.");
             });
             QTimer::singleShot(30000, installer, [installer]() { if (installer->state() != QProcess::NotRunning) installer->kill(); });
             installer->start(intramanagerWorkerPath(), {"--stdin-json"});
@@ -2895,7 +2895,7 @@ private:
             });
             connect(probe, &QProcess::errorOccurred, this, [this, probe, probeChromeBtn](QProcess::ProcessError error) {
                 if (error != QProcess::FailedToStart) return;
-                salesRegistrationStatusLabel->setText("Chrome-hjælperen kunne ikke starte. Installer den nyeste testversion.");
+                salesRegistrationStatusLabel->setText("Chrome-hjælperen kunne ikke starte. Installer den nyeste version af Provi Tracker.");
                 probeChromeBtn->setEnabled(true);
                 probe->deleteLater();
             });
@@ -3551,7 +3551,7 @@ private:
         auto* close=new QPushButton("Luk");layout->addWidget(close);connect(close,&QPushButton::clicked,&dialog,&QDialog::reject);
         connect(start,&QPushButton::clicked,&dialog,[this](){if(masterSetupLog)masterSetupLog->clear();runMasterWorker(true,{},true);});
         connect(check,&QPushButton::clicked,&dialog,[this](){runMasterWorker(true);});
-        connect(copy,&QPushButton::clicked,&dialog,[this,&dialog](){QFile file(QFileInfo(intramanagerWorkerPath()).absolutePath()+"/_internal/chrome_extension/excel_online_sales_registration_v4.ts");if(!file.open(QIODevice::ReadOnly)){QMessageBox::warning(&dialog,"Excel-script","Scriptet mangler. Geninstaller den nyeste testversion.");return;}QApplication::clipboard()->setText(QString::fromUtf8(file.readAll()));});
+        connect(copy,&QPushButton::clicked,&dialog,[this,&dialog](){QFile file(QFileInfo(intramanagerWorkerPath()).absolutePath()+"/_internal/chrome_extension/excel_online_sales_registration_v4.ts");if(!file.open(QIODevice::ReadOnly)){QMessageBox::warning(&dialog,"Excel-script","Scriptet mangler. Geninstaller den nyeste version af Provi Tracker.");return;}QApplication::clipboard()->setText(QString::fromUtf8(file.readAll()));});
         auto* timer=new QTimer(&dialog);const auto update=[this,start,check,copy,close](){start->setEnabled(!masterRegistrationRunning);check->setEnabled(!masterRegistrationRunning);copy->setEnabled(!masterRegistrationRunning);close->setText(masterRegistrationRunning?"Skjul – opsætningen fortsætter":"Luk");};connect(timer,&QTimer::timeout,&dialog,update);timer->start(200);update();dialog.exec();masterSetupLog=nullptr;
     }
 

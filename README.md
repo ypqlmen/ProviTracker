@@ -2,6 +2,15 @@
 
 Qt Widgets desktop-app i C++ med Supabase cloud-login, per-user installation og GitHub auto-update.
 
+## Nyt i 2.0.0
+
+- Nyt Midnight Grey-design med ensartede kort, rapporter og produktvælger samt nyt programikon.
+- Én sælger pr. bruger, knyttet til brugerens cloud-login.
+- Fuld sygeløn og annulleringer fra Intramanager indgår i lønperioderne. Skatteprocent og fradrag indtastes manuelt.
+- Chrome-udvidelse 0.1.21 opsætter og opdaterer selv masterarkets Office Script, åbner det gemte masterark-link i baggrunden og kræver kvittering før et salg markeres som registreret.
+- Intramanager kan hentes gennem brugerens eksisterende Chrome-login, og forbindelsen bevares på tværs af sessioner og opdateringer.
+- Kontakter, PDF-eksport og manuelle backupkontroller er fjernet. Installation og opdatering foregår fortsat pr. Windows-bruger uden administratorrettigheder.
+
 ## Nyt i 1.6.2
 
 - Den tidligere opslagsside og dens browserintegration er fjernet for alle brugere.
@@ -21,15 +30,21 @@ Qt Widgets desktop-app i C++ med Supabase cloud-login, per-user installation og 
 - Ordrer med flere produkter i samme ordre
 - Redigering og sletning af ordrer
 - Dashboard med KPI'er, mål og provisionsstatus
-- Rapporter i appen og PDF-eksport
-- Backup/import
-- Automatisk månedsluk for tidligere måneder med snapshots + PDF
+- Rapporter i appen med samme lønkort som overblikket
+- Automatisk månedsluk for tidligere måneder med JSON-snapshots
 - Provisionsmotor med 5-trinslåsning for SIMO og 10-trinslåsning for VOICE
 - Intramanager-timer caches pr. rapportperiode
 - Sygelønsposter indgår i dashboardets lønkort og rapporter
-- Online salgsregistrering til Excel Online via Supabase cloud, mailflow og Power Automate
+- Salgsregistrering til Excel Online gennem Chrome-udvidelsen og brugerens masterark
 
-## Salgsregistrering via mailflow
+## Salgsregistrering via Chrome
+
+Version 2.0 bruger Chrome-udvidelsen til masterarket. Opsætning, scriptopdateringer, baggrundsåbning og genforsøg er beskrevet i [Chrome-guiden](docs/chrome_extension_prototype.md). Brugeren vælger sit masterark-link i appen og starter automatisk opsætning derfra. Microsoft-login og MFA godkendes fortsat af brugeren.
+
+## Tidligere mailflow (reference)
+
+Følgende beskriver den tidligere cloud-/mailflow-integration. Den er ikke den aktive registreringsvej i desktopversion 2.0.
+
 
 Programmet bruger ikke lokal Excel, lokal Outlook eller Azure/Entra-adgang for brugerne. Når salgsregistrering er slået til i Indstillinger, sender appen payloaden til Provi Tracker cloud. Supabase Edge Function `sales-registration-submit` lægger registreringen i en online kø og kan sende mailen videre til den flow-mailboks, der er gemt i indstillingerne.
 
