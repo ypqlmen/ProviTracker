@@ -1,8 +1,8 @@
 {
-  "version": "1.6.2",
-  "build_version": 10602,
-  "run_id": 37508299465,
-  "source_sha": "2911febc57929a931526ccd81c57a6215b854c82",
-  "artifact_id": 11432583569,
-  "release_notes": "- KvikOC-siden er fjernet helt for alle brugere.\n- KvikOC-opslag, browserintegration og håndtering af KvikOC-login er fjernet fra programmet.\n- Gamle lokale KvikOC-login, sessioner og fejlsøgningsfiler ryddes ved opstart.\n- KvikOC-login indlæses og uploades ikke længere sammen med brugerens cloud-data.\n- Installationen kræver ikke administratorrettigheder."
+  "version": "2.0.0",
+  "build_version": 20000,
+  "run_id": 39231187384,
+  "source_sha": "4ffa6843bbbb1691ba7ecd306f483d6726abfd78",
+  "artifact_id": 12177021942,
+  "release_notes": "- Nyt Midnight Grey-design med ensartede lønkort, rapporter, ordreside og produktvælger samt nyt programikon.\n- Automatisk salgsregistrering i masterarket gennem Chrome, inklusive opsætning og opdatering af Excel-scriptet.\n- Masterarket åbnes fra brugerens gemte link i baggrunden, og genforsøg genbruger salgets registreringsnummer for at undgå dubletter.\n- Intramanager-forbindelsen bevares på tværs af sessioner og opdateringer. Timer, fuld sygeløn og annulleringer indgår i de relevante lønperioder.\n- Én sælger pr. cloud-konto. Skatteprocent og fradrag indtastes manuelt.\n- Kontakter, PDF-eksport og manuelle backupkontroller er fjernet.\n- Installation og automatiske opdateringer kræver fortsat ikke administratorrettigheder."
 }
