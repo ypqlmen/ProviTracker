@@ -66,6 +66,10 @@ struct Order {
     QDateTime createdAt;
     QVector<OrderItem> items;
     QString note;
+    QJsonObject masterRegistration;
+    QString masterRegistrationState;
+    QString masterRegistrationError;
+    QString masterWorkbookUrl;
 };
 
 struct SickPayEntry {
@@ -114,6 +118,8 @@ struct IntramanagerHoursEntry {
     double phoneHours = 0.0;
     double sickHours = 0.0;
     double sickPay = 0.0;
+    double cancellations = 0.0;
+    int payrollSchema = 2;
     QString syncedAt;
 };
 
@@ -122,7 +128,7 @@ static bool intramanagerHoursEntryCompletesRange(
     const QDateTime& rangeEnd
     ) {
     const QDateTime synced = QDateTime::fromString(entry.syncedAt, Qt::ISODate);
-    return synced.isValid() && synced > rangeEnd;
+    return entry.payrollSchema >= 2 && synced.isValid() && synced > rangeEnd;
 }
 
 struct IntramanagerPunchState {
@@ -144,6 +150,8 @@ struct AppSettings {
     double hourlyRate = 0.0;
     double taxDeduction = 0.0;
     double taxRatePercent = 0.0;
+    bool intramanagerViaChrome = false;
+    QString intramanagerBrowserProfile;
     QString intramanagerUsername;
     bool intramanagerEnabled = false;
 
@@ -151,6 +159,8 @@ struct AppSettings {
     QString salesRegistrationWebhookUrl;
     QString salesRegistrationRecipient;
     bool salesRegistrationEnabled = false;
+    bool masterRegistrationEnabled = false;
+    QString masterWorkbookUrl;
 
     double lastIntramanagerHours = 0.0;
     QString lastIntramanagerPeriodFrom;
@@ -232,7 +242,11 @@ static QJsonObject toJson(const Order& o) {
         {"phoneNumber", o.phoneNumber},
         {"createdAt", o.createdAt.toString(Qt::ISODate)},
         {"items", items},
-        {"note", o.note}
+        {"note", o.note},
+        {"masterRegistration", o.masterRegistration},
+        {"masterRegistrationState", o.masterRegistrationState},
+        {"masterRegistrationError", o.masterRegistrationError},
+        {"masterWorkbookUrl", o.masterWorkbookUrl}
     };
 }
 
@@ -247,6 +261,10 @@ static Order fromOrderJson(const QJsonObject& o) {
     order.createdAt = QDateTime::fromString(o["createdAt"].toString(), Qt::ISODate);
     for (const auto& v : o["items"].toArray()) order.items.push_back(fromOrderItemJson(v.toObject()));
     order.note = o["note"].toString();
+    order.masterRegistration = o.value("masterRegistration").toObject();
+    order.masterRegistrationState = o.value("masterRegistrationState").toString();
+    order.masterRegistrationError = o.value("masterRegistrationError").toString();
+    order.masterWorkbookUrl = o.value("masterWorkbookUrl").toString();
     return order;
 }
 
@@ -337,7 +355,10 @@ static QJsonObject toJson(const IntramanagerHoursEntry& e) {
         {"hours", e.hours},
         {"phoneHours", e.phoneHours},
         {"sickHours", e.sickHours},
-        {"sickPay", e.sickPay},
+        {"sickPay", e.sickPay / 2.0},
+        {"sickPayFull", e.sickPay},
+        {"cancellations", e.cancellations},
+        {"payrollSchema", e.payrollSchema},
         {"syncedAt", e.syncedAt}
     };
 }
@@ -349,7 +370,10 @@ static IntramanagerHoursEntry fromIntramanagerHoursJson(const QJsonObject& o) {
     e.hours = o.value("hours").toDouble(0.0);
     e.phoneHours = o.value("phoneHours").toDouble(0.0);
     e.sickHours = o.value("sickHours").toDouble(0.0);
-    e.sickPay = o.value("sickPay").toDouble(0.0);
+    e.payrollSchema = o.value("payrollSchema").toInt(1);
+    e.sickPay = o.value("sickPayFull").toDouble(o.value("sickPay").toDouble(0.0) * 2.0);
+    e.cancellations = o.value("cancellations").toDouble(0.0);
+    // Keep the old sickPay field halved for older clients; sickPayFull is authoritative.
     e.syncedAt = o.value("syncedAt").toString();
     return e;
 }
@@ -393,12 +417,16 @@ static QJsonObject toJson(const AppSettings& s) {
         {"hourlyRate", s.hourlyRate},
         {"taxDeduction", s.taxDeduction},
         {"taxRatePercent", s.taxRatePercent},
+        {"intramanagerViaChrome", s.intramanagerViaChrome},
+        {"intramanagerBrowserProfile", s.intramanagerBrowserProfile},
         {"intramanagerUsername", s.intramanagerUsername},
         {"intramanagerEnabled", s.intramanagerEnabled},
         {"defaultSellerInitials", s.defaultSellerInitials},
         {"salesRegistrationWebhookUrl", s.salesRegistrationWebhookUrl},
         {"salesRegistrationRecipient", s.salesRegistrationRecipient},
         {"salesRegistrationEnabled", s.salesRegistrationEnabled},
+        {"masterRegistrationEnabled", s.masterRegistrationEnabled},
+        {"masterWorkbookUrl", s.masterWorkbookUrl},
         {"lastIntramanagerHours", s.lastIntramanagerHours},
         {"lastIntramanagerPeriodFrom", s.lastIntramanagerPeriodFrom},
         {"lastIntramanagerPeriodTo", s.lastIntramanagerPeriodTo},
@@ -417,6 +445,8 @@ static AppSettings fromSettingsJson(const QJsonObject& o) {
     s.hourlyRate = o.value("hourlyRate").toDouble(0.0);
     s.taxDeduction = o.value("taxDeduction").toDouble(0.0);
     s.taxRatePercent = o.value("taxRatePercent").toDouble(0.0);
+    s.intramanagerViaChrome = o.value("intramanagerViaChrome").toBool(false);
+    s.intramanagerBrowserProfile = o.value("intramanagerBrowserProfile").toString();
     s.intramanagerUsername = o.value("intramanagerUsername").toString();
     s.intramanagerEnabled = o.value("intramanagerEnabled").toBool(false);
     s.defaultSellerInitials = o.value("defaultSellerInitials").toString();
@@ -426,6 +456,8 @@ static AppSettings fromSettingsJson(const QJsonObject& o) {
     }
     s.salesRegistrationRecipient = o.value("salesRegistrationRecipient").toString();
     s.salesRegistrationEnabled = o.value("salesRegistrationEnabled").toBool(false);
+    s.masterRegistrationEnabled = o.value("masterRegistrationEnabled").toBool(false);
+    s.masterWorkbookUrl = o.value("masterWorkbookUrl").toString();
     s.lastIntramanagerHours = o.value("lastIntramanagerHours").toDouble(0.0);
     s.lastIntramanagerPeriodFrom = o.value("lastIntramanagerPeriodFrom").toString();
     s.lastIntramanagerPeriodTo = o.value("lastIntramanagerPeriodTo").toString();
