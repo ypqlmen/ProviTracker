@@ -15,7 +15,7 @@ from urllib.parse import urlparse, parse_qs
 
 HOST = 'dk.provitracker.masterark'
 LIMIT = 16384
-EXTENSION_FILES = ('manifest.json', 'background.js', 'diagnostics.js', 'intramanager.js', 'identity.js', 'probe.js', 'popup.html', 'popup.js', 'office_ui.js', 'office_setup.js', 'receipt.js', 'excel_online_sales_registration_v3.ts', 'excel_online_sales_registration_v4.ts')
+EXTENSION_FILES = ('manifest.json', 'background.js', 'diagnostics.js', 'intramanager.js', 'identity.js', 'probe.js', 'popup.html', 'popup.js', 'office_ui.js', 'office_setup.js', 'receipt.js', 'outlook.js', 'excel_online_sales_registration_v3.ts', 'excel_online_sales_registration_v4.ts')
 
 def version_tuple(value):
     parts = str(value).split('.')
@@ -93,16 +93,18 @@ def read_frame(stream):
     if not header: return None
     if len(header) != 4: raise ValueError('Truncated header')
     length, = struct.unpack('<I', header)
-    if not 0 < length <= LIMIT: raise ValueError('Invalid frame size')
+    if not 0 < length <= MAIL_LIMIT: raise ValueError('Invalid frame size')
     raw = stream.read(length)
     if len(raw) != length: raise ValueError('Truncated message')
     value = json.loads(raw)
     if not isinstance(value, dict): raise ValueError('Expected object')
+    if length>LIMIT and not (value.get('type')=='outlook' or value.get('type')=='result' and isinstance(value.get('mail'),dict)):raise ValueError('Invalid frame size')
     return value
 
 def write_frame(stream, value):
     raw = json.dumps(value, ensure_ascii=False).encode('utf-8')
-    if len(raw) > LIMIT: raise ValueError('Message too large')
+    limit=MAIL_LIMIT if value.get('type')=='outlook' or value.get('type')=='result' and isinstance(value.get('mail'),dict) else LIMIT
+    if len(raw) > limit: raise ValueError('Message too large')
     stream.write(struct.pack('<I', len(raw)) + raw)
     stream.flush()
 
@@ -226,6 +228,72 @@ def valid_intramanager_result(value, query):
         if key in ['hours','phoneHours','sickHours'] and n<0: return False
     return True
 
+
+MAIL_LIMIT = 524288
+
+def valid_email(value):
+    import re
+    return isinstance(value,str) and len(value)<=254 and bool(re.fullmatch(r"[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?\.[A-Za-z]{2,}",value))
+
+def valid_mail_table(html):
+    from html.parser import HTMLParser
+    import re
+    if not isinstance(html,str) or len(html)>120000: return False
+    class Table(HTMLParser):
+        def __init__(self):
+            super().__init__(convert_charrefs=True);self.ok=True;self.stack=[];self.rows=[];self.tables=0
+        def handle_starttag(self,tag,attrs):
+            if tag not in {'table','tbody','thead','tr','td','th','br'}: self.ok=False;return
+            if tag=='table':self.tables+=1
+            if tag=='tr':self.rows.append(0)
+            if tag in {'td','th'}:
+                if not self.stack or self.stack[-1]!='tr' or not self.rows:self.ok=False;return
+                self.rows[-1]+=1
+            for key,value in attrs:
+                if key=='style':
+                    for declaration in (value or '').split(';'):
+                        if not declaration.strip():continue
+                        name,sep,val=declaration.partition(':')
+                        if not sep or name.strip().lower() not in {'width','height','white-space','padding','text-align','vertical-align','background-color','color','font-family','font-size','font-weight','border-top','border-right','border-bottom','border-left','border-collapse','border-spacing'} or not re.fullmatch(r'[A-Za-z0-9#.,% _-]{1,100}',val.strip()):self.ok=False
+                elif key in {'colspan','rowspan'}:
+                    if not value or not value.isdigit() or not 1<=int(value)<=64:self.ok=False
+                else:self.ok=False
+            if tag!='br':self.stack.append(tag)
+        def handle_endtag(self,tag):
+            if not self.stack or self.stack.pop()!=tag:self.ok=False
+        def handle_data(self,data):
+            if data.strip() and not any(tag in {'td','th'} for tag in self.stack):self.ok=False
+        def handle_comment(self,data):self.ok=False
+    parser=Table()
+    try:parser.feed(html);parser.close()
+    except Exception:return False
+    return parser.ok and not parser.stack and parser.tables==1 and len(parser.rows)==3 and 6<=parser.rows[0]<=64 and len(set(parser.rows))==1
+
+def mail_content_hash(mail,sender):
+    text='\n'.join([mail['recipient'].lower(),sender.lower(),mail['registrationId'],mail['html'],mail['text']])
+    return hashlib.sha256(text.encode('utf-8')).hexdigest()
+
+def valid_outlook_request(query):
+    try:
+        uuid.UUID(query['requestId'])
+        if query.get('operation')=='connect':return True
+        if query.get('operation')!='send' or not valid_email(query.get('expectedSender')):return False
+        mail=query['mail'];uuid.UUID(mail['registrationId'])
+        return valid_email(mail.get('recipient')) and mail.get('subject')=='salgs reg' and valid_mail_table(mail.get('html')) and isinstance(mail.get('text'),str) and len(mail['text'])<=40000
+    except (KeyError,TypeError,ValueError):return False
+
+def valid_outlook_result(value,query):
+    if value.get('success') is not True or value.get('requestId')!=query.get('requestId') or not valid_email(value.get('senderEmail')):return False
+    if query.get('operation')=='connect':return value.get('status')=='outlook-connected'
+    mail=query['mail']
+    return value.get('status') in {'mail-sent','mail-already-sent'} and value.get('registrationId')==mail['registrationId'] and str(value.get('recipient','')).lower()==mail['recipient'].lower() and value['senderEmail'].lower()==query['expectedSender'].lower() and value.get('contentHash')==mail_content_hash(mail,query['expectedSender'])
+
+def valid_mail_snapshot(value,receipt,registration):
+    return isinstance(value,dict) and value.get('registrationId')==registration.get('registrationId') and value.get('row')==receipt.get('row') and value.get('worksheetId')==receipt.get('worksheetId') and valid_mail_table(value.get('html')) and isinstance(value.get('text'),str) and len(value['text'])<=40000
+
+def request_outlook(payload):
+    return request_chrome(payload,'outlook')
+
 def request_intramanager(payload):
     return request_chrome({**payload,'workbookUrl':'https://5r.intramanager.com/reports/history/'},'intramanager')
 
@@ -240,9 +308,9 @@ def extension_version_loaded(required, seconds=12):
 
 def request_chrome(payload, kind):
     url = payload.get('workbookUrl', '')
-    if kind!='intramanager' and not valid_workbook(url): raise ValueError('Gem et direkte link til masterarket med sourcedoc i adressen.')
+    if kind not in {'intramanager','outlook'} and not valid_workbook(url): raise ValueError('Gem et direkte link til masterarket med sourcedoc i adressen.')
     register_host()
-    if kind in {'install','register','intramanager'}: sync_installed_extension()
+    if kind in {'install','register','intramanager','outlook'}: sync_installed_extension()
     folder = root()
     request_id = str(uuid.uuid4())
     if kind in {'setup','install'} and payload.get('registration', {}).get('requestId'):
@@ -257,17 +325,21 @@ def request_chrome(payload, kind):
         request_id = registration['requestId']
         if registration.get('isTest') is True or not isinstance(registration.get('orderNumber'), str) or not registration['orderNumber'].strip():
             raise ValueError('Ugyldig salgsregistrering.')
-    duration = 420 if kind=='register' else 660 if kind=='install' else 60 if kind=='intramanager' else 35 if kind == 'probe' else 180
+    if kind=='outlook' and payload.get('requestId'):request_id=str(uuid.UUID(payload['requestId']))
+    duration = (660 if payload.get('operation')=='connect' else 150) if kind=='outlook' else 420 if kind=='register' else 660 if kind=='install' else 60 if kind=='intramanager' else 35 if kind == 'probe' else 180
     envelope = {'type': kind, 'requestId': request_id, 'workbookUrl': url, 'expiresAt': time.time()+duration}
-    if kind in {'install','register','intramanager'}: envelope['requiredExtensionVersion']=json.loads((extension_dir()/'manifest.json').read_text(encoding='utf-8'))['version']
-    if kind not in {'probe','intramanager'}: envelope['registration'] = registration
+    if kind in {'install','register','intramanager','outlook'}: envelope['requiredExtensionVersion']=json.loads((extension_dir()/'manifest.json').read_text(encoding='utf-8'))['version']
+    if kind not in {'probe','intramanager','outlook'}: envelope['registration'] = registration
     if kind=='intramanager':
         envelope.update({key:payload.get(key) for key in ['operation','fromDate','toDate','expectedProfile']})
         if not valid_intramanager_request(envelope): raise ValueError('Kontrollér kontonavn og periode for Intramanager i Chrome.')
-    if len(json.dumps(envelope, ensure_ascii=False).encode('utf-8')) > LIMIT:
+    if kind=='outlook':
+        envelope.update({key:payload.get(key) for key in ['operation','expectedSender','mail','reviewedRetry']})
+        if not valid_outlook_request(envelope):raise ValueError('Kontrollér Outlook-afsender, modtager og mailudsnit.')
+    if len(json.dumps(envelope, ensure_ascii=False).encode('utf-8')) > (MAIL_LIMIT if kind=='outlook' else LIMIT):
         raise ValueError('Salgsregistreringen er for lang til Chrome. Forkort bemærkningerne og prøv igen.')
-    if kind in {'install','register','intramanager'} and not extension_version_loaded(envelope['requiredExtensionVersion']):
-        return {'success':False,'status':'chrome-update-required','requestId':request_id,'error':'Afventer den opdaterede Chrome-udvidelse. Åbn Chrome og klik på Provi Tracker-udvidelsen. Prøv hentningen igen, når den nye version er klar.' if kind=='intramanager' else 'Afventer den opdaterede Chrome-udvidelse. Åbn Chrome og klik på Provi Tracker-udvidelsen. Salget afventer, indtil den nye version er klar.'}
+    if kind in {'install','register','intramanager','outlook'} and not extension_version_loaded(envelope['requiredExtensionVersion']):
+        return {'success':False,'status':'chrome-update-required','requestId':request_id,**({'notSent':True} if kind=='outlook' else {}),'error':'Afventer den opdaterede Chrome-udvidelse. Åbn Chrome og klik på Provi Tracker-udvidelsen. Prøv hentningen igen, når den nye version er klar.' if kind=='intramanager' else 'Afventer den opdaterede Chrome-udvidelse. Åbn Chrome og klik på Provi Tracker-udvidelsen. Salget afventer, indtil den nye version er klar.'}
     request = folder / 'request.json'
     response = folder / 'response.json'
     with update_lock():
@@ -286,7 +358,7 @@ def request_chrome(payload, kind):
                     print('PROVITRACKER_PROGRESS:'+json.dumps({'phase':phase}),file=sys.stderr,flush=True)
             result = read_json(response)
             if result.get('requestId') == request_id:
-                if kind=='probe' or result.get('success') is not True or (valid_intramanager_result(result,envelope) if kind=='intramanager' else valid_receipt(result, registration)): return result
+                if kind=='probe' or result.get('success') is not True or (valid_outlook_result(result,envelope) if kind=='outlook' else valid_intramanager_result(result,envelope) if kind=='intramanager' else valid_receipt(result, registration)): return result
                 return {'success':False,'error':'Excel returnerede en forkert kvittering. Kontrollér salget før genforsøg.'}
             time.sleep(.2)
         return {'success':False, 'error':'Chrome svarede ikke. Åbn Chrome og masterarket, og klik på Provi Tracker-udvidelsen. Prøv derefter igen.'}
@@ -332,14 +404,18 @@ def native_main(origin):
                 if current_version < version_tuple(request['requiredExtensionVersion']):
                     write_frame(sys.stdout.buffer,{'type':'reload-extension','version':request['requiredExtensionVersion']})
                     continue
-            if live and request.get('requestId') != last_id and (valid_intramanager_request(request) if request.get('type')=='intramanager' else valid_workbook(request.get('workbookUrl', ''))):
+            if live and request.get('requestId') != last_id and (valid_outlook_request(request) if request.get('type')=='outlook' else valid_intramanager_request(request) if request.get('type')=='intramanager' else valid_workbook(request.get('workbookUrl', ''))):
                 last_id = request['requestId']
                 write_frame(sys.stdout.buffer, request)
         elif message.get('type') == 'progress' and live and request.get('type') in {'install','register'} and message.get('requestId')==last_id==request.get('requestId'):
             if message.get('phase') in SETUP_PHASES:
                 atomic_json(root() / 'progress.json', {'requestId':last_id,'phase':message['phase']})
         elif message.get('type') == 'result' and live and message.get('requestId') == last_id == request.get('requestId'):
-            if request.get('type')=='intramanager':
+            if request.get('type')=='outlook':
+                success=valid_outlook_result(message,request)
+                result={key:message.get(key) for key in ['senderEmail','registrationId','recipient','contentHash','status']}
+                result.update({'requestId':last_id,'success':success,'notSent':message.get('notSent') is True})
+            elif request.get('type')=='intramanager':
                 success=valid_intramanager_result(message,request)
                 result={key:message.get(key) for key in ['profileName','periodFrom','periodTo','payrollSchema','hours','phoneHours','sickHours','sickPay','cancellations']}
                 result.update({'requestId':last_id,'success':success})
@@ -351,6 +427,9 @@ def native_main(origin):
                 success = valid_receipt(message, request.get('registration', {}))
                 result = {key:message.get(key) for key in ['requestId','scriptVersion','registrationId','orderNumber','row','status','worksheetName','worksheetId']}
                 result['success'] = success
+                if success and request.get('registration',{}).get('includeMail') is True:
+                    if valid_mail_snapshot(message.get('mail'),message,request['registration']):result['mail']=message['mail']
+                    else:result['mailError']='Salget er registreret, men mailudsnittet kunne ikke bekræftes. Prøv mailen igen.'
             if request.get('type') in {'install','register'} and isinstance(message.get('diagnostics'),dict): result['diagnostics']=safe_setup_report(message.get('diagnostics'))
             result['background'] = message.get('background') is True
             if not success: result['error'] = str(message.get('error', 'Excel bekræftede ikke salget. Kontrollér masterarket før genforsøg.'))[:500]

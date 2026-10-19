@@ -84,3 +84,26 @@ const legacy={...ctx};vm.createContext(legacy);vm.runInContext(stripTypeScriptTy
 f=fixture(headers,'Ark1');legacy.main(f.workbook,JSON.stringify(payload));assert.equal(run(f,{...payload,worksheetName:'Ark1'}).status,'already_registered');
 f.addSaleSheet('Other');f.select('Other');const legacyBefore=f.events.length;assert.throws(()=>run(f,{...payload,worksheetName:'Other'}),/anden arkfane/);assert.equal(f.events.length,legacyBefore);
 console.log('V4: active worksheet, layout validation, worksheet switch/rename, V3 journal compatibility, preview-first, archive, month/year rollover, styles, recovery and catalog checks passed.');
+
+// Mail uses the two heading rows and the verified archive of this registration.
+ctx.ExcelScript.BorderIndex={edgeTop:'top',edgeRight:'right',edgeBottom:'bottom',edgeLeft:'left'};
+function mailFormats(f){
+ const sheet=f.sheets['Salg ÆØÅ'],base=sheet.getRangeByIndexes;
+ sheet.getRangeByIndexes=(r,c,h,w)=>({...base(r,c,h,w),getFormat:()=>({
+  getRowHeight:()=>r===1?144:16,getColumnWidth:()=>c===4?180:48,getHorizontalAlignment:()=>r===1?"Center":"General",getVerticalAlignment:()=>"Center",
+  getFill:()=>({getColor:()=>r===1?'#92D050':'#FFFFFF'}),
+  getFont:()=>({getName:()=> 'Aptos',getColor:()=> '#000000',getSize:()=>12,getBold:()=>r===0}),
+  getRangeBorder:()=>({getStyle:()=> 'Continuous',getColor:()=> '#000000'})
+ })});return f;
+}
+f=mailFormats(fixture());
+let mailed=run(f,{...payload,includeMail:true,companyName:'A < B & "quoted"'});
+assert.equal(mailed.mail.registrationId,payload.registrationId);assert.equal(mailed.mail.row,123);
+assert.equal((mailed.mail.html.match(/<tr>/g)||[]).length,3);assert.equal((mailed.mail.html.match(/<td /g)||[]).length,headers.length*3);
+assert.match(mailed.mail.html,/A &lt; B &amp; &quot;quoted&quot;/);assert.match(mailed.mail.html,/background-color:#92D050/);assert.match(mailed.mail.html,/Business GO 25 GB 36 mdr\./);
+run(f,{...payload,registrationId:uid(70),companyName:'A LATER SALE'});
+mailed=run(f,{...payload,includeMail:true,companyName:'A < B & "quoted"'});
+assert.equal(mailed.status,'already_registered');assert(!mailed.mail.html.includes('A LATER SALE'));assert.equal(f.rows.length,124);
+f=fixture();mailed=run(f,{...payload,includeMail:true});assert.equal(mailed.status,'registered');assert.equal(mailed.mail,undefined);assert.match(mailed.mailError,/mailudsnittet/);
+f=mailFormats(fixture());mailed=run(f,{isTest:true,includeMail:true});assert.equal(mailed.mail,undefined);assert.equal(f.events.length,0);
+console.log('Mail snapshot: exact heading/sale rows, HTML escaping, colours, original archive on retry and independent formatting failure passed.');

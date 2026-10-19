@@ -5,9 +5,64 @@ type SalesRegistrationItem = { key: string; productName?: string; quantity: numb
 type SalesRegistrationPayload = {
     registrationId?: string; requestId?: string; worksheetName?: string; isTest?: boolean; date?: string; sellerInitials?: string; orderNumber?: string;
     cvrNumber?: string; companyName?: string; phoneNumber?: string;
-    note?: string; items?: SalesRegistrationItem[];
+    note?: string; items?: SalesRegistrationItem[]; includeMail?: boolean;
 };
 type Cell = string | number | boolean;
+type SaleMailSnapshot = { registrationId: string; worksheetId: string; row: number; html: string; text: string };
+type SaleReceipt = { success: boolean; status: string; row: number; orderNumber: string; scriptVersion: number; registrationId: string; worksheetName: string; worksheetId: string; requestId?: string; mail?: SaleMailSnapshot; mailError?: string };
+
+// Copy the two heading rows and this registration's verified archive row.
+// A retry must never mail the preview of a later sale from row 3.
+function saleMailSnapshot(sheet: ExcelScript.Worksheet, archiveRow: number, expected: Cell[], registrationId: string): SaleMailSnapshot {
+    const count = expected.length;
+    const sale = sheet.getRangeByIndexes(archiveRow, 0, 1, count);
+    const values = sale.getValues()[0];
+    if (!expected.every((v, c) => String(v) === String(values[c] ?? ""))) throw new Error("Arkivrækken er ændret. Kontrollér salget før mailen sendes.");
+    const headingRange = sheet.getRangeByIndexes(0, 0, 2, count);
+    const headings = headingRange.getTexts();
+    const headingValues = headingRange.getValues();
+    const rawValues = [headingValues[0], headingValues[1], expected];
+    const texts = [headings[0], headings[1], sale.getTexts()[0]];
+    const escape = (v: string): string => v.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;").replace(/\r?\n/g, "<br>");
+    const color = (v: string, fallback: string): string => /^#?[0-9a-f]{6}$/i.test(v || "") ? "#" + v.replace(/^#/, "") : fallback;
+    const bounded = (v: number, fallback: number, max: number): number => Number.isFinite(v) && v > 0 ? Math.min(v, max) : fallback;
+    const rows: string[] = [];
+    for (let r = 0; r < 3; r++) {
+        const cells: string[] = [];
+        const actualRow = r < 2 ? r : archiveRow;
+        const height = bounded(sheet.getRangeByIndexes(actualRow, 0, 1, 1).getFormat().getRowHeight(), 16, 400);
+        for (let c = 0; c < count; c++) {
+            const range = sheet.getRangeByIndexes(actualRow, c, 1, 1);
+            const format = range.getFormat();
+            const font = format.getFont();
+            const name = /^[a-z0-9 _-]{1,80}$/i.test(font.getName() || "") ? font.getName() : "Calibri";
+            const fill = color(format.getFill().getColor(), "transparent");
+            const foreground = color(font.getColor(), "#000000");
+            const width = bounded(format.getColumnWidth(), 48, 800);
+            const size = bounded(font.getSize(), 11, 40);
+            const horizontal = String(format.getHorizontalAlignment()).toLowerCase();
+            const align = horizontal === "center" || horizontal === "centeracrossselection" ? "center" : horizontal === "right" ? "right" : horizontal === "left" ? "left" : typeof rawValues[r][c] === "number" ? "right" : "left";
+            const vertical = String(format.getVerticalAlignment()).toLowerCase();
+            const valign = vertical === "top" ? "top" : vertical === "bottom" ? "bottom" : "middle";
+            const borders: string[] = [];
+            const sides = [ExcelScript.BorderIndex.edgeTop, ExcelScript.BorderIndex.edgeRight, ExcelScript.BorderIndex.edgeBottom, ExcelScript.BorderIndex.edgeLeft];
+            const names = ["top", "right", "bottom", "left"];
+            for (let b = 0; b < sides.length; b++) {
+                const edge = format.getRangeBorder(sides[b]);
+                const style = String(edge.getStyle()).toLowerCase();
+                const line = style === "none" ? "none" : style.includes("dot") ? "dotted" : style.includes("dash") ? "dashed" : style === "double" ? "double" : "solid";
+                borders.push("border-" + names[b] + ":" + (line === "none" ? "none" : "0.75pt " + line + " " + color(edge.getColor(), "#000000")));
+            }
+            const css = "width:" + width + "pt;height:" + height + "pt;white-space:nowrap;padding:1px;text-align:" + align + ";vertical-align:" + valign + ";background-color:" + fill + ";color:" + foreground + ";font-family:" + name + ";font-size:" + size + "pt;font-weight:" + (font.getBold() ? "700" : "400") + ";" + borders.join(";");
+            cells.push('<td style="' + css + '">' + escape(texts[r][c] || "") + "</td>");
+        }
+        rows.push("<tr>" + cells.join("") + "</tr>");
+    }
+    const html = '<table style="border-collapse:collapse;border-spacing:0;font-family:Calibri;font-size:11pt"><tbody>' + rows.join("") + "</tbody></table>";
+    const text = texts.map(row => row.join("\t")).join("\n");
+    if (html.length > 120000 || text.length > 40000) throw new Error("Salget er for langt til mail. Kontrollér bemærkningerne.");
+    return { registrationId, worksheetId: sheet.getId(), row: archiveRow + 1, html, text };
+}
 
 function normalize(value: Cell | undefined): string {
     return String(value ?? "").toLowerCase().replace(/\s+/g, "").replace(/[.,+&/()-]/g, "");
@@ -145,6 +200,14 @@ function registerSale(workbook: ExcelScript.Workbook, payloadJson: string = '{"i
     const month = saleMonth(date);
     const registrationId = required(payload.registrationId, "Registreringsnummer");
     if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(registrationId)) throw new Error("Ugyldigt registreringsnummer.");
+    const complete = (status: string, archiveRow: number): string => {
+        const receipt = JSON.parse(result(status, archiveRow + 1, orderNumber, registrationId, worksheetName, worksheetId)) as SaleReceipt;
+        if (payload.includeMail === true) {
+            try { receipt.mail = saleMailSnapshot(sheet, archiveRow, row, registrationId); }
+            catch { receipt.mailError = "Salget er registreret, men mailudsnittet kunne ikke hentes. Kontrollér masterarket og prøv mailen igen."; }
+        }
+        return JSON.stringify(receipt);
+    };
     const fingerprint = JSON.stringify(row);
     if (fingerprint.length > 32767) throw new Error("Salgsregistreringen er for lang.");
     let ledger = workbook.getWorksheet("_ProviTrackerReg");
@@ -171,7 +234,7 @@ function registerSale(workbook: ExcelScript.Workbook, payloadJson: string = '{"i
         const existing = sheet.getRangeByIndexes(nextRow, startCol, 1, headers.length).getValues()[0];
         if (row.every((value, i) => String(value) === String(existing[i] ?? ""))) {
             ledger.getRangeByIndexes(ledgerRow, 3, 1, 1).setValues([["registered"]]);
-            return result("already_registered", nextRow + 1, orderNumber, registrationId, worksheetName, worksheetId);
+            return complete("already_registered", nextRow);
         }
         if (existing.some(value => String(value ?? "") !== "") || journal[ledgerRow][3] === "registered") throw new Error("Den reserverede salgsrække er ændret. Kontrollér masterarket før genforsøg.");
     } else {
@@ -226,12 +289,12 @@ function registerSale(workbook: ExcelScript.Workbook, payloadJson: string = '{"i
     const readBack = target.getValues()[0];
     if (!row.every((value, i) => String(value) === String(readBack[i]))) throw new Error("Excel kunne ikke bekræfte hele registreringen. Kontrollér OSE før genforsøg.");
     ledger.getRangeByIndexes(ledgerRow, 3, 1, 1).setValues([["registered"]]);
-    return result("registered", nextRow + 1, orderNumber, registrationId, worksheetName, worksheetId);
+    return complete("registered", nextRow);
 }
 
 function main(workbook: ExcelScript.Workbook, payloadJson: string = '{"isTest":true}'): string {
     const request = JSON.parse(payloadJson) as SalesRegistrationPayload;
-    const response = JSON.parse(registerSale(workbook, payloadJson)) as { success: boolean; status: string; row: number; orderNumber: string; scriptVersion: number; registrationId: string; requestId?: string };
+    const response = JSON.parse(registerSale(workbook, payloadJson)) as SaleReceipt;
     response.requestId = request.requestId || "";
     const encoded = JSON.stringify(response);
     console.log("PROVITRACKER_RESULT:" + encoded);

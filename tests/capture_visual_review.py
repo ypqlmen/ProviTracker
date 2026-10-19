@@ -16,6 +16,11 @@ def capture(app, output):
             'settings.json':{'activeSalespersonId':'demo','hourlyRate':102.91,'taxDeduction':4500,'taxRatePercent':38,
                 'intramanagerEnabled':False,
                 'intramanagerHoursCache':{'21-09-2026_20-10-2026':{'hours':110.5,'phoneHours':95,'sickHours':8.75,'sickPay':874.34,'sickPayFull':1748.68,'cancellations':-350,'payrollSchema':2,'syncedAt':'2026-10-17T12:00:00'}}}}
+        for i,order in enumerate(samples['orders.json']):
+            if i in (1,2,3):
+                order['salesMail']={'recipient':'salgsreg@example.com','senderEmail':'seller@example.com'}
+                order['salesMailState']={1:'sent',2:'uncertain',3:'pending'}[i]
+        samples['settings.json'].update({'salesMailRecipient':'salgsreg@example.com','salesMailSender':'seller@example.com'})
         for name,value in samples.items():(root/name).write_text(json.dumps(value),encoding='utf-8')
         env={**os.environ,'PROVI_DATA_DIR':data,'PROVI_VISUAL_REVIEW_DIR':str(output),'QT_QPA_PLATFORM':'offscreen'}
         if os.name=='nt':
@@ -27,14 +32,14 @@ def capture(app, output):
         subprocess.run([str(app.resolve())],env=env,check=True,timeout=30)
         images=list(output.glob('*.png'))
         expected={'01-dashboard.png','02-orders.png','03-reports.png','05-settings.png',
-            '06-new-order-dialog.png','08-settings-payroll.png','09-settings-intramanager.png','10-settings-masterark.png','11-settings-account.png','12-dashboard-compact.png','13-orders-empty.png','14-dashboard-small.png','15-new-order-compact.png','16-orders-filtered.png','17-login.png','18-report-details.png','19-report-compact.png','20-report-empty.png','21-product-picker.png','22-product-search.png','23-product-empty.png','24-product-compact.png','25-edit-order.png','26-orders-compact.png','27-orders-no-results.png','28-orders-status.png','29-master-setup.png','30-program-icon.png'}
+            '06-new-order-dialog.png','08-settings-payroll.png','09-settings-intramanager.png','10-settings-masterark.png','11-settings-account.png','12-dashboard-compact.png','13-orders-empty.png','14-dashboard-small.png','15-new-order-compact.png','16-orders-filtered.png','17-login.png','18-report-details.png','19-report-compact.png','20-report-empty.png','21-product-picker.png','22-product-search.png','23-product-empty.png','24-product-compact.png','25-edit-order.png','26-orders-compact.png','27-orders-no-results.png','28-orders-status.png','29-master-setup.png','30-program-icon.png','31-mail-settings.png','32-mail-settings-compact.png'}
         assert {p.name for p in images}==expected,[p.name for p in images]
         for image in images:
             data=image.read_bytes()
             assert len(data)>512 and data[:8]==b'\x89PNG\r\n\x1a\n',image.name
             width,height=struct.unpack('>II',data[16:24])
             assert width>=160 and height>=120,(image.name,width,height)
-        print('Twenty-eight premium interface views captured, including all settings pages, compact dashboard and empty orders. New-order save and edit preserve selected quantities and metadata. Retired navigation and diagnosis controls are absent; order status filters preserve selection safety.')
+        print('Thirty premium interface views captured, including all settings pages, compact dashboard and empty orders. New-order save and edit preserve selected quantities and metadata. Retired navigation and diagnosis controls are absent; order status filters preserve selection safety.')
 
 if __name__=='__main__':
     parser=argparse.ArgumentParser();parser.add_argument('--app',type=Path,required=True);parser.add_argument('--output',type=Path,required=True)

@@ -16,7 +16,7 @@ function background() {
   vm.runInNewContext(source, {
     workbookIdentity,traceStep,diagnosticReport,failureReason,URL,
     setInterval:()=>1,clearInterval:()=>{},setTimeout:fn=>{timers.push(fn);return 1},clearTimeout:()=>{},
-    chrome:{runtime:{getManifest:()=>({version}),reload:()=>calls.push('reload'),connectNative:()=>port,
+    chrome:{runtime:{getURL:path=>'chrome-extension://fixture/'+path,getManifest:()=>({version}),reload:()=>calls.push('reload'),connectNative:()=>port,
       onMessage:{addListener:fn=>runtime=fn},onStartup:event(),onInstalled:event()},
       storage:{local:{get:async key=>({[key]:typeof stored==='undefined'?undefined:stored[key]}),set:async data=>{}},session:{get:async()=>({}),set:async()=>{},remove:async()=>{}}},
     tabs:{onUpdated:event(),onRemoved:event(),update:async(id,value)=>{assert.equal(Object.keys(value).join(','),'autoDiscardable');},query:async()=>[{id:7,url}],get:async()=>({id:7,url,active:false}),sendMessage:async()=>{}},
