@@ -56,6 +56,11 @@ chrome.runtime.connectNative=()=>({postMessage:m=>{if(m.type==='result')fixtureR
    context.route('https://outlook.cloud.microsoft/**',lambda r:r.fulfill(content_type='text/html; charset=utf-8',body=PAGE))
    service=context.service_workers[0] if context.service_workers else context.wait_for_event('serviceworker')
    front=context.new_page();front.bring_to_front();book=None
+   ready_deadline=time.monotonic()+15
+   while not service.evaluate('typeof fixtureNative === "function"'):
+    if time.monotonic()>=ready_deadline:
+     raise AssertionError('Outlook fixture native handler did not initialize')
+    front.wait_for_timeout(100)
    def request(operation,mail=None,success=True):
     nonlocal book
     request_id=str(uuid.uuid4());service.evaluate('m=>fixtureNative(m)',{'type':'outlook','operation':operation,'requestId':request_id,'expectedSender':'seller@example.com',**({'mail':mail} if mail else {})})
