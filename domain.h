@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QtCore>
+#include <cmath>
 
 enum class CountMode {
     None,
@@ -105,6 +106,8 @@ struct BonusSettings {
         {300, 80.0}
     };
 
+    QMap<QDate, QVector<MonthlyRateTier>> monthlyRateSchedule; // Cloud-managed; omitted from client saves.
+
     int simoMinEligible = 5;
     double simoPayoutPerUnit = 200.0;
 
@@ -195,6 +198,9 @@ struct Metrics {
 
     double dayBonus = 0.0;
     double monthlyBonus = 0.0;
+    double monthlyRate = 0.0;
+    bool mixedMonthlyRates = false;
+    QDate monthlyRateDate;
     double simoBonus = 0.0;
     double voiceBonus = 0.0;
     double totalCommission = 0.0;
@@ -337,6 +343,29 @@ static QJsonObject toJson(const BonusSettings& b) {
         {"voicePayoutPerUnit", b.voicePayoutPerUnit},
         {"monthlyTargetPoints", b.monthlyTargetPoints}
     };
+}
+
+static QMap<QDate, QVector<MonthlyRateTier>> monthlyRateScheduleFromJson(const QJsonArray& entries) {
+    QMap<QDate, QVector<MonthlyRateTier>> schedule;
+    for (const auto& entry : entries) {
+        const auto change = entry.toObject();
+        const auto key = change.value("effectiveMonth").toString();
+        const auto date = QDate::fromString(key + "-01", Qt::ISODate);
+        if (!date.isValid() || date.toString("yyyy-MM") != key) continue;
+        QVector<MonthlyRateTier> tiers;
+        int previous = -1;
+        bool valid = true;
+        for (const auto& value : change.value("tiers").toArray()) {
+            const auto tier = value.toObject();
+            const int threshold = tier.value("threshold").toInt(-1);
+            const double rate = tier.value("ratePerPoint").toDouble(-1);
+            if (threshold <= previous || rate < 0 || !std::isfinite(rate)) { valid = false; break; }
+            tiers.push_back({threshold, rate});
+            previous = threshold;
+        }
+        if (valid && !tiers.isEmpty()) schedule.insert(date, tiers);
+    }
+    return schedule;
 }
 
 static BonusSettings fromBonusJson(const QJsonObject& o) {

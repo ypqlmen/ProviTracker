@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(ProvisionTrackerV2 VERSION 2.0.1 LANGUAGES CXX)
+project(ProvisionTrackerV2 VERSION 2.0.2 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -40,6 +40,9 @@ endif()
 
 include(CTest)
 if(BUILD_TESTING)
+    add_executable(MonthlyBonusScheduleTests tests/monthly_bonus_schedule_test.cpp)
+    target_link_libraries(MonthlyBonusScheduleTests PRIVATE Qt6::Core)
+    add_test(NAME MonthlyBonusScheduleTests COMMAND MonthlyBonusScheduleTests)
     add_executable(SalesMailTests tests/sales_mail_test.cpp)
     target_link_libraries(SalesMailTests PRIVATE Qt6::Core)
     add_test(NAME SalesMailTests COMMAND SalesMailTests)

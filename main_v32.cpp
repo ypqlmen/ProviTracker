@@ -29,8 +29,8 @@
 #include "updater_script.h"
 #include "sales_registration.h"
 
-static constexpr const char* APP_VERSION = "2.0.1";
-static constexpr int APP_BUILD_VERSION = 20001;
+static constexpr const char* APP_VERSION = "2.0.2";
+static constexpr int APP_BUILD_VERSION = 20002;
 static constexpr const char* UPDATE_APPCAST_URL = "https://raw.githubusercontent.com/ypqlmen/ProviTracker/main/appcast.xml";
 
 static QString psSingleQuoted(QString value) {
@@ -3362,7 +3362,7 @@ private:
         if (repo.settings.monthlySalesTarget > 0) {
             targetTs << "Du mangler " << missingSalesToTarget << " salg for at ramme månedens mål.\n";
         }
-        targetTs << nextMonthlyTierHint(mMonth.totalPoints, repo.settings.bonus);
+        targetTs << nextMonthlyTierHint(mMonth, repo.settings.bonus);
         if (targetSummaryLabel) targetSummaryLabel->setText(targetText);
 
         QString perfText;

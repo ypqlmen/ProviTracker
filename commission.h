@@ -12,9 +12,21 @@
 
 class CommissionEngine {
 public:
-    static double monthlyRatePerPoint(double points, const BonusSettings& b) {
+    static QDate monthlyRateEffectiveMonth(const BonusSettings& bonus, QDate date) {
+        auto it = bonus.monthlyRateSchedule.upperBound(date);
+        if (it == bonus.monthlyRateSchedule.cbegin()) return {};
+        return (--it).key();
+    }
+
+    static const QVector<MonthlyRateTier>& monthlyTiersForDate(const BonusSettings& bonus, QDate date) {
+        auto it = bonus.monthlyRateSchedule.upperBound(date);
+        if (it == bonus.monthlyRateSchedule.cbegin()) return bonus.monthlyRateTiers;
+        return (--it).value();
+    }
+
+    static double monthlyRatePerPoint(double points, const BonusSettings& b, QDate date) {
         double best = 0.0;
-        for (const auto& tier : b.monthlyRateTiers) {
+        for (const auto& tier : monthlyTiersForDate(b, date)) {
             if (points >= tier.threshold) best = tier.ratePerPoint;
         }
         return best;
@@ -73,7 +85,7 @@ public:
             if (order.salespersonId != salespersonId) continue;
             if (order.createdAt < from || order.createdAt > to) continue;
             m.totalOrders++;
-            const QString day = order.createdAt.date().toString("yyyy-MM-dd");
+            const QString day = order.createdAt.toLocalTime().date().toString("yyyy-MM-dd");
 
             for (const auto& item : order.items) {
                 if (!productMap.contains(item.productKey)) continue;
@@ -101,14 +113,35 @@ public:
                                           : m.totalPoints;
 
         m.dayBonus = dayBonusPoints * bonus.dayBonusPerPoint;
-        const double monthlyRate = monthlyRatePerPoint(m.totalPoints, bonus);
-        m.monthlyBonus = m.totalPoints * monthlyRate;
+        m.monthlyRateDate = from.toLocalTime().date();
+        m.mixedMonthlyRates = monthlyRateEffectiveMonth(bonus, m.monthlyRateDate)
+            != monthlyRateEffectiveMonth(bonus, to.toLocalTime().date());
+        QMap<QDate, double> ratesBySchedule;
+        if (m.mixedMonthlyRates) {
+            // Split a report that straddles a change so old points never receive the new rate.
+            QMap<QDate, double> pointsBySchedule;
+            for (auto it = m.pointsByDay.cbegin(); it != m.pointsByDay.cend(); ++it) {
+                const auto date = QDate::fromString(it.key(), Qt::ISODate);
+                pointsBySchedule[monthlyRateEffectiveMonth(bonus, date)] += it.value();
+            }
+            for (auto it = pointsBySchedule.cbegin(); it != pointsBySchedule.cend(); ++it) {
+                const double rate = monthlyRatePerPoint(it.value(), bonus, it.key());
+                ratesBySchedule.insert(it.key(), rate);
+                m.monthlyBonus += it.value() * rate;
+            }
+        } else {
+            m.monthlyRate = monthlyRatePerPoint(m.totalPoints, bonus, m.monthlyRateDate);
+            m.monthlyBonus = m.totalPoints * m.monthlyRate;
+        }
         m.simoBonus = lockedStepBonus(m.simoCount, bonus.simoMinEligible, 5, bonus.simoPayoutPerUnit);
         m.voiceBonus = lockedStepBonus(m.voiceCount, bonus.voiceMinEligible, 10, bonus.voicePayoutPerUnit);
         m.totalCommission = m.dayBonus + m.monthlyBonus + m.simoBonus + m.voiceBonus;
 
         for (auto it = m.pointsByDay.begin(); it != m.pointsByDay.end(); ++it) {
-            m.commissionByDay[it.key()] = it.value() * (bonus.dayBonusPerPoint + monthlyRate);
+            const auto date = QDate::fromString(it.key(), Qt::ISODate);
+            const double rate = m.mixedMonthlyRates
+                ? ratesBySchedule.value(monthlyRateEffectiveMonth(bonus, date)) : m.monthlyRate;
+            m.commissionByDay[it.key()] = it.value() * (bonus.dayBonusPerPoint + rate);
         }
 
         return m;
@@ -288,8 +321,10 @@ static double estimatedNetSalary(double grossSalary, double taxDeduction, double
     return estimateSalaryTax(grossSalary, taxDeduction, taxRatePercent).netSalary;
 }
 
-static QString nextMonthlyTierHint(double points, const BonusSettings& b) {
-    for (const auto& tier : b.monthlyRateTiers) {
+static QString nextMonthlyTierHint(const Metrics& metrics, const BonusSettings& b) {
+    if (metrics.mixedMonthlyRates) return "Perioden indeholder flere bonussatser";
+    const double points = metrics.totalPoints;
+    for (const auto& tier : CommissionEngine::monthlyTiersForDate(b, metrics.monthlyRateDate)) {
         if (points < tier.threshold) {
             return QString("Næste point-tier: %1 point (%2 kr/point), mangler %3 point")
                 .arg(tier.threshold)
