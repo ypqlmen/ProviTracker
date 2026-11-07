@@ -1,8 +1,8 @@
 {
-  "version": "2.0.0",
-  "build_version": 20000,
-  "run_id": 39231187384,
-  "source_sha": "4ffa6843bbbb1691ba7ecd306f483d6726abfd78",
-  "artifact_id": 12177021942,
-  "release_notes": "- Nyt Midnight Grey-design med ensartede lønkort, rapporter, ordreside og produktvælger samt nyt programikon.\n- Automatisk salgsregistrering i masterarket gennem Chrome, inklusive opsætning og opdatering af Excel-scriptet.\n- Masterarket åbnes fra brugerens gemte link i baggrunden, og genforsøg genbruger salgets registreringsnummer for at undgå dubletter.\n- Intramanager-forbindelsen bevares på tværs af sessioner og opdateringer. Timer, fuld sygeløn og annulleringer indgår i de relevante lønperioder.\n- Én sælger pr. cloud-konto. Skatteprocent og fradrag indtastes manuelt.\n- Kontakter, PDF-eksport og manuelle backupkontroller er fjernet.\n- Installation og automatiske opdateringer kræver fortsat ikke administratorrettigheder."
+  "version": "2.0.3",
+  "build_version": 20003,
+  "run_id": 42373901053,
+  "source_sha": "f20f2232ffea6f0c756d7a0602fac62c98d5e55d",
+  "artifact_id": 13575481152,
+  "release_notes": "- Månedsbonussen bruger nu den sats, der gjaldt i den måned, hvor pointene blev optjent.\n- Nye satser kan træde i kraft fra en bestemt måned, så tidligere måneder bevarer deres satser.\n- Lønperioder og tidspunktet for udbetaling af månedsbonus er uændrede."
 }
