@@ -1262,6 +1262,13 @@ def main():
         payload = read_stdin_json()
 
         args.action = payload.get("action", args.action)
+        if args.action == "chrome-outlook":
+            from chrome_bridge import request_outlook
+            try:
+                output(request_outlook(payload))
+            except Exception as exc:
+                output({"success":False,"notSent":False,"status":"mail-uncertain","error":str(exc)[:500]})
+            return
         if args.action == "chrome-intramanager":
             from chrome_bridge import request_intramanager
             try:

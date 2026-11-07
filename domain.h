@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QtCore>
+#include <cmath>
 
 enum class CountMode {
     None,
@@ -70,6 +71,9 @@ struct Order {
     QString masterRegistrationState;
     QString masterRegistrationError;
     QString masterWorkbookUrl;
+    QJsonObject salesMail;
+    QString salesMailState;
+    QString salesMailError;
 };
 
 struct SickPayEntry {
@@ -101,6 +105,8 @@ struct BonusSettings {
         {250, 70.0},
         {300, 80.0}
     };
+
+    QMap<QDate, QVector<MonthlyRateTier>> monthlyRateSchedule; // Cloud-managed; omitted from client saves.
 
     int simoMinEligible = 5;
     double simoPayoutPerUnit = 200.0;
@@ -159,6 +165,9 @@ struct AppSettings {
     QString salesRegistrationWebhookUrl;
     QString salesRegistrationRecipient;
     bool salesRegistrationEnabled = false;
+    bool salesMailEnabled = false;
+    QString salesMailRecipient;
+    QString salesMailSender;
     bool masterRegistrationEnabled = false;
     QString masterWorkbookUrl;
 
@@ -189,6 +198,9 @@ struct Metrics {
 
     double dayBonus = 0.0;
     double monthlyBonus = 0.0;
+    double monthlyRate = 0.0;
+    bool mixedMonthlyRates = false;
+    QDate monthlyRateDate;
     double simoBonus = 0.0;
     double voiceBonus = 0.0;
     double totalCommission = 0.0;
@@ -246,6 +258,9 @@ static QJsonObject toJson(const Order& o) {
         {"masterRegistration", o.masterRegistration},
         {"masterRegistrationState", o.masterRegistrationState},
         {"masterRegistrationError", o.masterRegistrationError},
+        {"salesMail", o.salesMail},
+        {"salesMailState", o.salesMailState},
+        {"salesMailError", o.salesMailError},
         {"masterWorkbookUrl", o.masterWorkbookUrl}
     };
 }
@@ -265,6 +280,9 @@ static Order fromOrderJson(const QJsonObject& o) {
     order.masterRegistrationState = o.value("masterRegistrationState").toString();
     order.masterRegistrationError = o.value("masterRegistrationError").toString();
     order.masterWorkbookUrl = o.value("masterWorkbookUrl").toString();
+    order.salesMail = o.value("salesMail").toObject();
+    order.salesMailState = o.value("salesMailState").toString();
+    order.salesMailError = o.value("salesMailError").toString();
     return order;
 }
 
@@ -325,6 +343,29 @@ static QJsonObject toJson(const BonusSettings& b) {
         {"voicePayoutPerUnit", b.voicePayoutPerUnit},
         {"monthlyTargetPoints", b.monthlyTargetPoints}
     };
+}
+
+static QMap<QDate, QVector<MonthlyRateTier>> monthlyRateScheduleFromJson(const QJsonArray& entries) {
+    QMap<QDate, QVector<MonthlyRateTier>> schedule;
+    for (const auto& entry : entries) {
+        const auto change = entry.toObject();
+        const auto key = change.value("effectiveMonth").toString();
+        const auto date = QDate::fromString(key + "-01", Qt::ISODate);
+        if (!date.isValid() || date.toString("yyyy-MM") != key) continue;
+        QVector<MonthlyRateTier> tiers;
+        int previous = -1;
+        bool valid = true;
+        for (const auto& value : change.value("tiers").toArray()) {
+            const auto tier = value.toObject();
+            const int threshold = tier.value("threshold").toInt(-1);
+            const double rate = tier.value("ratePerPoint").toDouble(-1);
+            if (threshold <= previous || rate < 0 || !std::isfinite(rate)) { valid = false; break; }
+            tiers.push_back({threshold, rate});
+            previous = threshold;
+        }
+        if (valid && !tiers.isEmpty()) schedule.insert(date, tiers);
+    }
+    return schedule;
 }
 
 static BonusSettings fromBonusJson(const QJsonObject& o) {
@@ -425,6 +466,9 @@ static QJsonObject toJson(const AppSettings& s) {
         {"salesRegistrationWebhookUrl", s.salesRegistrationWebhookUrl},
         {"salesRegistrationRecipient", s.salesRegistrationRecipient},
         {"salesRegistrationEnabled", s.salesRegistrationEnabled},
+        {"salesMailEnabled", s.salesMailEnabled},
+        {"salesMailRecipient", s.salesMailRecipient},
+        {"salesMailSender", s.salesMailSender},
         {"masterRegistrationEnabled", s.masterRegistrationEnabled},
         {"masterWorkbookUrl", s.masterWorkbookUrl},
         {"lastIntramanagerHours", s.lastIntramanagerHours},
@@ -456,6 +500,9 @@ static AppSettings fromSettingsJson(const QJsonObject& o) {
     }
     s.salesRegistrationRecipient = o.value("salesRegistrationRecipient").toString();
     s.salesRegistrationEnabled = o.value("salesRegistrationEnabled").toBool(false);
+    s.salesMailEnabled = o.value("salesMailEnabled").toBool(false);
+    s.salesMailRecipient = o.value("salesMailRecipient").toString();
+    s.salesMailSender = o.value("salesMailSender").toString();
     s.masterRegistrationEnabled = o.value("masterRegistrationEnabled").toBool(false);
     s.masterWorkbookUrl = o.value("masterWorkbookUrl").toString();
     s.lastIntramanagerHours = o.value("lastIntramanagerHours").toDouble(0.0);

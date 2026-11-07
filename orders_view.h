@@ -2,14 +2,15 @@
 #include "premium_ui.h"
 
 class OrderCardDelegate : public QStyledItemDelegate {
-    struct CardLayout { int productsHeight,noteHeight,height; };
+    struct CardLayout { int productsHeight,noteHeight,mailHeight,height; };
     static QFont textFont(int pixels,QFont::Weight weight=QFont::Normal){QFont font=qApp->font();font.setPixelSize(pixels);font.setWeight(weight);return font;}
     static CardLayout measure(const QVariantMap& data,int width){
         const int available=qMax(160,width-54);
         const int products=QFontMetrics(textFont(13)).boundingRect(QRect(0,0,available,20000),Qt::TextWordWrap,data.value("products").toString()).height();
         const QString note=data.value("note").toString();
         const int notes=note.isEmpty()?0:QFontMetrics(textFont(12)).boundingRect(QRect(0,0,available,20000),Qt::TextWordWrap,note).height()+12;
-        return {qMax(18,products),notes,96+qMax(18,products)+notes};
+        const int mail=data.value("mailStatus").toString().isEmpty()?0:28;
+        return {qMax(18,products),notes,mail,96+qMax(18,products)+notes+mail};
     }
 public:
     using QStyledItemDelegate::QStyledItemDelegate;
@@ -37,6 +38,12 @@ public:
         const auto layout=measure(data,option.rect.width());const int productTop=qRound(rect.top())+80;
         painter->setFont(textFont(13));painter->setPen(QColor("#D3DAE6"));painter->drawText(QRect(left,productTop,right-left,layout.productsHeight),Qt::TextWordWrap,data.value("products").toString());
         if(layout.noteHeight){painter->setFont(textFont(12));painter->setPen(QColor("#9AA7BB"));painter->drawText(QRect(left,productTop+layout.productsHeight+12,right-left,layout.noteHeight-12),Qt::TextWordWrap,data.value("note").toString());}
+        if(layout.mailHeight){
+            const QString state=data.value("mailState").toString();const QColor colour(state=="sent"?"#8BD8B4":(state=="error" || state=="uncertain" || state=="changed")?"#E9B67C":"#A6BDE4");
+            const int y=productTop+layout.productsHeight+layout.noteHeight+12;painter->setPen(Qt::NoPen);painter->setBrush(colour);painter->drawEllipse(QPointF(left+3,y+9),3,3);
+            painter->setPen(colour);painter->setFont(textFont(11,QFont::Medium));const QString mail=data.value("mailStatus").toString()+" · "+data.value("mailRecipient").toString();
+            painter->drawText(QRect(left+15,y,right-left-15,20),Qt::AlignVCenter,painter->fontMetrics().elidedText(mail,Qt::ElideRight,right-left-15));
+        }
         painter->restore();
     }
 };

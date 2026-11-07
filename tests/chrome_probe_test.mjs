@@ -25,7 +25,7 @@ vm.runInNewContext(fs.readFileSync('chrome_extension/background.js','utf8').repl
   setTimeout:fn=>{timers.push(fn);return fn},clearTimeout:()=>{},
   setInterval:fn=>{intervals.push(fn);return fn},clearInterval:()=>{},
   URL,
-  chrome:{runtime:{getManifest:()=>({version:'0.1.2'}),reload:()=>{},connectNative:()=>port,onMessage:{addListener:fn=>runtimeHandler=fn},onStartup:event(),onInstalled:event()},
+  chrome:{runtime:{getURL:path=>'chrome-extension://fixture/'+path,getManifest:()=>({version:'0.1.2'}),reload:()=>{},connectNative:()=>port,onMessage:{addListener:fn=>runtimeHandler=fn},onStartup:event(),onInstalled:event()},
     storage:{local:{get:async key=>({[key]:typeof stored==='undefined'?undefined:stored[key]}),set:async data=>{}},session:{get:async()=>({}),set:async()=>{},remove:async()=>{}}},
     tabs:{onUpdated:event(),onRemoved:event(),update:async(id,value)=>{assert.equal(Object.keys(value).join(','),'autoDiscardable');},query:async()=>[{id:7,url}],get:async()=>({id:7,url:currentUrl,active:false}),sendMessage:async(id,msg)=>probes.push(msg)},
     webNavigation:{getAllFrames:async()=>[{frameId:0,url}]},scripting:{executeScript:async()=>{}},
