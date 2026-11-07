@@ -80,12 +80,12 @@ public:
         const int activeDays=activeDayCount(metrics);const auto best=bestDayByPoints(metrics);
         const QStringList statValues={money(metrics.totalPoints),QString::number(metrics.salesCount),money(hours),money(activeDays?metrics.totalPoints/activeDays:0)};
         for(int i=0;i<statistics.size();++i)statistics[i]->setText(statValues[i]);
-        tierHint->setText(nextMonthlyTierHint(metrics.totalPoints,repo.settings.bonus));
+        tierHint->setText(nextMonthlyTierHint(metrics,repo.settings.bonus));
         bestDay->setText(best.first.isEmpty()?"Ingen salgsaktivitet i perioden":"Bedste salgsdag · "+QDate::fromString(best.first,"yyyy-MM-dd").toString("dd-MM-yyyy")+" · "+money(best.second)+" point");
         const QStringList payroll={hoursPeriod,money(repo.settings.hourlyRate)+" kr/t",salary.usesPaymentMonthRules?cash(salary.periodProvision):cash(salary.totalProvision),salary.usesPaymentMonthRules?cash(salary.delayedProvision):QString("—"),cash(repo.settings.taxDeduction),taxConfigured?money(repo.settings.taxRatePercent)+" %":QString("Ikke angivet"),cash(tax.amBidrag),taxConfigured?cash(tax.aTax):QString("—")};
         for(int i=0;i<payrollValues.size();++i)payrollValues[i]->setText(payroll[i]);
         const double target=repo.settings.bonus.monthlyTargetPoints,delta=metrics.totalPoints-target;
-        const QStringList bonuses={cash(metrics.dayBonus),cash(metrics.monthlyBonus),cash(metrics.simoBonus),cash(metrics.voiceBonus),money(CommissionEngine::monthlyRatePerPoint(metrics.totalPoints,repo.settings.bonus))+" kr/point",target>0?money(target)+" point":QString("Ikke angivet"),target>0?money(std::abs(delta))+(delta<0?" point tilbage":" point over mål"):QString("—"),repo.settings.monthlySalesTarget>0?QString::number(metrics.salesCount)+" / "+QString::number(repo.settings.monthlySalesTarget)+" salg":QString("Ikke angivet")};
+        const QStringList bonuses={cash(metrics.dayBonus),cash(metrics.monthlyBonus),cash(metrics.simoBonus),cash(metrics.voiceBonus),metrics.mixedMonthlyRates?QString("Flere satser"):money(metrics.monthlyRate)+" kr/point",target>0?money(target)+" point":QString("Ikke angivet"),target>0?money(std::abs(delta))+(delta<0?" point tilbage":" point over mål"):QString("—"),repo.settings.monthlySalesTarget>0?QString::number(metrics.salesCount)+" / "+QString::number(repo.settings.monthlySalesTarget)+" salg":QString("Ikke angivet")};
         for(int i=0;i<bonusValues.size();++i)bonusValues[i]->setText(bonuses[i]);
         products->setRowCount(metrics.quantityByProduct.size());int row=0;
         for(auto it=metrics.quantityByProduct.cbegin();it!=metrics.quantityByProduct.cend();++it,++row){setCell(products,row,0,it.key());setCell(products,row,1,QString::number(it.value()));setCell(products,row,2,money(metrics.pointsByProduct.value(it.key())));}

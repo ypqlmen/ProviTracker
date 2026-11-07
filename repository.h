@@ -131,6 +131,7 @@ public:
 
     void applyCloudPayload(const QJsonObject& payload, const QString& username) {
         settings = fromSettingsJson(payload.value("settings").toObject());
+        settings.bonus.monthlyRateSchedule = monthlyRateScheduleFromJson(payload.value("monthlyBonusSchedule").toArray());
         cloudSecrets = withoutRetiredIntegrationSecrets(payload.value("secrets").toObject());
 
         orders.clear();

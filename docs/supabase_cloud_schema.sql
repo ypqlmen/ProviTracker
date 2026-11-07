@@ -23,6 +23,11 @@ create table if not exists public.provi_user_data (
     updated_at timestamptz not null default now()
 );
 
+-- Managed by an administrator; client save RPCs only update their existing fields.
+alter table public.provi_user_data
+    add column if not exists monthly_bonus_schedule jsonb not null default '[]'::jsonb
+        check (jsonb_typeof(monthly_bonus_schedule) = 'array');
+
 create table if not exists public.provi_sessions (
     id uuid primary key default gen_random_uuid(),
     user_id uuid not null references public.provi_users(id) on delete cascade,
@@ -86,6 +91,7 @@ set search_path = public
 as $$
     select jsonb_build_object(
         'settings', coalesce(d.settings, '{}'::jsonb),
+        'monthlyBonusSchedule', coalesce(d.monthly_bonus_schedule, '[]'::jsonb),
         'orders', coalesce(d.orders, '[]'::jsonb),
         'products', coalesce(d.products, '[]'::jsonb),
         'salesperson', coalesce(d.salesperson, '{}'::jsonb),
