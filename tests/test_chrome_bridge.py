@@ -126,7 +126,8 @@ class ChromeBridgeTests(unittest.TestCase):
         registration = {'requestId':'request', 'registrationId':'sale', 'orderNumber':'BISS'}
         receipt = {'success':True, 'scriptVersion':4,'worksheetName':'Salg ÆØÅ','worksheetId':'sheet-1', 'requestId':'request', 'registrationId':'sale', 'orderNumber':'BISS', 'status':'registered', 'row':123}
         self.assertTrue(bridge.valid_receipt(receipt, registration))
-        for key, value in [('requestId','stale'),('registrationId','other-sale'),('orderNumber','other-order'),('row',True),('row',3),('scriptVersion',2),('scriptVersion',3),('worksheetName',''),('worksheetId',''),('status','checked')]:
+        self.assertTrue(bridge.valid_receipt({**receipt, 'row':10}, registration))
+        for key, value in [('requestId','stale'),('registrationId','other-sale'),('orderNumber','other-order'),('row',True),('row',3),('row',1048577),('scriptVersion',2),('scriptVersion',3),('worksheetName',''),('worksheetId',''),('status','checked')]:
             self.assertFalse(bridge.valid_receipt({**receipt, key:value}, registration), (key,value))
         self.assertFalse(bridge.valid_receipt(receipt, {**registration, 'worksheetName':'Another'}))
         setup = {'requestId':'request', 'isTest':True}

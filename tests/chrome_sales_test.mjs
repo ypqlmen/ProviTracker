@@ -12,7 +12,8 @@ const upgraded=next.join('.');
 const registration={requestId:'request-a',registrationId:'sale-a',orderNumber:'BISS'};
 const receipt={success:true,status:'registered',scriptVersion:4,worksheetName:'Salg ÆØÅ',worksheetId:'sheet-1',row:123,...registration};
 assert(validReceipt(receipt,registration));
-for(const [key,value] of [['requestId','stale'],['registrationId','sale-b'],['orderNumber','other'],['row',3],['row',1.5],['scriptVersion',2],['scriptVersion',3],['worksheetName',''],['worksheetId',''],['success',1]]) assert(!validReceipt({...receipt,[key]:value},registration));
+assert(validReceipt({...receipt,row:10},registration));
+for(const [key,value] of [['requestId','stale'],['registrationId','sale-b'],['orderNumber','other'],['row',3],['row',1048577],['row',1.5],['scriptVersion',2],['scriptVersion',3],['worksheetName',''],['worksheetId',''],['success',1]]) assert(!validReceipt({...receipt,[key]:value},registration));
 const source=fs.readFileSync('chrome_extension/background.js','utf8').replace(/^import .*;$/gm,'');
 function fixture({existingDialog=false,reverts=0,wrongDialog=false,waiting=null,injectionError=false,hangAt=null}={}){
  const calls=[],phases=[],intervals=[],timeouts=[];let native,currentUrl=url,nextReceipt=receipt,frozen=false,discarded=false,updated,removed;const stored={};let dialog=existingDialog,remainingReverts=reverts;

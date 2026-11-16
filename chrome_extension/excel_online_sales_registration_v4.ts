@@ -48,10 +48,64 @@ function productHeaders(): { [key: string]: string } {
     };
 }
 
-function column(headers: string[], label: string): number {
-    const found = headers.map((h, i) => normalize(h) === normalize(label) ? i : -1).filter(i => i >= 0);
-    if (found.length !== 1) throw new Error(`Kolonnen “${label}” mangler eller findes flere gange.`);
-    return found[0];
+const fieldLabels = [
+    ["Dato", "Salgsdato"], ["Initialer", "Sælgerinitialer"], ["OSE-nr", "OSE", "OSE-nummer"],
+    ["Cvr nr.", "CVR", "CVR-nummer"], ["Firmanavn", "Firma", "Virksomhedsnavn"],
+    ["Telefon", "Tlf.", "Telefonnummer"]
+];
+const noteLabels = ["Bemærkninger", "Bemærkning", "Bemaerkninger", "Noter"];
+const productAliases: { [key: string]: string[] } = {
+    mobil_25gb_36: ["25 GB 36 mdr.", "Mobil 25 GB 36 mdr."],
+    mobil_50gb_0: ["Business GO 50 GB 0 mdr.", "Mobil 50 GB 0 mdr."],
+    mobil_50gb_24: ["Business GO 50 GB 24 mdr."],
+    mobil_50gb_36: ["Business GO 50 GB 36 mdr."],
+    mobil_1000gb_24: ["Business GO 1000 GB 24 mdr."],
+    mobil_1000gb_36: ["Business GO 1000 GB 36 mdr."]
+};
+
+function matchingColumns(headers: string[], labels: string[]): number[] {
+    const keys = labels.map(value => normalize(value));
+    return headers.map((h, i) => h && keys.includes(h) ? i : -1).filter(i => i >= 0);
+}
+
+function inputColumn(headers: string[], labels: string[], required: boolean): number {
+    const found = matchingColumns(headers, labels);
+    if (found.length > 1) throw new Error(`Flere kolonner matcher “${labels[0]}”. Kontrollér overskrifterne.`);
+    if (required && found.length === 0) throw new Error(`Kolonnen “${labels[0]}” mangler i masterarket.`);
+    return found[0] ?? -1;
+}
+
+type Span = { column: number; width: number };
+
+function contiguousColumns(columns: number[]): Span[] {
+    const spans: Span[] = [];
+    for (const column of columns) {
+        const last = spans[spans.length - 1];
+        if (last && last.column + last.width === column) last.width++;
+        else spans.push({ column, width: 1 });
+    }
+    return spans;
+}
+
+function checkWritable(sheet: ExcelScript.Worksheet, row: number, startCol: number, spans: Span[], label: string): void {
+    for (const span of spans) {
+        const range = sheet.getRangeByIndexes(row, startCol + span.column, 1, span.width);
+        if (range.getMergedAreas() || range.getSpecialCells(ExcelScript.SpecialCellType.formulas)) {
+            throw new Error(`${label} i række ${row + 1} har en formel eller en flettet celle i et felt til salgsregistrering.`);
+        }
+    }
+}
+
+function writeSale(sheet: ExcelScript.Worksheet, row: number, startCol: number, spans: Span[], values: Cell[], formatRow = -1): void {
+    for (const span of spans) {
+        const target = sheet.getRangeByIndexes(row, startCol + span.column, 1, span.width);
+        if (formatRow >= 0) {
+            target.copyFrom(sheet.getRangeByIndexes(formatRow, startCol + span.column, 1, span.width), ExcelScript.RangeCopyType.formats);
+        }
+        // Preserve leading zeros and prevent spreadsheet evaluation of customer text.
+        target.setNumberFormat("@");
+        target.setValues([values.slice(span.column, span.column + span.width)]);
+    }
 }
 
 function required(value: string | undefined, label: string): string {
@@ -92,33 +146,75 @@ function registerSale(workbook: ExcelScript.Workbook, payloadJson: string = '{"i
     const worksheetName = sheet.getName(), worksheetId = sheet.getId();
     const used = sheet.getUsedRange(true);
     if (!used) throw new Error("Masterarket er tomt.");
-    const texts = used.getTexts();
     const values = used.getValues();
-    const startRow = used.getRowIndex();
-    const startCol = used.getColumnIndex();
-    const matches = texts.map((row, i) => row.some(h => normalize(h) === "dato") && row.some(h => normalize(h) === "initialer") ? i : -1).filter(i => i >= 0);
-    if (matches.length !== 1) throw new Error("Kunne ikke finde én entydig overskriftsrække i masterarket.");
-    const headerOffset = matches[0];
-    const headers = texts[headerOffset];
-    const fixed = ["Dato", "Initialer", "OSE-nr", "Cvr nr.", "Firmanavn", "Telefon"].map(h => column(headers, h));
-    const noteCol = column(headers, "Bemærkninger");
+    const startRow = used.getRowIndex(), startCol = used.getColumnIndex();
+    const candidates = values.map((row, i) => {
+        const labels = row.map(value => normalize(value));
+        return fieldLabels.every(choices => matchingColumns(labels, choices).length > 0) ? i : -1;
+    }).filter(i => i >= 0);
+    if (candidates.length !== 1) throw new Error("Kunne ikke finde én entydig overskriftsrække med salgsoplysninger i masterarket.");
+    const headerOffset = candidates[0], headerRow = startRow + headerOffset;
+    const headers = values[headerOffset].map(value => normalize(value));
+    const fixed = fieldLabels.map(labels => inputColumn(headers, labels, true));
+    const noteCol = inputColumn(headers, noteLabels, false);
+    const [dateCol, , oseCol] = fixed;
     const mapping = productHeaders();
-    const columns: { [key: string]: number } = {};
-    Object.keys(mapping).forEach(key => { columns[key] = column(headers, mapping[key]); });
-    const known = [...fixed, noteCol, ...Object.keys(columns).map(key => columns[key])];
-    if (headers.some((label, index) => label.trim() && !known.includes(index))) throw new Error("Masterarket har en ukendt kolonne. Kontrollér opsætningen før registrering.");
-    // Row immediately below the one header is the current sale; history starts
-    // after the intentionally blank area. Check both before any workbook write.
-    const previewRow = startRow + headerOffset + 1;
-    if (previewRow !== 2 || startCol !== 0) throw new Error("Masterarket skal have overskrifter i række 2 og salgsrækken i række 3.");
+    const columns: { [key: string]: number[] } = {};
+    for (const key of Object.keys(mapping)) {
+        columns[key] = matchingColumns(headers, [mapping[key], ...(productAliases[key] || [])]);
+    }
+    const productColumns = Object.keys(columns).filter(key => columns[key].length === 1).map(key => columns[key][0]);
+    if (productColumns.length === 0) throw new Error("Masterarket har ingen entydige, kendte produktkolonner.");
+    const managed = Array.from(new Set([...fixed, ...(noteCol >= 0 ? [noteCol] : []), ...productColumns])).sort((a, b) => a - b);
+    const spans = contiguousColumns(managed);
+    const empty = (value: Cell | undefined): boolean => String(value ?? "").trim() === "";
+    // Require a separate preview row followed by a gap or a dated month marker.
+    // Then identify history by OSE and date, not by a fixed row number or point class.
+    const previewRow = headerRow + 1;
+    const firstAfterPreview = values[headerOffset + 2] || [];
+    const isMarker = (v: Cell[]): boolean => !empty(v[dateCol]) && managed.every(c => c === dateCol || empty(v[c]));
+    if (!isMarker(firstAfterPreview) && managed.some(c => !empty(firstAfterPreview[c]))) {
+        throw new Error("Masterarket mangler en tydelig adskillelse mellem den øverste salgsrække og historikken.");
+    }
+    let ledger = workbook.getWorksheet("_ProviTrackerReg");
+    const journal = ledger?.getUsedRange(true)?.getValues() || [["ProviTracker registration v3"]];
+    if (journal[0]?.[0] !== "ProviTracker registration v3") throw new Error("Registreringsjournalen har et ukendt format.");
+    const entries = journal.map((entry, i) => String(entry[0]) === payload.registrationId ? i : -1).filter(i => i >= 1);
+    if (entries.length > 1) throw new Error("Registreringsnummeret findes flere gange i journalen. Kontrollér masterarket.");
+    const entry = entries.length ? journal[entries[0]] : null;
+    const originalId = entry && String(entry[6] || workbook.getWorksheet("Ark1")?.getId() || "");
+    if (entry && originalId !== worksheetId) throw new Error("Dette salg tilhører en anden arkfane. Vælg den oprindelige arkfane før genforsøg.");
+    const reservedRow = entry?.[3] === "reserved" ? Number(entry[1]) - 1 : -1;
+    const reservedMarker = entry?.[3] === "reserved" ? Number(entry[4]) - 1 : -1;
     let lastSaleMonth = -1;
     let markerTemplate = -1;
+    let lastHistoryRow = -1;
     for (let i = headerOffset + 2; i < values.length; i++) {
-        if (String(values[i][fixed[2]] ?? "").trim()) lastSaleMonth = saleMonth(values[i][fixed[0]]);
-        else if (String(values[i][fixed[0]] ?? "").trim() && values[i].every((v, c) => c === fixed[0] || String(v ?? "") === "")) markerTemplate = startRow + i;
+        const at = startRow + i, v = values[i];
+        if (at === reservedRow || at === reservedMarker) continue;
+        if (!empty(v[oseCol])) {
+            lastSaleMonth = Math.max(lastSaleMonth, saleMonth(v[dateCol]));
+            lastHistoryRow = at;
+        } else if (isMarker(v)) {
+            // A date-only row is a month marker only if the date can be read.
+            // Other date-only content still remains untouched.
+            try {
+                lastSaleMonth = Math.max(lastSaleMonth, saleMonth(v[dateCol]));
+                markerTemplate = at;
+                lastHistoryRow = at;
+            } catch { continue; }
+        }
     }
-    if (markerTemplate < 0 || lastSaleMonth < 0) throw new Error("Masterarket mangler den forventede historik og månedsmarkering. Kontrollér opsætningen.");
-    if (payload.isTest === true) return result("checked", 0, "", "", worksheetName, worksheetId);
+    if (markerTemplate < 0 || lastHistoryRow < 0) throw new Error("Masterarket mangler en læsbar månedsmarkering i historikken.");
+    if (payload.isTest === true) {
+        checkWritable(sheet, previewRow, startCol, spans, "Den øverste salgsrække");
+        if (lastHistoryRow + 1 >= 1048576) throw new Error("Masterarket er fyldt.");
+        checkWritable(sheet, lastHistoryRow + 1, startCol, spans, "Den næste historikrække");
+        if (managed.some(c => !empty(values[lastHistoryRow - startRow + 1]?.[c]))) {
+            throw new Error("Den næste historikrække indeholder allerede data i et salgsfelt.");
+        }
+        return result("checked", 0, "", "", worksheetName, worksheetId);
+    }
 
     const orderNumber = required(payload.orderNumber, "OSE-nummer");
     const date = required(payload.date, "Dato");
@@ -132,58 +228,86 @@ function registerSale(workbook: ExcelScript.Workbook, payloadJson: string = '{"i
     for (const item of payload.items) {
         if (!item || !Object.prototype.hasOwnProperty.call(columns, item.key)) throw new Error("Produktet findes ikke i masterarket: " + (item?.key ?? "ukendt"));
         if (!Number.isSafeInteger(item.quantity) || item.quantity <= 0 || item.quantity > 100000) throw new Error("Ugyldigt antal for " + item.key);
-        const col = columns[item.key];
+        const matches = columns[item.key];
+        if (matches.length !== 1) {
+            const issue = matches.length === 0 ? "mangler en kolonne" : "har flere mulige kolonner";
+            throw new Error(`Produktet “${mapping[item.key]}” ${issue} i masterarket. Salget er ikke overført.`);
+        }
+        const col = matches[0];
         row[col] = Number(row[col] || 0) + item.quantity;
         if (mapping[item.key] === "Add-on") addonNotes.push(`${item.productName || item.key} x${item.quantity}`);
     }
-    row[noteCol] = [payload.note || "", ...addonNotes].filter(value => Boolean(value)).join(" | ");
-    if (String(row[noteCol]).length > 32767) throw new Error("Bemærkninger er for lange.");
+    const note = [payload.note || "", ...addonNotes].filter(value => Boolean(value)).join(" | ");
+    if (note.length > 32767) throw new Error("Bemærkninger er for lange.");
+    if (note && noteCol < 0) throw new Error("Masterarket mangler en bemærkningskolonne til denne ordre.");
+    if (noteCol >= 0) row[noteCol] = note;
 
-    // A separate reserved-row ledger binds a retry to this registration, not its OSE.
-    // Persist the reservation before writing the sale. An interrupted write is retried
-    // in the same row; conflicting or manually moved content requires human review.
+    // Bind retries to the absolute cells and product routing, not merely to an OSE.
     const month = saleMonth(date);
     const registrationId = required(payload.registrationId, "Registreringsnummer");
     if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(registrationId)) throw new Error("Ugyldigt registreringsnummer.");
-    const fingerprint = JSON.stringify(row);
+    const fingerprint = JSON.stringify({
+        headerRow, fields: fixed.map(c => startCol + c),
+        products: Object.keys(columns).filter(key => columns[key].length === 1).map(key => [key, startCol + columns[key][0]]),
+        cells: managed.map(c => [startCol + c, row[c]])
+    });
     if (fingerprint.length > 32767) throw new Error("Salgsregistreringen er for lang.");
-    let ledger = workbook.getWorksheet("_ProviTrackerReg");
-    const journal = ledger?.getUsedRange(true)?.getValues() || [["ProviTracker registration v3"]];
-    if (journal[0]?.[0] !== "ProviTracker registration v3") throw new Error("Registreringsjournalen har et ukendt format.");
-    const entries = journal.map((entry, i) => String(entry[0]) === registrationId ? i : -1).filter(i => i >= 1);
-    if (entries.length > 1) throw new Error("Registreringsnummeret findes flere gange i journalen. Kontrollér masterarket.");
+    // Keep earlier journals readable for the original layout, including V3.
+    const legacyLayout = previewRow === 2 && startCol === 0 && noteCol >= 0
+        && fieldLabels.every((labels, i) => headers[fixed[i]] === normalize(labels[0]))
+        && headers[noteCol] === normalize(noteLabels[0])
+        && Object.keys(mapping).every(key => columns[key].length === 1 && headers[columns[key][0]] === normalize(mapping[key]))
+        && headers.every((v, c) => !v || managed.includes(c));
+    const same = (a: Cell | undefined, b: Cell | undefined): boolean => String(a ?? "") === String(b ?? "");
+    const rangeAt = (r: number): ExcelScript.Range => sheet.getRangeByIndexes(r, startCol, 1, headers.length);
+    let nextRow = lastHistoryRow + 1, markerRow = -1, markerSerial = 0;
     let ledgerRow = journal.length;
-    let nextRow = startRow + values.length;
-    let markerRow = -1;
-    let markerSerial = 0;
-    if (entries.length === 1) {
+    if (entry) {
         if (!ledger) throw new Error("Registreringsjournalen mangler.");
         ledgerRow = entries[0];
-        // Existing V3 entries belong to Ark1. Never reinterpret them as a sale in
-        // the currently selected sheet; new entries use Excel's stable sheet ID.
-        const originalId = String(journal[ledgerRow][6] || workbook.getWorksheet("Ark1")?.getId() || "");
-        if (originalId !== worksheetId) throw new Error("Dette salg tilhører en anden arkfane. Vælg den oprindelige arkfane før genforsøg.");
-        if (String(journal[ledgerRow][2]) !== fingerprint) throw new Error("Registreringen er ændret siden første forsøg. Kontrollér masterarket.");
-        nextRow = Number(journal[ledgerRow][1]) - 1;
-        markerRow = Number(journal[ledgerRow][4]) - 1;
-        markerSerial = Number(journal[ledgerRow][5]);
-        if (!Number.isSafeInteger(nextRow) || nextRow < 15 || nextRow >= 1048576) throw new Error("Registreringsjournalen indeholder en ugyldig række.");
-        const existing = sheet.getRangeByIndexes(nextRow, startCol, 1, headers.length).getValues()[0];
-        if (row.every((value, i) => String(value) === String(existing[i] ?? ""))) {
+        if (String(entry[2]) !== fingerprint && !(legacyLayout && String(entry[2]) === JSON.stringify(row))) {
+            throw new Error("Registreringen eller arkets kolonner er ændret siden første forsøg. Kontrollér masterarket.");
+        }
+        nextRow = Number(entry[1]) - 1;
+        markerRow = Number(entry[4]) - 1;
+        markerSerial = Number(entry[5]);
+        if (!Number.isSafeInteger(nextRow) || nextRow <= previewRow + 1 || nextRow >= 1048576) throw new Error("Registreringsjournalen indeholder en ugyldig række.");
+        checkWritable(sheet, nextRow, startCol, spans, "Den reserverede salgsrække");
+        const existing = rangeAt(nextRow).getValues()[0];
+        if (managed.every(c => same(row[c], existing[c]))) {
             ledger.getRangeByIndexes(ledgerRow, 3, 1, 1).setValues([["registered"]]);
             return result("already_registered", nextRow + 1, orderNumber, registrationId, worksheetName, worksheetId);
         }
-        if (existing.some(value => String(value ?? "") !== "") || journal[ledgerRow][3] === "registered") throw new Error("Den reserverede salgsrække er ændret. Kontrollér masterarket før genforsøg.");
+        // After an interrupted write, resume matching cells in the same row.
+        if (entry[3] !== "reserved" || managed.some(c => !same(existing[c], "") && !same(existing[c], row[c]))) {
+            throw new Error("Den reserverede salgsrække er ændret. Kontrollér masterarket før genforsøg.");
+        }
     } else {
-        // An unresolved reservation belongs to another sale. Do not reuse its row.
         if (journal.slice(1).some(entry => entry[3] !== "registered")) throw new Error("Et tidligere salg afventer bekræftelse. Prøv det salg igen først.");
         if (month < lastSaleMonth) throw new Error("Salget tilhører en tidligere måned. Registrer det manuelt i den korrekte måneds historik.");
         if (month > lastSaleMonth) {
-            markerRow = nextRow;
-            nextRow += 1;
+            markerRow = nextRow++;
             markerSerial = Date.UTC(Math.floor(month / 12), month % 12, 1) / 86400000 + 25569;
         }
-        if (nextRow >= 1048576 || ledgerRow >= 1048576) throw new Error("Masterarket er fyldt.");
+    }
+    if (nextRow >= 1048576 || ledgerRow >= 1048576) throw new Error("Masterarket er fyldt.");
+
+    // Validate every destination before writing either the preview or the journal.
+    checkWritable(sheet, previewRow, startCol, spans, "Den øverste salgsrække");
+    checkWritable(sheet, nextRow, startCol, spans, "Historikrække");
+    const targetValues = rangeAt(nextRow).getValues()[0];
+    if (!entry && managed.some(c => !same(targetValues[c], ""))) {
+        throw new Error("Den næste historikrække indeholder allerede data i et salgsfelt.");
+    }
+    if (markerRow >= 0) {
+        if (markerRow !== nextRow - 1 || markerSerial !== Date.UTC(Math.floor(month / 12), month % 12, 1) / 86400000 + 25569) throw new Error("Journalens månedsmarkering er ugyldig.");
+        checkWritable(sheet, markerRow, startCol, spans, "Månedsrækken");
+        const markerValues = rangeAt(markerRow).getValues()[0];
+        if (managed.some(c => !same(markerValues[c], "") && !(entry && c === dateCol && Number(markerValues[c]) === markerSerial))) {
+            throw new Error("Månedsrækken indeholder allerede data i et salgsfelt.");
+        }
+    } else if (markerRow !== -1 || markerSerial !== 0) throw new Error("Journalens månedsmarkering er ugyldig.");
+    if (!entry) {
         if (!ledger) {
             ledger = workbook.addWorksheet("_ProviTrackerReg");
             ledger.getRangeByIndexes(0, 0, 1, 8).setValues([["ProviTracker registration v3", "Sale row", "Contents", "State", "Month row", "Month date", "Worksheet ID", "Worksheet name"]]);
@@ -196,35 +320,24 @@ function registerSale(workbook: ExcelScript.Workbook, payloadJson: string = '{"i
         if (String(reserved[0]) !== registrationId || Number(reserved[1]) !== nextRow + 1 || reserved[2] !== fingerprint || reserved[6] !== worksheetId) throw new Error("Excel kunne ikke bekræfte reservationen. Kontrollér journalen.");
     }
     if (!ledger) throw new Error("Registreringsjournalen mangler.");
+
+    writeSale(sheet, previewRow, startCol, spans, row);
+    const previewValues = rangeAt(previewRow).getValues()[0];
+    if (!managed.every(c => same(row[c], previewValues[c]))) throw new Error("Excel kunne ikke bekræfte den øverste salgsrække.");
     if (markerRow >= 0) {
-        if (markerRow !== nextRow - 1 || markerSerial !== Date.UTC(Math.floor(month / 12), month % 12, 1) / 86400000 + 25569) throw new Error("Journalens månedsmarkering er ugyldig.");
-        const marker = sheet.getRangeByIndexes(markerRow, startCol, 1, headers.length);
-        const markerValues = marker.getValues()[0];
-        if (markerValues.some((v, i) => String(v ?? "") !== "" && !(i === fixed[0] && Number(v) === markerSerial))) throw new Error("Månedsrækken er ændret. Kontrollér masterarket.");
-    } else if (markerRow !== -1 || markerSerial !== 0) throw new Error("Journalens månedsmarkering er ugyldig.");
-    // Refresh the current sale first, then archive it. Never count this preview
-    // as another history row, and never refresh it for an already completed retry.
-    const preview = sheet.getRangeByIndexes(previewRow, startCol, 1, headers.length);
-    preview.setNumberFormat("@");
-    preview.setValues([row]);
-    if (!row.every((v, i) => String(v) === String(preview.getValues()[0][i]))) throw new Error("Excel kunne ikke bekræfte den øverste salgsrække.");
-    if (markerRow >= 0) {
-        const marker = sheet.getRangeByIndexes(markerRow, startCol, 1, headers.length);
-        if (markerRow !== markerTemplate) marker.copyFrom(sheet.getRangeByIndexes(markerTemplate, startCol, 1, headers.length), ExcelScript.RangeCopyType.formats);
-        const blank: Cell[] = headers.map(() => "");
-        blank[fixed[0]] = markerSerial;
-        marker.setValues([blank]);
-        marker.getCell(0, fixed[0]).setNumberFormat("dd.mm.yyyy");
+        for (const span of spans) {
+            const target = sheet.getRangeByIndexes(markerRow, startCol + span.column, 1, span.width);
+            target.copyFrom(sheet.getRangeByIndexes(markerTemplate, startCol + span.column, 1, span.width), ExcelScript.RangeCopyType.formats);
+        }
+        const markerDate = sheet.getRangeByIndexes(markerRow, startCol + dateCol, 1, 1);
+        markerDate.setNumberFormat("dd.mm.yyyy");
+        markerDate.setValues([[markerSerial]]);
+        if (Number(markerDate.getValues()[0][0]) !== markerSerial) throw new Error("Excel kunne ikke bekræfte månedsmarkeringen.");
     }
-    const target = sheet.getRangeByIndexes(nextRow, startCol, 1, headers.length);
-    if (nextRow > startRow + headerOffset + 1) {
-        target.copyFrom(sheet.getRangeByIndexes(previewRow, startCol, 1, headers.length), ExcelScript.RangeCopyType.formats);
-    }
-    // Text formatting prevents OSE/CVR rounding and formula injection in customer fields.
-    target.setNumberFormat("@");
-    target.setValues([row]);
-    const readBack = target.getValues()[0];
-    if (!row.every((value, i) => String(value) === String(readBack[i]))) throw new Error("Excel kunne ikke bekræfte hele registreringen. Kontrollér OSE før genforsøg.");
+    writeSale(sheet, nextRow, startCol, spans, row, previewRow);
+    const readBack = rangeAt(nextRow).getValues()[0];
+
+    if (!managed.every(c => same(row[c], readBack[c]))) throw new Error("Excel kunne ikke bekræfte hele registreringen. Kontrollér OSE før genforsøg.");
     ledger.getRangeByIndexes(ledgerRow, 3, 1, 1).setValues([["registered"]]);
     return result("registered", nextRow + 1, orderNumber, registrationId, worksheetName, worksheetId);
 }

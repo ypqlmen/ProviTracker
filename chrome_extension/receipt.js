@@ -3,6 +3,6 @@ export function validReceipt(receipt, request) {
   if (typeof receipt.worksheetName!=='string' || !receipt.worksheetName.trim() || typeof receipt.worksheetId!=='string' || !receipt.worksheetId
       || (request.worksheetName && receipt.worksheetName!==request.worksheetName)) return false;
   if (request.isTest===true) return receipt.status==='checked' && receipt.orderNumber==='' && receipt.registrationId==='' && receipt.row===0;
-  return ['registered','already_registered'].includes(receipt.status) && Number.isSafeInteger(receipt.row) && receipt.row>=16
+  return ['registered','already_registered'].includes(receipt.status) && Number.isSafeInteger(receipt.row) && receipt.row>=4 && receipt.row<=1048576
     && receipt.orderNumber===request.orderNumber && receipt.registrationId===request.registrationId;
 }

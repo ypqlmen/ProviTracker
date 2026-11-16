@@ -29,8 +29,8 @@
 #include "updater_script.h"
 #include "sales_registration.h"
 
-static constexpr const char* APP_VERSION = "2.0.3";
-static constexpr int APP_BUILD_VERSION = 20003;
+static constexpr const char* APP_VERSION = "2.0.4";
+static constexpr int APP_BUILD_VERSION = 20004;
 static constexpr const char* UPDATE_APPCAST_URL = "https://raw.githubusercontent.com/ypqlmen/ProviTracker/main/appcast.xml";
 
 static QString psSingleQuoted(QString value) {

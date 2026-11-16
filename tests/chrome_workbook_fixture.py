@@ -28,7 +28,7 @@ def open_workbook(context, create=True):
             body = '''<div><span>ProviTrackerSalesRegistrationV4</span><button id="edit" onclick="document.getElementById('editor').hidden=false;document.getElementById('run').hidden=false;this.hidden=true">Rediger</button></div>
 <textarea id="editor" aria-label="editor" hidden></textarea><button id="run" hidden onclick="parent.postMessage({type:'parameters'},'https://euc-excel.officeapps.live.com')">Kør</button><ul id="output"></ul>
 <script>window.sales=[];window.parameterForms=[];window.preview=null;window.months=[];addEventListener('message',e=>{if(e.origin!=='https://euc-excel.officeapps.live.com'||e.data.type!=='payload')return;window.parameterForms.push(e.data.metrics);const p=e.data.payload;let row=0,status='checked';
-if(!p.isTest){const old=sales.find(x=>x.registrationId===p.registrationId);status=old?'already_registered':'registered';if(old)row=old.row;else{const month=p.date.slice(3);if(months.at(-1)!==month)months.push(month);row=122+sales.length+months.length;preview=p;sales.push({...p,row})}}
+if(!p.isTest){const old=sales.find(x=>x.registrationId===p.registrationId);status=old?'already_registered':'registered';if(old)row=old.row;else{const month=p.date.slice(3);if(months.at(-1)!==month)months.push(month);row=9+sales.length+months.length;preview=p;sales.push({...p,row})}}
 const r={success:true,status,scriptVersion:4,worksheetName:p.worksheetName,worksheetId:"fixture-sheet",row,orderNumber:p.isTest?'':p.orderNumber,registrationId:p.isTest?'':p.registrationId,requestId:p.requestId};const li=document.createElement('li');li.setAttribute('role','listitem');li.textContent='Oplysninger: PROVITRACKER_RESULT:'+JSON.stringify(r);document.getElementById('output').append(li)})</script>'''
         elif route.request.url.startswith(OFFICE_DIALOG):
             # Live Office uses an unassociated label and localized placeholder.
@@ -169,7 +169,7 @@ def check_native_sales(context, worker, workbook, foreground):
     pane.evaluate("document.getElementById('run').click()")
     workbook.frame_locator('#WacFrame_Excel_0').frame_locator('#dialog').get_by_placeholder('Angiv en streng (f.eks. abcd)',exact=True).wait_for()
     first=run('chrome-register',sale)
-    assert first['status']=='registered' and first['registrationId']==sale['registrationId']
+    assert first['status']=='registered' and first['registrationId']==sale['registrationId'] and first['row']==10
     assert pane.evaluate('sales.length')==1
     assert pane.evaluate('preview.companyName')==sale['companyName'],'Complete input events must reach the Office pane'
     retry=run('chrome-register',{**sale,'requestId':'00000000-0000-4000-8000-000000000104'})

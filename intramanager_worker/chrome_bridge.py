@@ -195,7 +195,7 @@ def valid_receipt(value, registration):
         return False
     if registration.get('isTest') is True:
         return value.get('status') == 'checked' and value.get('orderNumber') == '' and value.get('registrationId') == '' and type(value.get('row')) is int and value.get('row') == 0
-    return (value.get('status') in {'registered', 'already_registered'} and type(value.get('row')) is int and value['row'] >= 16
+    return (value.get('status') in {'registered', 'already_registered'} and type(value.get('row')) is int and 4 <= value['row'] <= 1048576
         and value.get('orderNumber') == registration.get('orderNumber') and value.get('registrationId') == registration.get('registrationId'))
 
 def probe(payload):

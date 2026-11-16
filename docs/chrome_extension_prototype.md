@@ -1,4 +1,4 @@
-# Salgsregistrering i Chrome – testversion 0.1.21
+# Salgsregistrering i Chrome – testversion 0.1.23
 
 Provi Tracker overfører nye salgsregistreringer gennem brugerens eksisterende Chrome-login. Ordrekøen bruger Chrome i stedet for en separat Microsoft-browser. Funktionen er endnu kun i testversionen; den offentlige opdateringskanal ændres ikke af Windows-prøvebygningen.
 
@@ -6,7 +6,7 @@ Provi Tracker overfører nye salgsregistreringer gennem brugerens eksisterende C
 
 1. Installer den nye Windows-testversion. Åbn **Indstillinger → Salgsregistrering** i Provi Tracker.
 2. Gem sælgerinitialer og det direkte masterark-link med `sourcedoc`. Åbn dette masterark én gang i Chrome, og log ind.
-3. Vælg **Installer Chrome-udvidelse**. Følg programmets guide: åbn `chrome://extensions`, behold **Udviklertilstand** aktiveret, og vælg **Indlæs udpakket** med den mappesti, programmet kopierer. Det kræver ingen administratorinstallation. Hvis udvidelsen allerede er installeret, bruges samme mappe og samme udvidelses-ID. Kontrollér version **0.1.21** og adgang til Excel og scriptpanelet; Chrome kan bede om ny webstedsadgang ved denne opdatering.
+3. Vælg **Installer Chrome-udvidelse**. Følg programmets guide: åbn `chrome://extensions`, behold **Udviklertilstand** aktiveret, og vælg **Indlæs udpakket** med den mappesti, programmet kopierer. Det kræver ingen administratorinstallation. Hvis udvidelsen allerede er installeret, bruges samme mappe og samme udvidelses-ID. Kontrollér version **0.1.23** og adgang til Excel og scriptpanelet; Chrome kan bede om ny webstedsadgang ved denne opdatering.
 4. Gem det direkte link til masterarket i appen. Vælg **Forbind masterark → Opsæt automatisk i Chrome**.
 5. Følg trinene i dialogen. Udvidelsen genbruger eller opretter sit eget versionsbestemte `ProviTrackerAutoV4_…`-script, indsætter den medfølgende kode, læser hele koden tilbage, gemmer, genåbner og kontrollerer den igen. Eksisterende og ændrede scripts overskrives ikke. En skrivefri kørsel skal kvittere fra Excel, før appen melder klar.
 6. Slå **Registrer automatisk i masterarket** til, og gem indstillingerne.
@@ -19,9 +19,9 @@ Chrome og Microsoft-login skal være aktive. Udvidelsen beskytter de verificered
 
 ## Arkets struktur og skrivning
 
-V4 bruger den valgte arkfane med valgfrit navn. Det kræver de kendte overskrifter i række 2, seneste salg i række 3 og en eksisterende historik med månedsmarkeringer længere nede. Ukendte eller manglende kolonner stopper registreringen.
+V4 bruger den valgte arkfane. Den finder én overskriftsrække med de kendte salgsfelter og genkender produktkolonner på præcise produktnavne og godkendte varianter. Overskrifter, kolonner og historik kan være flyttet. Der skal stadig være en særskilt række til seneste salg lige under overskrifterne, adskilt fra historikken af en tom række eller en datomarkering, og historikken skal have en læsbar månedsmarkering.
 
-Et nyt salg udfylder først række 3 og arkiveres derefter nederst. Ved første salg i en nyere måned indsættes en særskilt række med månedens første dato, formateret som `dd.mm.yyyy`; rækken kopierer farve og øvrige formater fra arkets eksisterende månedsmarkering. Arkivrækken kopierer salgsformaterne fra række 3. Eksisterende historik og blankområdet mellem række 3 og historikken bevares. Der indsættes ingen tomme måneder uden salg. Salg fra en tidligere måned kræver manuel registrering i den korrekte del af historikken.
+Et nyt salg udfylder først salgsrækken og derefter en ny række i historikken. Ved månedsskifte bevares mønstret med en særskilt månedsrække. Arkets eksisterende C/D-klasser, overskrifter, historik, formler og ekstra kolonner omskrives ikke. Point og løn beregnes som før fra Provi Trackers produktkatalog. Arket må godt mangle produktkolonner, som ordren ikke bruger. Mangler et produkt i ordren en entydig kolonne, eller ligger en formel eller flettet celle i et målfelt, stoppes der før en skrivning.
 
 Produkterne bruger præcise katalog-nøgler og de respektive produktkolonner. Tillæg samles i Add-on og specificeres i Bemærkninger. Kundetekst, OSE, CVR og telefon behandles som tekst; produktantal er tal.
 
@@ -29,7 +29,7 @@ Produkterne bruger præcise katalog-nøgler og de respektive produktkolonner. Ti
 
 Hvert salgs-snapshot har et stabilt registreringsnummer (UUID), og hvert forsøg har et nyt kontrolnummer. OSE er et forretningsnummer og kan gentages i forskellige ordrer. En fuld, frisk V4-kvittering med begge korrekte numre og den korrekte OSE er nødvendig, før programmet gemmer status som registreret. Et tjek af Chrome-forbindelsen alene er utilstrækkeligt.
 
-Et meget skjult journalark `_ProviTrackerReg` reserverer historikrække og indhold før skrivningen. Genforsøg kontrollerer og genbruger denne reservation. En fuldt skrevet række efter et afbrudt forsøg bekræftes uden ny kopi og uden at overskrive seneste salg øverst. Delvis eller manuelt flyttet historik, ændrede salgsdata og uafsluttede reservationer kræver handling; appen gætter ikke på en ny række. Journalen er til genforsøg, ikke en transaktionel lås mellem flere samtidige computere. Brug én Provi Tracker-instans pr. masterark.
+Et meget skjult journalark `_ProviTrackerReg` reserverer historikrække og indhold før skrivningen. Genforsøg kontrollerer og genbruger denne reservation. En fuldt skrevet række efter et afbrudt forsøg bekræftes uden ny kopi og uden at overskrive seneste salg øverst. En delvis skrivning kan fortsætte på den reserverede række, når de skrevne felter stemmer med samme ordre, og de resterende felter er tomme. Ændrede felter eller ændrede kolonner kræver kontrol; appen gætter ikke på en ny række. Journalen er til genforsøg, ikke en transaktionel lås mellem flere samtidige computere. Brug én Provi Tracker-instans pr. masterark.
 
 Ældre V2-registreringer overføres ikke automatisk igen, fordi de ikke har V3-identitet. De skal kontrolleres manuelt. Rettelser og sletninger til allerede overførte salg ændrer ikke automatisk Excel.
 

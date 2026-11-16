@@ -2,7 +2,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
 const {stripTypeScriptTypes} = require('node:module');
-const ctx = {console:{log(){}}, ExcelScript:{RangeCopyType:{formats:'formats'},SheetVisibility:{veryHidden:'veryHidden'}}};
+const ctx = {console:{log(){}}, ExcelScript:{SpecialCellType:{formulas:'formulas'},RangeCopyType:{formats:'formats'},SheetVisibility:{veryHidden:'veryHidden'}}};
 vm.createContext(ctx);
 vm.runInContext(stripTypeScriptTypes(fs.readFileSync('chrome_extension/excel_online_sales_registration_v4.ts','utf8')),ctx);
 const headers = ['Dato','Initialer','OSE-nr','Cvr nr.','Firmanavn','Telefon',
@@ -16,28 +16,34 @@ const headers = ['Dato','Initialer','OSE-nr','Cvr nr.','Firmanavn','Telefon',
 'Truetalk Firma + Agent','Busines GO 50 GB 0 mdr.','Fiber','20 GB MBB + Hardware',
 'Business GO DK Only 10 GB 0+36 mdr.','Bemærkninger','Add-on'];
 
-function fixture(customHeaders=headers, initialName='Salg ÆØÅ') {
+function fixture(customHeaders=headers, initialName='Salg ÆØÅ', inputRows=null) {
   const events=[], sheets={}; let interrupt=null;
-  const rows=Array.from({length:122},()=>Array(customHeaders.length).fill(''));
-  rows[0][6]='HA';rows[1]=[...customHeaders];rows[2][0]='06.10.2026';rows[2][2]='existing';
-  rows[116][0]=46032;rows[121][0]='06.10.2026';rows[121][2]='existing';
+  const rows=inputRows || Array.from({length:122},()=>Array(customHeaders.length).fill(''));
+  if(!inputRows){rows[0][6]='HA';rows[1]=[...customHeaders];rows[2][0]='06.10.2026';rows[2][2]='existing';
+  rows[116][0]=46032;rows[121][0]='06.10.2026';rows[121][2]='existing';}
   const make=(name,data)=>{
-    const formats=new Map();
+    const formats=new Map(), formulas=new Set(), merges=new Set();
     const range=(r,c,h,w)=>({
       getRowIndex:()=>r,getColumnIndex:()=>c,
       getTexts:()=>range(r,c,h,w).getValues().map(row=>row.map(String)),
       getValues:()=>Array.from({length:h},(_,i)=>Array.from({length:w},(_,j)=>data[r+i]?.[c+j]??'')),
       getCell:(i,j)=>range(r+i,c+j,1,1),
+      getMergedAreas:()=>Array.from({length:w},(_,j)=>merges.has(`${r},${c+j}`)).some(Boolean)?{}:undefined,
+      getSpecialCells:kind=>{assert.equal(kind,'formulas');return Array.from({length:w},(_,j)=>formulas.has(`${r},${c+j}`)).some(Boolean)?{}:undefined;},
       setNumberFormat:f=>{formats.set(`${r},${c}`,f);},
-      copyFrom:(from,kind)=>{assert.equal(kind,'formats');events.push({name,r,copy:from.getRowIndex()});},
-      setValues:v=>{ events.push({name,r,values:JSON.parse(JSON.stringify(v))});
+      copyFrom:(from,kind)=>{assert.equal(kind,'formats');events.push({name,r,c,w,copy:from.getRowIndex()});},
+      setValues:v=>{ events.push({name,r,c,w,values:JSON.parse(JSON.stringify(v))});
         if(interrupt && interrupt(name,r,v,'before')) throw new Error('interrupted');
         v.forEach((row,i)=>{data[r+i]??=[];row.forEach((x,j)=>data[r+i][c+j]=x)});
         if(interrupt && interrupt(name,r,v,'after')) throw new Error('interrupted');
       }
     });
-    return {getName:()=>name,getId:()=>"id:"+name,data,formats,getRangeByIndexes:range,setVisibility:v=>events.push({name,visibility:v}),
-      getUsedRange:()=> data.length?range(0,0,data.length,Math.max(...data.map(row=>row.length))):undefined};
+    return {getName:()=>name,getId:()=>"id:"+name,data,formats,formulas,merges,getRangeByIndexes:range,setVisibility:v=>events.push({name,visibility:v}),
+      getUsedRange:()=>{
+        let top=Infinity,left=Infinity,bottom=-1,right=-1;
+        data.forEach((row,r)=>row.forEach((v,c)=>{if(v!==''&&v!=null){top=Math.min(top,r);left=Math.min(left,c);bottom=Math.max(bottom,r);right=Math.max(right,c);}}));
+        return bottom<0?undefined:range(top,left,bottom-top+1,right-left+1);
+      }};
   };
   sheets[initialName]=make(initialName,rows);let active=initialName;
   return {rows,events,sheets,interrupt:fn=>interrupt=fn,
@@ -61,7 +67,10 @@ run(f,{...payload,date:'02.11.2026'});assert.equal(f.rows.length,124);
 run(f,{...payload,registrationId:uid(5),date:'03.11.2026'});assert.equal(f.rows.length,125,'one month marker only');
 run(f,{...payload,registrationId:uid(6),date:'04.01.2027'});assert.equal(f.rows[125][0],Date.UTC(2027,0,1)/86400000+25569);assert.equal(f.rows.length,127);
 for(const p of [{...payload,date:'01.09.2026'},{...payload,date:'31.11.2026'},{...payload,registrationId:'BISS'}, {...payload,items:[{key:'unknown',quantity:1}]}]) {f=fixture();assert.throws(()=>run(f,p));assert.equal(f.events.length,0);}
-f=fixture([...headers,'Custom formula']);assert.throws(()=>run(f,{isTest:true}),/ukendt kolonne/);assert.equal(f.events.length,0);
+f=fixture([...headers,'Custom formula']);
+assert.equal(run(f,{isTest:true}).status,'checked');assert.equal(f.events.length,0);
+f.rows[2][34]=48;f.sheets['Salg ÆØÅ'].formulas.add('2,34');
+run(f);assert.equal(f.rows[2][34],48);assert(f.events.filter(e=>e.name==='Salg ÆØÅ'&&e.values).every(e=>e.c+e.w<=34));
 // Reservation and completed archive survive interruptions, without a second row.
 for(const [row,when] of [[2,'before'],[122,'after'],[123,'before'],[123,'after']]) {
  f=fixture();let once=true;f.interrupt((name,r,v,phase)=>name==='Salg ÆØÅ'&&r===row&&phase===when&&once?(once=false,true):false);
@@ -84,3 +93,45 @@ const legacy={...ctx};vm.createContext(legacy);vm.runInContext(stripTypeScriptTy
 f=fixture(headers,'Ark1');legacy.main(f.workbook,JSON.stringify(payload));assert.equal(run(f,{...payload,worksheetName:'Ark1'}).status,'already_registered');
 f.addSaleSheet('Other');f.select('Other');const legacyBefore=f.events.length;assert.throws(()=>run(f,{...payload,worksheetName:'Other'}),/anden arkfane/);assert.equal(f.events.length,legacyBefore);
 console.log('V4: active worksheet, layout validation, worksheet switch/rename, V3 journal compatibility, preview-first, archive, month/year rollover, styles, recovery and catalog checks passed.');
+
+// Legacy layout: C is a worksheet class label only. The actual product is resolved
+// by name even with reordered metadata, unknown fields, and no unrelated products.
+const legacyRows=()=>[
+  [], [], [,,,,,,,, 'C'],
+  [,, 'OSE', 'Telefonnummer', 'Firma', 'Total', 'CVR', 'Sælgerinitialer', '25 GB 36 mdr.', 'Salgsdato', 'Noter'],
+  [,, 'PREVIEW', '', '', 99, '', '', 1, '02.10.2026', ''],
+  [,, '', '', '', 0],
+  [,, '', '', '', 0, '', '', '', 46300],
+  [,, 'HISTORY', '', '', 14, '', '', 2, '10.10.2026'],
+  [,, '', '', '', 44],
+  [,, '', '', '', 45]
+];
+const older=()=>{const f=fixture(headers,'Salg ÆØÅ',legacyRows());for(const i of [4,5,7,8,9])f.sheets['Salg ÆØÅ'].formulas.add(`${i},5`);return f;};
+const legacyPayload={...payload,items:[{key:'mobil_25gb_36',quantity:3}],date:'02.11.2026'};
+f=older();const oldHistory=JSON.stringify(f.rows[7]);
+assert.equal(run(f,{isTest:true}).status,'checked');assert.equal(f.events.length,0);
+assert.equal(run(f,legacyPayload).row,10);
+assert.equal(f.rows[2][8],'C');assert.equal(f.rows[4][8],3);assert.equal(f.rows[9][8],3);
+assert.equal(f.rows[9][2],'BISS');assert.equal(f.rows[4][5],99);assert.equal(f.rows[8][5],44);assert.equal(f.rows[9][5],45);
+assert.equal(f.rows[8][9],Date.UTC(2026,10,1)/86400000+25569);assert.equal(JSON.stringify(f.rows[7]),oldHistory);
+assert(f.events.filter(e=>e.name==='Salg ÆØÅ'&&(e.values||e.copy!=null)).every(e=>e.c>5||e.c+e.w<=5));
+assert.equal(run(f,legacyPayload).status,'already_registered');assert.equal(f.rows.length,10);
+run(f,{...legacyPayload,registrationId:uid(88)});assert.equal(f.rows[10][8],3);assert.equal(f.rows[10][9],legacyPayload.date);
+f=older();assert.throws(()=>run(f,{...legacyPayload,items:[{key:'mobil_25gb_36',quantity:1},{key:'mobil_25gb_36_hw',quantity:1}]}),/findes ikke/);assert.equal(f.events.length,0);
+f=older();assert.throws(()=>run(f,{...legacyPayload,items:[{key:'mobil_50gb_36_term',quantity:1}]}),/mangler en kolonne/);assert.equal(f.events.length,0);
+f=older();f.rows[3][11]='Business GO 25 GB 36 mdr.';
+assert.throws(()=>run(f,legacyPayload),/flere mulige kolonner|ingen entydige/);assert.equal(f.events.length,0);
+for(const [field,row,col] of [['formulas',4,8],['merges',8,9],['formulas',9,8]]) {
+  f=older();f.sheets['Salg ÆØÅ'][field].add(`${row},${col}`);assert.throws(()=>run(f,legacyPayload),/formel eller en flettet/);assert.equal(f.events.length,0);
+}
+f=older();f.rows[5][2]='ANOTHER';assert.throws(()=>run(f,legacyPayload),/adskillelse/);assert.equal(f.events.length,0);
+f=older();f.rows[9][6]='manual data';assert.throws(()=>run(f,legacyPayload),/allerede data/);assert.equal(f.events.length,0);
+f=older();f.rows[3][10]='';assert.throws(()=>run(f,legacyPayload),/bemærkningskolonne/);assert.equal(f.events.length,0);
+f=older();f.rows[3][10]='';assert.equal(run(f,{...legacyPayload,note:''}).status,'registered');
+f=older();let once=true;f.interrupt((name,r,v,phase)=>name==='Salg ÆØÅ'&&r===9&&phase==='after'&&once?(once=false,true):false);
+assert.throws(()=>run(f,legacyPayload),/interrupted/);f.interrupt(null);
+assert.equal(run(f,legacyPayload).status,'registered');assert.equal(f.rows[9][8],3);assert.equal(f.rows.length,10);
+f=older();once=true;f.interrupt((name,r,v,phase)=>name==='Salg ÆØÅ'&&r===9&&phase==='after'&&once?(once=false,true):false);
+assert.throws(()=>run(f,legacyPayload),/interrupted/);f.interrupt(null);f.rows[3][8]='';f.rows[3][11]='25 GB 36 mdr.';
+const writes=f.events.length;assert.throws(()=>run(f,legacyPayload),/kolonner er ændret/);assert.equal(f.events.length,writes);
+console.log('V4: shifted legacy C layout, write-free validation, formulas and extra columns, missing products, ambiguous layouts, month rollover, and interrupted sparse writes passed.');
