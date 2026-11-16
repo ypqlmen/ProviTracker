@@ -1,8 +1,8 @@
 {
-  "version": "2.0.4",
-  "build_version": 20004,
-  "run_id": 43959008205,
-  "source_sha": "18f83abec6efe5d64f11e2f16838f6ff618fac5b",
-  "artifact_id": 14274181299,
-  "release_notes": "- Salgsregistrering finder nu produktkolonner efter navn, også i ældre masterark med en anden placering. Arkets overskrifter og produktklasser ændres ikke. Point beregnes fortsat ud fra Provi Trackers produktkatalog.\n- Hvis en ordre kræver en produktkolonne, som mangler eller er uklar, bliver ordren i Provi Tracker, og Excel-overførslen stopper med en besked.\n- Timer, sygeløn, annulleringer og stempelur hentes gennem Provi Tracker. Brugere, der kun havde forbundet Intramanager via Chrome-udvidelsen, skal gemme deres Intramanager-login under Indstillinger → Intramanager én gang.\n- Chrome-udvidelsen håndterer masterarket. Den automatiske opdatering kræver fortsat ikke administratorrettigheder."
+  "version": "2.0.5",
+  "build_version": 20005,
+  "run_id": 43966426729,
+  "source_sha": "ee1ccdab5547395e3fd4b03b32943abfb6ca6015",
+  "artifact_id": 14276084221,
+  "release_notes": "- Provi Tracker tjekker efter opdateringer ved opstart og hvert kvarter, mens det er åbent. Pakken hentes og kontrolleres i baggrunden.\n- Installationen venter, til programmet har været i baggrunden i mindst to minutter, og der ikke er åbne kladder, aktive overførsler eller gemninger, der afventer bekræftelse fra skyen.\n- Programmet åbner minimeret efter opdatering. En anden åben Provi Tracker-instans bliver ikke tvunget til at lukke.\n- Baggrundshentning overskriver ikke længere indstillinger, du er i gang med at redigere."
 }
