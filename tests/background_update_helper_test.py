@@ -18,10 +18,10 @@ def wait_for(predicate, process, description, timeout=12):
     while time.monotonic() < deadline:
         if predicate():
             return
-        if process.poll() is not None:
+        if process is not None and process.poll() is not None:
             break
         time.sleep(0.05)
-    raise AssertionError(description + f'; process exit={process.poll()}')
+    raise AssertionError(description + (f'; process exit={process.poll()}' if process is not None else ''))
 
 
 def run_case(fixture, folder, body, mode):
@@ -83,9 +83,17 @@ $arguments += ('/DIR="' + $targetDir + '"')
             assert 'success' in marker.read_text(encoding='utf-8-sig')
             assert not work.exists()
         elif mode == 'failed':
-            assert (current / 'launched.txt').is_file(), log.read_bytes()
+            # Recovery starts the prior app asynchronously; the helper can exit first.
+            wait_for((current / 'launched.txt').is_file, None, 'The previous app did not restart')
             assert 'failed' in marker.read_text(encoding='utf-8-sig') and installer.is_file()
             assert not (dest / 'launched.txt').exists()
+            def fixture_has_exited():
+                try:
+                    previous.unlink()
+                    return True
+                except PermissionError:
+                    return False
+            wait_for(fixture_has_exited, None, 'The recovery fixture did not exit')
         elif mode == 'another-instance':
             assert other.poll() is None, 'An update must not stop another active instance'
             assert 'Skipped' in log.read_text(encoding='utf-8-sig')
