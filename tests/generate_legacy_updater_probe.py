@@ -7,7 +7,7 @@ fixed = "--fixed" in sys.argv
 source = Path("main_v32.cpp").read_text() if fixed else subprocess.check_output(
     ["git", "show", "1b5b0c3:main_v32.cpp"], text=True
 )
-source = source[:source.index("static void initAutoUpdate()")]
+source = source[:source.index("static constexpr const char* SUPABASE_PROJECT_URL" if fixed else "static void initAutoUpdate()")]
 source = source.replace("private:", "public:", 1)
 source += r'''
 int main(int argc, char **argv) {
@@ -40,4 +40,13 @@ int main(int argc, char **argv) {
     return app.exec();
 }
 '''
+if fixed:
+    source = source.replace("new ZipAutoUpdater(&app);", r"""
+new ZipAutoUpdater(&app, [] { return true; }, [&app](const QString& commitPath) {
+    QSaveFile approval(commitPath);
+    if (!approval.open(QIODevice::WriteOnly) || approval.write("ready", 5) != 5 || !approval.commit()) return false;
+    app.quit();
+    return true;
+});""")
+    source = source.replace("ProviBeregnerSetup-probe.exe", "ProviBeregnerSetup-1.6.0.exe")
 Path("tests/fixed_updater_probe.cpp" if fixed else "tests/legacy_updater_probe.cpp").write_text(source)

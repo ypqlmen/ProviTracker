@@ -124,6 +124,10 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'C++ tests failed' }
           python -m unittest discover -s tests -p "test_*.py" -v
           if ($LASTEXITCODE -ne 0) { throw 'Python tests failed' }
+      - name: Verify safe background update handoff
+        run: |
+          python tests/background_update_helper_test.py --fixture build/trial/UpdaterFixture.exe
+          if ($LASTEXITCODE -ne 0) { throw 'Safe update handoff failed' }
       - name: Package application and browser worker
         run: |
           $ErrorActionPreference = 'Stop'

@@ -94,6 +94,6 @@ jobs:
             Write-Host "RESULT path=$root relaunched=$launched recovered=$recovered"
             if ($name -eq 'fixed-failure') {
               if (!$recovered -or $launched) { throw 'Failed installer was not handled correctly' }
-              if (!(Test-Path -LiteralPath (Join-Path $root 'work/extract/ProviBeregnerSetup-probe.exe'))) { throw 'Failure evidence deleted' }
+              if (!(Test-Path -LiteralPath (Join-Path $root 'work/extract/ProviBeregnerSetup-1.6.0.exe'))) { throw 'Failure evidence deleted' }
             } elseif (!$launched) { throw 'Repaired updater did not launch installed application' }
           }

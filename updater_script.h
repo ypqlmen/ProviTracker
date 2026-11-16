@@ -1,7 +1,8 @@
 #pragma once
 
 // Variable assignments are written before this body, as UTF-8 with a BOM for
-// Windows PowerShell 5.1. The application stays open until readyPath exists.
+// Windows PowerShell 5.1. The helper may install only after the app has
+// approved the handoff and the original app process has exited.
 static constexpr const char* updateHelperBody = R"PS(
 $ErrorActionPreference = 'Stop'
 $applicationClosed = $false
@@ -14,12 +15,24 @@ try {
     $writeProbe = Join-Path $targetDir ('.update-' + [guid]::NewGuid().ToString())
     Set-Content -LiteralPath $writeProbe -Value 'test'
     Remove-Item -LiteralPath $writeProbe
-    if (Test-Path -LiteralPath (Join-Path $workDir 'helper-cancelled.txt')) { throw 'Update cancelled before helper startup' }
-    Set-Content -LiteralPath $readyPath -Value 'ready'
     $parent = Get-Process -Id $parentPid -ErrorAction SilentlyContinue
-    if ($parent) { $parent | Wait-Process -Timeout 30 -ErrorAction Stop }
+    if (-not $parent -or (Test-Path -LiteralPath $cancelPath)) { return }
+    Set-Content -LiteralPath $readyPath -Value 'ready'
+    $approvalTimer = [System.Diagnostics.Stopwatch]::StartNew()
+    while (-not (Test-Path -LiteralPath $commitPath)) {
+        if ((Test-Path -LiteralPath $cancelPath) -or $parent.HasExited -or $approvalTimer.ElapsedMilliseconds -ge 60000) { return }
+        Start-Sleep -Milliseconds 100
+    }
+    if (Test-Path -LiteralPath $cancelPath) { return }
+    if (-not $parent.WaitForExit(30000)) { throw 'Application did not close; installation cancelled' }
     $applicationClosed = $true
-    if (Test-Path -LiteralPath (Join-Path $workDir 'helper-cancelled.txt')) { throw 'Update cancelled before installation' }
+    # A second instance could have been opened while the original one shut down.
+    # Inno Setup must not close anyone else's running process to replace files.
+    $running = Get-Process -Name 'ProvisionTrackerV2' -ErrorAction SilentlyContinue
+    if ($running | Where-Object { $_.Path -ieq $targetApp -or $_.Path -ieq $currentApp }) {
+        Add-Content -LiteralPath $logPath -Encoding UTF8 -Value 'Skipped: another Provi Tracker instance is open'
+        return
+    }
     $arguments += ('/LOG="' + $logPath + '.installer.log"')
     $proc = Start-Process -FilePath $installer -ArgumentList $arguments -PassThru -Wait -ErrorAction Stop
     $exitCode = $proc.ExitCode
@@ -46,6 +59,7 @@ try {
     }
     $restarted = New-Object System.Diagnostics.Process
     $restarted.StartInfo.FileName = $targetApp
+    $restarted.StartInfo.Arguments = '--updated-in-background'
     $restarted.StartInfo.WorkingDirectory = Split-Path -Parent $targetApp
     $restarted.StartInfo.UseShellExecute = $false
     if (-not $restarted.Start()) { throw 'Could not restart installed application' }
@@ -58,7 +72,7 @@ try {
     Add-Content -LiteralPath $logPath -Encoding UTF8 -Value ('FAILED: ' + $failure) -ErrorAction SilentlyContinue
     Set-Content -LiteralPath $markerPath -Encoding UTF8 -Value ('failed ' + (Get-Date).ToString('s') + ' ' + $failure) -ErrorAction SilentlyContinue
     if ($applicationClosed -and (Test-Path -LiteralPath $currentApp)) {
-        Start-Process -FilePath $currentApp -WorkingDirectory (Split-Path -Parent $currentApp) -ErrorAction SilentlyContinue | Out-Null
+        Start-Process -FilePath $currentApp -ArgumentList '--updated-in-background' -WorkingDirectory (Split-Path -Parent $currentApp) -ErrorAction SilentlyContinue | Out-Null
     }
 } finally {
     # Retain failed packages and both logs for diagnosis. Never report a failed
@@ -67,6 +81,6 @@ try {
         Set-Location -LiteralPath $env:TEMP
         Remove-Item -LiteralPath $workDir -Recurse -Force -ErrorAction SilentlyContinue
     }
-    Remove-Item -LiteralPath $PSCommandPath -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $readyPath, $commitPath, $cancelPath, $PSCommandPath -Force -ErrorAction SilentlyContinue
 }
 )PS";

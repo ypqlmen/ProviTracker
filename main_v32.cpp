@@ -27,10 +27,11 @@
 #include "orders_view.h"
 #include "order_product_picker.h"
 #include "updater_script.h"
+#include "updater_safety.h"
 #include "sales_registration.h"
 
-static constexpr const char* APP_VERSION = "2.0.4";
-static constexpr int APP_BUILD_VERSION = 20004;
+static constexpr const char* APP_VERSION = "2.0.5";
+static constexpr int APP_BUILD_VERSION = 20005;
 static constexpr const char* UPDATE_APPCAST_URL = "https://raw.githubusercontent.com/ypqlmen/ProviTracker/main/appcast.xml";
 
 static QString psSingleQuoted(QString value) {
@@ -40,16 +41,34 @@ static QString psSingleQuoted(QString value) {
 
 class ZipAutoUpdater : public QObject {
 public:
-    explicit ZipAutoUpdater(QObject* parent = nullptr)
-        : QObject(parent) {}
+    using Eligibility = std::function<bool()>;
+    using CloseForUpdate = std::function<bool(const QString&)>;
+    using ReadyChanged = std::function<void(bool)>;
 
-    static void checkOnStartup(QObject* parent) {
-        static bool started = false;
-        if (started) return;
-        started = true;
+    ZipAutoUpdater(QObject* parent, Eligibility eligible, CloseForUpdate requestClose, ReadyChanged readyChanged = {})
+        : QObject(parent), eligible(std::move(eligible)), requestClose(std::move(requestClose)),
+          readyChanged(std::move(readyChanged)) {}
 
-        auto* updater = new ZipAutoUpdater(parent);
-        updater->checkForUpdate();
+    ~ZipAutoUpdater() override {
+        if (downloadFile) downloadFile->close();
+        for (auto* process : findChildren<QProcess*>()) {
+            if (process->state() == QProcess::NotRunning) continue;
+            process->disconnect(this);
+            process->kill();
+            process->waitForFinished(500);
+        }
+    }
+
+    void start() {
+        auto* checks = new QTimer(this);
+        connect(checks, &QTimer::timeout, this, [this] { checkForUpdate(); });
+        checks->start(15 * 60 * 1000);
+        auto* idleChecks = new QTimer(this);
+        connect(idleChecks, &QTimer::timeout, this, [this] {
+            if (stage == Stage::Ready && eligible()) installExtractedUpdate();
+        });
+        idleChecks->start(5000);
+        QTimer::singleShot(1500, this, [this] { checkForUpdate(); });
     }
 
 private:
@@ -59,7 +78,6 @@ private:
         QString shortVersion;
         QString zipUrl;
         QString zipSha256;
-        QString installerArguments = "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /CLOSEAPPLICATIONS /FORCECLOSEAPPLICATIONS";
     };
 
     QNetworkAccessManager network;
@@ -67,41 +85,44 @@ private:
     QString workDir;
     QString zipPath;
     QString extractDir;
+    enum class Stage { Idle, Checking, Downloading, Extracting, Ready, Handshake };
+    Stage stage = Stage::Idle;
+    Eligibility eligible;
+    CloseForUpdate requestClose;
+    ReadyChanged readyChanged;
+    std::unique_ptr<QTemporaryDir> downloadDirectory;
     QFile* downloadFile = nullptr;
-    QProgressDialog* progress = nullptr;
+    QCryptographicHash downloadHash{QCryptographicHash::Sha256};
+    qint64 downloaded = 0;
+    bool writeFailed = false;
 
     void checkForUpdate() {
+        if (stage != Stage::Idle) return;
+        stage = Stage::Checking;
         QUrl url(QString::fromLatin1(UPDATE_APPCAST_URL));
         QUrlQuery query;
         query.addQueryItem("t", QString::number(QDateTime::currentSecsSinceEpoch()));
         url.setQuery(query);
 
         QNetworkRequest request(url);
+        request.setTransferTimeout(30000);
         request.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::NoLessSafeRedirectPolicy);
-
         auto* reply = network.get(request);
-        connect(reply, &QNetworkReply::finished, this, [this, reply]() {
+        reply->setReadBufferSize(64 * 1024);
+        connect(reply, &QNetworkReply::finished, this, [this, reply] {
             const QByteArray data = reply->readAll();
             const bool ok = reply->error() == QNetworkReply::NoError;
             reply->deleteLater();
-
-            if (!ok) {
-                deleteLater();
-                return;
-            }
+            stage = Stage::Idle;
+            if (!ok) return;
 
             const auto parsed = parseAppcast(data);
-            if (!parsed.has_value() || parsed->buildVersion <= APP_BUILD_VERSION || parsed->zipUrl.isEmpty()) {
-                deleteLater();
-                return;
-            }
-            if (updateAttemptRecently(parsed->buildVersion)) {
-                deleteLater();
-                return;
-            }
-
+            if (!parsed || parsed->buildVersion <= APP_BUILD_VERSION || updateAttemptRecently(parsed->buildVersion)) return;
             update = *parsed;
             downloadUpdateZip();
+        });
+        connect(reply, &QNetworkReply::readyRead, this, [reply] {
+            if (reply->bytesAvailable() >= 64 * 1024) reply->abort();
         });
     }
 
@@ -125,10 +146,6 @@ private:
                 info.buildVersion = numericBuildFromVersion(info.shortVersion);
             }
 
-            info.installerArguments = attrs.value("http://www.andymatuschak.org/xml-namespaces/sparkle", "installerArguments").toString();
-            if (info.installerArguments.isEmpty()) info.installerArguments = attrs.value("sparkle:installerArguments").toString();
-            if (info.installerArguments.isEmpty()) info.installerArguments = "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /CLOSEAPPLICATIONS /FORCECLOSEAPPLICATIONS";
-
             info.zipUrl = attrs.value("https://provi-tracker.local/update", "zipUrl").toString();
             if (info.zipUrl.isEmpty()) info.zipUrl = attrs.value("provi:zipUrl").toString();
             if (info.zipUrl.isEmpty()) {
@@ -140,12 +157,17 @@ private:
             }
 
             const QString zipLength = attrs.value("https://provi-tracker.local/update", "zipLength").toString();
-            info.zipLength = zipLength.isEmpty()
-                ? attrs.value("provi:zipLength").toLongLong()
-                : zipLength.toLongLong();
+            if (!zipLength.isEmpty()) info.zipLength = zipLength.toLongLong();
 
             info.zipSha256 = attrs.value("https://provi-tracker.local/update", "zipSha256").toString();
             if (info.zipSha256.isEmpty()) info.zipSha256 = attrs.value("provi:zipSha256").toString();
+            const QUrl zip(info.zipUrl);
+            static const QRegularExpression versionPattern(R"(^[0-9]+\.[0-9]+\.[0-9]+$)");
+            static const QRegularExpression hashPattern(R"(^[0-9a-fA-F]{64}$)");
+            if (!versionPattern.match(info.shortVersion).hasMatch() || !hashPattern.match(info.zipSha256).hasMatch()
+                    || !zip.isValid() || zip.scheme() != "https" || zip.host() != "github.com"
+                    || zip.path() != "/ypqlmen/ProviTracker/releases/download/autoupdate/ProviTrackerUpdate-" + info.shortVersion + ".zip"
+                    || info.zipLength <= 0 || info.zipLength > 1024LL * 1024 * 1024) return std::nullopt;
             return info;
         }
 
@@ -197,118 +219,85 @@ private:
         }
     }
 
+    bool writeDownload(QNetworkReply* reply) {
+        const auto bytes = reply->readAll();
+        if (bytes.isEmpty()) return true;
+        if (downloaded + bytes.size() > update.zipLength || downloadFile->write(bytes) != bytes.size()) {
+            writeFailed = true;
+            return false;
+        }
+        downloaded += bytes.size();
+        downloadHash.addData(bytes);
+        return true;
+    }
+
     void downloadUpdateZip() {
-        workDir = QDir(QStandardPaths::writableLocation(QStandardPaths::TempLocation))
-            .filePath(QString("ProviTrackerUpdate/%1_%2").arg(update.shortVersion, QString::number(QDateTime::currentMSecsSinceEpoch())));
+        stage = Stage::Downloading;
+        downloadDirectory = std::make_unique<QTemporaryDir>(QDir(QDir::tempPath()).filePath("ProviTrackerUpdate-XXXXXX"));
+        if (!downloadDirectory->isValid()) {
+            failUpdate("Kunne ikke klargøre update-mappen.");
+            return;
+        }
+        workDir = downloadDirectory->path();
         extractDir = QDir(workDir).filePath("extract");
         zipPath = QDir(workDir).filePath("update.zip");
-
-        QDir().mkpath(workDir);
-
+        downloadHash.reset();
+        downloaded = 0;
+        writeFailed = false;
         downloadFile = new QFile(zipPath, this);
         if (!downloadFile->open(QIODevice::WriteOnly)) {
             failUpdate("Kunne ikke klargøre update-filen.");
             return;
         }
 
-        progress = new QProgressDialog("Henter opdatering...", QString(), 0, 100);
-        progress->setWindowTitle("Provi Tracker opdatering");
-        progress->setCancelButton(nullptr);
-        progress->setWindowModality(Qt::ApplicationModal);
-        progress->setMinimumDuration(0);
-        progress->show();
-
         QNetworkRequest request(QUrl(update.zipUrl));
+        request.setTransferTimeout(30000);
         request.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::NoLessSafeRedirectPolicy);
         auto* reply = network.get(request);
-
-        connect(reply, &QNetworkReply::readyRead, this, [this, reply]() {
-            if (downloadFile) downloadFile->write(reply->readAll());
+        reply->setReadBufferSize(1024 * 1024);
+        connect(reply, &QNetworkReply::readyRead, this, [this, reply] {
+            if (!writeDownload(reply)) reply->abort();
         });
-
-        connect(reply, &QNetworkReply::downloadProgress, this, [this](qint64 received, qint64 total) {
-            if (!progress || total <= 0) return;
-            progress->setValue(static_cast<int>((received * 100) / total));
-        });
-
-        connect(reply, &QNetworkReply::finished, this, [this, reply]() {
-            if (downloadFile) {
-                downloadFile->write(reply->readAll());
-                downloadFile->close();
-            }
-
-            const bool ok = reply->error() == QNetworkReply::NoError;
-            const QString err = reply->errorString();
+        connect(reply, &QNetworkReply::finished, this, [this, reply] {
+            const bool ok = !writeFailed && reply->error() == QNetworkReply::NoError
+                && writeDownload(reply) && downloadFile->flush();
+            downloadFile->close();
+            delete downloadFile;
+            downloadFile = nullptr;
+            const auto actual = QString::fromLatin1(downloadHash.result().toHex());
             reply->deleteLater();
 
-            if (!ok) {
-                failUpdate("Download af opdatering fejlede:\n" + err);
+            if (!ok || downloaded != update.zipLength || actual.compare(update.zipSha256, Qt::CaseInsensitive) != 0) {
+                failUpdate("Den hentede opdatering kunne ikke verificeres.");
                 return;
             }
-
-            if (!verifyZip()) {
-                return;
-            }
-
             extractUpdateZip();
         });
     }
 
-    bool verifyZip() {
-        const QFileInfo zipInfo(zipPath);
-        if (!zipInfo.exists() || zipInfo.size() <= 0) {
-            failUpdate("Den hentede update-fil er tom.");
-            return false;
-        }
-
-        if (update.zipLength > 0 && zipInfo.size() != update.zipLength) {
-            failUpdate("Den hentede update-fil har forkert størrelse.");
-            return false;
-        }
-
-        if (!update.zipSha256.isEmpty()) {
-            QFile f(zipPath);
-            if (!f.open(QIODevice::ReadOnly)) {
-                failUpdate("Kunne ikke kontrollere update-filen.");
-                return false;
-            }
-
-            const QString actual = QString::fromLatin1(QCryptographicHash::hash(f.readAll(), QCryptographicHash::Sha256).toHex());
-            if (actual.compare(update.zipSha256, Qt::CaseInsensitive) != 0) {
-                failUpdate("Den hentede update-fil matcher ikke GitHub-hashen.");
-                return false;
-            }
-        }
-
-        return true;
-    }
-
     void extractUpdateZip() {
-        if (progress) {
-            progress->setLabelText("Pakker opdatering ud...");
-            progress->setRange(0, 0);
-        }
-
+        stage = Stage::Extracting;
         QDir().mkpath(extractDir);
-
         auto* process = new QProcess(this);
+        connect(process, &QProcess::errorOccurred, this, [this, process](QProcess::ProcessError error) {
+            if (error != QProcess::FailedToStart) return;
+            process->deleteLater();
+            failUpdate("Udpakningen kunne ikke startes.");
+        });
         connect(process, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
                 this, [this, process](int exitCode, QProcess::ExitStatus status) {
-                    const QString error = QString::fromUtf8(process->readAllStandardError());
                     process->deleteLater();
-
-                    if (status != QProcess::NormalExit || exitCode != 0) {
-                        failUpdate("Udpakning af opdateringen fejlede:\n" + error);
+                    if (status != QProcess::NormalExit || exitCode != 0 || findInstaller().isEmpty()) {
+                        failUpdate("Udpakningen af opdateringen fejlede.");
                         return;
                     }
-
-                    installExtractedUpdate();
+                    stage = Stage::Ready;
+                    if (readyChanged) readyChanged(true);
                 });
-
         const QString command = QString(
-            "Expand-Archive -LiteralPath %1 -DestinationPath %2 -Force"
+            "$ErrorActionPreference = 'Stop'; Expand-Archive -LiteralPath %1 -DestinationPath %2 -Force"
             ).arg(psSingleQuoted(zipPath), psSingleQuoted(extractDir));
-        process->start("powershell.exe", {"-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", command});
+        process->start("powershell.exe", {"-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden", "-Command", command});
     }
 
     void installExtractedUpdate() {
@@ -318,15 +307,13 @@ private:
             return;
         }
 
-        if (progress) {
-            progress->setLabelText("Installerer opdatering...");
-            progress->setRange(0, 0);
-        }
-
-        const QString helperDir = QStandardPaths::writableLocation(QStandardPaths::TempLocation);
-        const QString scriptPath = QDir(helperDir).filePath(
-            QString("ProviTrackerInstallUpdate_%1.ps1").arg(QDateTime::currentMSecsSinceEpoch())
-            );
+        stage = Stage::Handshake;
+        const auto id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+        const QString helperDir = QDir::tempPath();
+        const QString scriptPath = QDir(workDir).filePath("install-" + id + ".ps1");
+        const QString readyPath = QDir(workDir).filePath("ready-" + id);
+        const QString commitPath = QDir(workDir).filePath("commit-" + id);
+        const QString cancelPath = QDir(workDir).filePath("cancel-" + id);
         QFile script(scriptPath);
         if (!script.open(QIODevice::WriteOnly | QIODevice::Text)) {
             failUpdate("Kunne ikke oprette installer-scriptet.");
@@ -340,15 +327,12 @@ private:
         const QString logDir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + "/updates";
         const QString logPath = QDir::toNativeSeparators(QDir(logDir).filePath(QString("last_update_%1.log").arg(update.buildVersion)));
 
-        rememberUpdateAttempt(update.buildVersion);
-
-        const QString readyPath = QDir(workDir).filePath("helper-ready.txt");
         QTextStream ts(&script);
         ts.setEncoding(QStringConverter::Utf8);
         ts.setGenerateByteOrderMark(true);
         ts << "$ErrorActionPreference = 'Continue'\n";
         ts << "$installer = " << psSingleQuoted(installer) << "\n";
-        ts << "$arguments = @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/CLOSEAPPLICATIONS', '/FORCECLOSEAPPLICATIONS')\n";
+        ts << "$arguments = @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/NOCLOSEAPPLICATIONS')\n";
         ts << "$targetDir = " << psSingleQuoted(targetDir) << "\n";
         ts << "$arguments += ('/DIR=\"' + $targetDir + '\"')\n";
         ts << "$targetApp = " << psSingleQuoted(targetApp) << "\n";
@@ -357,11 +341,18 @@ private:
         ts << "$logPath = " << psSingleQuoted(logPath) << "\n";
         ts << "$workDir = " << psSingleQuoted(workDir) << "\n";
         ts << "$readyPath = " << psSingleQuoted(QDir::toNativeSeparators(readyPath)) << "\n";
+        ts << "$commitPath = " << psSingleQuoted(QDir::toNativeSeparators(commitPath)) << "\n";
+        ts << "$cancelPath = " << psSingleQuoted(QDir::toNativeSeparators(cancelPath)) << "\n";
         ts << "$expectedVersion = " << psSingleQuoted(update.shortVersion) << "\n";
         ts << "$parentPid = " << QString::number(QCoreApplication::applicationPid()) << "\n";
         ts << updateHelperBody;
         ts.flush();
+        const bool saved = ts.status() == QTextStream::Ok && script.flush();
         script.close();
+        if (!saved) {
+            failUpdate("Kunne ikke gemme installer-scriptet.");
+            return;
+        }
 
         const bool started = QProcess::startDetached(
             "powershell.exe",
@@ -374,55 +365,55 @@ private:
             return;
         }
 
-        // Do not close the running app merely because PowerShell was spawned.
-        // Wait for the helper to parse successfully and verify its file paths.
         auto* readyTimer = new QTimer(this);
         auto attempts = std::make_shared<int>(0);
-        connect(readyTimer, &QTimer::timeout, this, [this, readyTimer, attempts, readyPath]() {
+        connect(readyTimer, &QTimer::timeout, this, [this, readyTimer, attempts, readyPath, commitPath, cancelPath] {
             if (QFileInfo::exists(readyPath)) {
                 readyTimer->stop();
-                if (progress) progress->close();
-                QCoreApplication::quit();
-            } else if (++*attempts >= 450) {
+                readyTimer->deleteLater();
+                // Recheck as the helper becomes ready. A click, worker or save
+                // may have started while PowerShell was preparing.
+                if (eligible() && requestClose(commitPath)) {
+                    if (downloadDirectory) downloadDirectory->setAutoRemove(false);
+                    rememberUpdateAttempt(update.buildVersion);
+                    return;
+                }
+                QFile cancelled(cancelPath);
+                if (cancelled.open(QIODevice::WriteOnly)) cancelled.close();
+                stage = Stage::Ready;
+                return;
+            }
+            if (++*attempts >= 450) {
                 readyTimer->stop();
-                QFile cancelled(QDir(workDir).filePath("helper-cancelled.txt"));
-                cancelled.open(QIODevice::WriteOnly);
-                cancelled.close();
-                failUpdate("Opdateringen kunne ikke starte. Programmet bliver åbent.\n"
-                           "Du kan installere den nye version fra downloadlinket.", true);
+                readyTimer->deleteLater();
+                QFile cancelled(cancelPath);
+                if (cancelled.open(QIODevice::WriteOnly)) cancelled.close();
+                failUpdate("Opdateringen kunne ikke starte. Programmet bliver åbent.", true);
             }
         });
         readyTimer->start(100);
     }
 
     QString findInstaller() const {
-        QDirIterator it(extractDir, {"ProviBeregnerSetup-*.exe"}, QDir::Files, QDirIterator::Subdirectories);
-        while (it.hasNext()) {
-            return it.next();
-        }
-        return QString();
+        const auto name = "ProviBeregnerSetup-" + update.shortVersion + ".exe";
+        const QFileInfo file(QDir(extractDir).filePath(name));
+        return file.isFile() && !file.isSymLink() ? file.absoluteFilePath() : QString();
     }
 
     void failUpdate(const QString& message, bool preserveFiles = false) {
         if (downloadFile) {
-            downloadFile->close();
+            delete downloadFile;
+            downloadFile = nullptr;
         }
-        if (progress) {
-            progress->close();
-        }
-        QMessageBox::warning(nullptr, "Opdatering", message);
-        if (!preserveFiles && !workDir.isEmpty()) {
-            QDir(workDir).removeRecursively();
-        }
-        deleteLater();
+        if (preserveFiles && downloadDirectory) downloadDirectory->setAutoRemove(false);
+        downloadDirectory.reset();
+        workDir.clear();
+        stage = Stage::Idle;
+        if (readyChanged) readyChanged(false);
+        qWarning().noquote() << "Opdatering:" << message;
     }
+
 };
-
-
-static void initAutoUpdate()
-{
-    ZipAutoUpdater::checkOnStartup(qApp);
-}
 
 static constexpr const char* SUPABASE_PROJECT_URL = "https://ebaruoylcnxapffpdmxb.supabase.co";
 static constexpr const char* SUPABASE_PUBLISHABLE_KEY = "sb_publishable_I3jT09hqNVPnvKUvn_ZW7Q_HtpPRASZ";
@@ -1046,6 +1037,26 @@ public:
         masterRetryTimer->start(60000);
     }
 
+    void startBackgroundUpdates() {
+#ifdef Q_OS_WIN
+        const auto trackBackground = [this](Qt::ApplicationState state) {
+            if (state == Qt::ApplicationActive) updateBackgroundSince.invalidate();
+            else if (!updateBackgroundSince.isValid()) updateBackgroundSince.start();
+        };
+        connect(qApp, &QGuiApplication::applicationStateChanged, this, trackBackground);
+        trackBackground(QGuiApplication::applicationState());
+        auto* updater = new ZipAutoUpdater(this,
+            [this] { return safeForAutomaticRestart(); },
+            [this](const QString& commitPath) {
+                if (!safeForAutomaticRestart()) return false;
+                QScopedValueRollback<QString> handoff(updateCommitPath, commitPath);
+                return close();
+            },
+            [this](bool ready) { updateReadyLabel->setVisible(ready); });
+        updater->start();
+#endif
+    }
+
     bool startupWasAborted() const {
         return startupAborted;
     }
@@ -1086,14 +1097,14 @@ public:
                     reportPresetCombo->setCurrentIndex(4);reportMonthEdit->setDate(QDate(2020,1,1));qApp->processEvents();saveWidget(this,QDir(outputDir).filePath("20-report-empty.png"));reportPresetCombo->setCurrentIndex(3);qApp->processEvents();
                 }
                 if (tabs->tabText(i) == "Indstillinger") {
-                    if (salesRegistrationEnabledCheck) {
-                        const QSignalBlocker blocker(salesRegistrationEnabledCheck);
-                        salesRegistrationEnabledCheck->setChecked(true);
-                    }
+                    const QSignalBlocker blocker(salesRegistrationEnabledCheck);
+                    const bool previousRegistrationToggle = salesRegistrationEnabledCheck->isChecked();
+                    salesRegistrationEnabledCheck->setChecked(true);
                     if(auto* sections=findChild<QTabWidget*>("settingsTabs")){
                         const QStringList names={"05-settings.png","08-settings-payroll.png","09-settings-intramanager.png","10-settings-masterark.png","11-settings-account.png"};
                         for(int j=0;j<sections->count();++j){sections->setCurrentIndex(j);qApp->processEvents();saveWidget(this,QDir(outputDir).filePath(names[j]));}
                     }
+                    salesRegistrationEnabledCheck->setChecked(previousRegistrationToggle);
 
                 }
             }
@@ -1152,6 +1163,25 @@ public:
 
         QTimer::singleShot(0,this,[this,outputDir](){auto* dialog=qobject_cast<QDialog*>(QApplication::activeModalWidget());if(!dialog)qFatal("Setup dialog did not open");qApp->processEvents();dialog->grab().save(QDir(outputDir).filePath("29-master-setup.png"));dialog->reject();});showMasterScriptGuide();
         CloudLoginDialog loginPreview("Demo");loginPreview.show();qApp->processEvents();saveWidget(&loginPreview,QDir(outputDir).filePath("17-login.png"));loginPreview.close();
+
+        // Background refreshes must not silently discard text waiting to be saved.
+        const auto savedInitials = defaultSellerInitialsEdit->text();
+        const double savedHours = hourlyRateSpin->value();
+        defaultSellerInitialsEdit->setText("DRAFT");
+        hourlyRateSpin->setValue(savedHours + 7);
+        intramanagerPasswordEdit->setText("synthetic-draft");
+        refreshSettingsUi();
+        if (!hasSettingsDraft(SettingsSection::Masterark) || !hasSettingsDraft(SettingsSection::Pay)
+                || !hasSettingsDraft(SettingsSection::Intramanager)
+                || defaultSellerInitialsEdit->text() != "DRAFT" || hourlyRateSpin->value() != savedHours + 7
+                || intramanagerPasswordEdit->text() != "synthetic-draft")
+            qFatal("Background refresh discarded unsaved settings");
+        defaultSellerInitialsEdit->setText(savedInitials);
+        hourlyRateSpin->setValue(savedHours);
+        intramanagerPasswordEdit->clear();
+        if (hasSettingsDraft(SettingsSection::Masterark) || hasSettingsDraft(SettingsSection::Pay)
+                || hasSettingsDraft(SettingsSection::Intramanager))
+            qFatal("Reverting a settings edit did not clear the draft");
 
         QTimer::singleShot(0, qApp, &QCoreApplication::quit);
     }
@@ -2373,6 +2403,59 @@ private:
         }
     }
 
+    enum class SettingsSection { Goals, Pay, Intramanager, Masterark };
+    QMap<SettingsSection, QVariantList> savedSettingsInputs;
+    QLabel* updateReadyLabel = nullptr;
+    QElapsedTimer updateBackgroundSince;
+    QString updateCommitPath;
+    bool cloudSaveSynchronizing = false;
+
+    QVariantList settingsInputs(SettingsSection section) const {
+        switch (section) {
+        case SettingsSection::Goals:
+            return {targetSpin->text(), monthlySalesTargetSpin->text()};
+        case SettingsSection::Pay:
+            return {hourlyRateSpin->text(), taxDeductionSpin->text(), taxRateSpin->text()};
+        case SettingsSection::Intramanager:
+            // Never put the password in a snapshot.
+            return {intramanagerUsernameEdit->text(), intramanagerEnabledCheck->isChecked()};
+        case SettingsSection::Masterark:
+            return {defaultSellerInitialsEdit->text(), masterWorkbookUrlEdit->text(), salesRegistrationEnabledCheck->isChecked()};
+        }
+        return {};
+    }
+
+    bool hasSettingsDraft(SettingsSection section) const {
+        const auto saved = savedSettingsInputs.constFind(section);
+        if (saved == savedSettingsInputs.cend()) return false;
+        return settingsInputs(section) != saved.value()
+            || (section == SettingsSection::Intramanager && !intramanagerPasswordEdit->text().isEmpty());
+    }
+
+    void acceptSettingsInputs(SettingsSection section) {
+        savedSettingsInputs[section] = settingsInputs(section);
+    }
+
+    bool safeForAutomaticRestart() const {
+        bool editing = QApplication::activeModalWidget() || QApplication::activePopupWidget();
+        for (const auto* window : QApplication::topLevelWidgets()) {
+            if (qobject_cast<const QDialog*>(window) && window->isVisible()) editing = true;
+        }
+        for (const auto section : {SettingsSection::Goals, SettingsSection::Pay, SettingsSection::Intramanager, SettingsSection::Masterark}) {
+            if (hasSettingsDraft(section)) editing = true;
+        }
+        bool busy = masterRegistrationRunning || intramanagerSyncRunning || intramanagerPunchRunning;
+        for (const auto* worker : findChildren<QProcess*>()) {
+            if (worker->state() != QProcess::NotRunning) busy = true;
+        }
+        return canRestartForUpdate({
+            QGuiApplication::applicationState() != Qt::ApplicationActive,
+            updateBackgroundSince.isValid() ? updateBackgroundSince.elapsed() : 0,
+            editing, busy,
+            cloudSaveDirty || cloudSaveInFlight || cloudSaveAgain || cloudSaveSynchronizing
+        });
+    }
+
     void scheduleCloudSave(int delayMs = 100) {
         if (cloudUsername.trimmed().isEmpty() || cloudToken.isEmpty()) {
             return;
@@ -2391,6 +2474,10 @@ private:
     }
 
     void flushCloudSave() {
+        if (cloudSaveSynchronizing) {
+            if (cloudSaveTimer) cloudSaveTimer->start(500);
+            return;
+        }
         if (cloudUsername.trimmed().isEmpty() || cloudToken.isEmpty()) {
             return;
         }
@@ -2440,6 +2527,9 @@ private:
         if (cloudUsername.trimmed().isEmpty() || cloudToken.isEmpty()) {
             return true;
         }
+
+        if (cloudSaveSynchronizing) return false;
+        QScopedValueRollback<bool> synchronizing(cloudSaveSynchronizing, true);
 
         if (cloudSaveTimer && cloudSaveTimer->isActive()) {
             cloudSaveTimer->stop();
@@ -2524,6 +2614,8 @@ private:
         for(const auto& link:links){new QListWidgetItem(premiumIcon(link.second),link.first,navigation);}
         side->addWidget(navigation,1);side->addWidget(premiumDivider());
         activeSalespersonLabel=premiumLabel("","cardTitle");activeSalespersonLabel->setWordWrap(true);side->addSpacing(8);side->addWidget(activeSalespersonLabel);
+        updateReadyLabel=premiumLabel("Opdatering klar. Installationen venter, til programmet er i baggrunden og alt er gemt.","caption");
+        updateReadyLabel->setWordWrap(true);updateReadyLabel->hide();side->addWidget(updateReadyLabel);
         side->addWidget(premiumLabel(QString("Provi Tracker · %1").arg(APP_VERSION),"caption"));root->addWidget(sidebar);
         auto* content=new QVBoxLayout;content->setContentsMargins(30,27,30,22);content->setSpacing(24);
         auto* top=new QHBoxLayout;auto* titleBlock=new QVBoxLayout;titleBlock->setSpacing(6);auto* title=premiumLabel("Overblik","pageTitle");auto* subtitle=premiumLabel("","muted");subtitle->hide();titleBlock->addWidget(title);titleBlock->addWidget(subtitle);top->addLayout(titleBlock);top->addStretch();
@@ -2719,7 +2811,7 @@ private:
         payrollForm->addRow("Timeløn",hourlyRateSpin);payrollForm->addRow("Månedsfradrag",taxDeductionSpin);payrollForm->addRow("Trækprocent",taxRateSpin);payrollCard.second->addLayout(payrollForm);
         auto* savePayrollBtn=new QPushButton("Gem lønindstillinger");savePayrollBtn->setProperty("primary",true);payrollCard.second->addSpacing(12);payrollCard.second->addWidget(savePayrollBtn,0,Qt::AlignRight);
         auto* payrollSaved=premiumLabel("","muted");payrollSaved->hide();payrollCard.second->addWidget(payrollSaved);
-        connect(savePayrollBtn,&QPushButton::clicked,this,[this,payrollSaved](){repo.settings.hourlyRate=hourlyRateSpin->value();repo.settings.taxDeduction=taxDeductionSpin->value();repo.settings.taxRatePercent=taxRateSpin->value();repo.saveSettings();refreshDashboard();generateReport();payrollSaved->setText("Dine lønindstillinger er gemt.");payrollSaved->show();});
+        connect(savePayrollBtn,&QPushButton::clicked,this,[this,payrollSaved](){repo.settings.hourlyRate=hourlyRateSpin->value();repo.settings.taxDeduction=taxDeductionSpin->value();repo.settings.taxRatePercent=taxRateSpin->value();repo.saveSettings();acceptSettingsInputs(SettingsSection::Pay);refreshDashboard();generateReport();payrollSaved->setText("Dine lønindstillinger er gemt.");payrollSaved->show();});
         imForm->addRow(saveIntramanagerBtn);
         imForm->addRow("Status", intramanagerStatusLabel);
 
@@ -2876,6 +2968,7 @@ private:
             repo.settings.bonus.monthlyTargetPoints = targetSpin->value();
             repo.settings.monthlySalesTarget = monthlySalesTargetSpin->value();
             repo.saveSettings();
+            acceptSettingsInputs(SettingsSection::Goals);
             refreshAll();
         });
 
@@ -2893,6 +2986,10 @@ private:
                 scheduleCloudSave();
             }
 
+            if (passwordSaved) {
+                intramanagerPasswordEdit->clear();
+                acceptSettingsInputs(SettingsSection::Intramanager);
+            }
             refreshAll();
             if (!passwordSaved) {
                 intramanagerStatusLabel->setText("Adgangskoden kunne ikke gemmes krypteret. Prøv igen.");
@@ -3358,52 +3455,32 @@ private:
         if (salesRegistrationEnabledCheck) {
             repo.settings.masterRegistrationEnabled = salesRegistrationEnabledCheck->isChecked();
         }
+        acceptSettingsInputs(SettingsSection::Masterark);
         repo.saveSettings();
     }
 
     void refreshSettingsUi() {
         updateCloudAccountStatus();
 
-        if (targetSpin) targetSpin->setValue(repo.settings.bonus.monthlyTargetPoints);
-        if (monthlySalesTargetSpin) monthlySalesTargetSpin->setValue(repo.settings.monthlySalesTarget);
-
-        if (hourlyRateSpin) {
+        if (!hasSettingsDraft(SettingsSection::Goals)) {
+            targetSpin->setValue(repo.settings.bonus.monthlyTargetPoints);
+            monthlySalesTargetSpin->setValue(repo.settings.monthlySalesTarget);
+            acceptSettingsInputs(SettingsSection::Goals);
+        }
+        if (!hasSettingsDraft(SettingsSection::Pay)) {
             hourlyRateSpin->setValue(repo.settings.hourlyRate);
-        }
-
-        if (taxDeductionSpin) {
             taxDeductionSpin->setValue(repo.settings.taxDeduction);
-        }
-
-        if (taxRateSpin) {
             taxRateSpin->setValue(repo.settings.taxRatePercent);
+            acceptSettingsInputs(SettingsSection::Pay);
         }
-        if (intramanagerUsernameEdit) {
+        if (!hasSettingsDraft(SettingsSection::Intramanager)) {
             intramanagerUsernameEdit->setText(repo.settings.intramanagerUsername);
-        }
-
-        if (intramanagerEnabledCheck) {
             intramanagerEnabledCheck->setChecked(repo.settings.intramanagerEnabled);
-        }
-
-        if (intramanagerPasswordEdit) {
-            QString storedUser;
-            QString storedPass;
-            const bool hasPassword = loadIntramanagerPassword(&storedUser, &storedPass);
-
-            intramanagerPasswordEdit->clear();
-
-            if (hasPassword && !storedPass.isEmpty()
-                    && !repo.settings.intramanagerUsername.trimmed().isEmpty()
-                    && repo.settings.intramanagerUsername.trimmed().compare(storedUser.trimmed(), Qt::CaseInsensitive) == 0) {
-                intramanagerPasswordEdit->setPlaceholderText(
-                    hasCloudSecret("intramanagerLogin")
-                        ? "Adgangskode er gemt krypteret i cloud"
-                        : "Adgangskode er gemt krypteret lokalt"
-                    );
-            } else {
-                intramanagerPasswordEdit->setPlaceholderText("Indtast Intramanager adgangskode");
-            }
+            intramanagerPasswordEdit->setPlaceholderText(
+                intramanagerLoginForWorker(nullptr, nullptr)
+                    ? (hasCloudSecret("intramanagerLogin") ? "Adgangskode er gemt krypteret i cloud" : "Adgangskode er gemt krypteret lokalt")
+                    : "Indtast Intramanager adgangskode");
+            acceptSettingsInputs(SettingsSection::Intramanager);
         }
 
         if (intramanagerStatusLabel) {
@@ -3414,14 +3491,11 @@ private:
                     : "Gem dit brugernavn og din adgangskode for at forbinde Intramanager.");
         }
 
-        if (defaultSellerInitialsEdit) {
+        if (!hasSettingsDraft(SettingsSection::Masterark)) {
             defaultSellerInitialsEdit->setText(repo.settings.defaultSellerInitials);
-        }
-        if (masterWorkbookUrlEdit) {
             masterWorkbookUrlEdit->setText(repo.settings.masterWorkbookUrl);
-        }
-        if (salesRegistrationEnabledCheck) {
             salesRegistrationEnabledCheck->setChecked(repo.settings.masterRegistrationEnabled);
+            acceptSettingsInputs(SettingsSection::Masterark);
         }
         if (salesRegistrationStatusLabel) {
             salesRegistrationStatusLabel->setText("Nye salg vises øverst i masterarket og gemmes i historikken via Chrome. Se overførselsstatus på Ordrer.");
@@ -3903,6 +3977,16 @@ private:
 
 protected:
     void closeEvent(QCloseEvent* event) override {
+        if (!updateCommitPath.isEmpty()) {
+            if (!safeForAutomaticRestart()) { event->ignore(); return; }
+            QSaveFile commit(updateCommitPath);
+            if (!commit.open(QIODevice::WriteOnly) || commit.write("ready", 5) != 5 || !commit.commit()) {
+                event->ignore();
+                return;
+            }
+            QMainWindow::closeEvent(event);
+            return;
+        }
         if (masterRegistrationRunning) {
             QMessageBox::information(this, "Salgsregistrering", "Vent, til registreringen i Chrome er afsluttet.");
             event->ignore();
@@ -3929,7 +4013,8 @@ int main(int argc, char *argv[]) {
     if (w.startupWasAborted()) {
         return 0;
     }
-    w.show();
+    if (app.arguments().contains("--updated-in-background")) w.showMinimized();
+    else w.show();
 
     const QString visualReviewDir = qEnvironmentVariable("PROVI_VISUAL_REVIEW_DIR");
     if (!visualReviewDir.isEmpty()) {
@@ -3937,9 +4022,7 @@ int main(int argc, char *argv[]) {
             w.captureVisualReviewAndQuit(visualReviewDir);
         });
     } else {
-        QTimer::singleShot(1500, &app, []() {
-            initAutoUpdate();
-        });
+        w.startBackgroundUpdates();
     }
 
     return app.exec();
