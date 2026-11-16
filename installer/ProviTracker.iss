@@ -60,6 +60,9 @@ Source: "{#BuildDir}\intramanager_worker\intramanager_sync.exe"; DestDir: "{#Use
 Source: "{#BuildDir}\intramanager_worker\_internal\*"; DestDir: "{#UserInstallDir}\intramanager_worker\_internal"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "{#BuildDir}\intramanager_worker\b\*"; DestDir: "{#UserInstallDir}\intramanager_worker\b"; Flags: ignoreversion recursesubdirs createallsubdirs
 
+[InstallDelete]
+Type: files; Name: "{#UserInstallDir}\intramanager_worker\_internal\chrome_extension\intramanager.js"
+
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{#UserInstallDir}\{#MyAppExeName}"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{#UserInstallDir}\{#MyAppExeName}"; Tasks: desktopicon

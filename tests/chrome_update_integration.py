@@ -78,12 +78,18 @@ def main(worker, installer):
                     'initial native-host connection')
                 assert any(w.url.startswith('chrome-extension://'+extension_id+'/') for w in context.service_workers)
                 connected=next(w for w in context.service_workers if w.url.startswith('chrome-extension://'+extension_id+'/'))
-                connected.evaluate('chrome.storage.local.set({intramanagerAccount:"Sofie Opdatering"})')
+                connected.evaluate('chrome.storage.local.set({intramanagerAccount:"Synthetic account", "masterScript.synthetic":{name:"Keep workbook setup"}})')
+                # Simulate the obsolete file left in an employee's unpacked directory.
+                retired = extension / 'intramanager.js'
+                retired.write_text('// Obsolete test module', encoding='utf-8')
+                installed_retired = bundle_manifest.with_name('intramanager.js')
+                installed_retired.write_text('// Obsolete installed module', encoding='utf-8')
                 # Exercise app replacement while Chrome holds the packaged native host open.
                 log = root / 'integration-installer.log'
                 result = subprocess.run([str(installer), '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART',
                     '/CLOSEAPPLICATIONS', '/FORCECLOSEAPPLICATIONS', f'/LOG={log}'], timeout=180)
                 assert result.returncode == 0, log.read_text(encoding='utf-8', errors='replace')[-5000:]
+                assert not installed_retired.exists(), 'The installer must remove the obsolete bundled module'
                 (root / 'loaded.json').unlink(missing_ok=True)
                 wait_for(context, lambda: read_json(root / 'loaded.json').get('version') == initial,
                     'native-host reconnection after silent app installation')
@@ -104,7 +110,11 @@ def main(worker, installer):
                     'automatic extension reload and native-host reconnection')
                 workers = [w for w in context.service_workers if w.url.startswith('chrome-extension://'+extension_id+'/')]
                 assert workers and workers[-1].evaluate('chrome.runtime.getManifest().version') == updated
-                assert workers[-1].evaluate('async()=>{const s=await chrome.storage.local.get("intramanagerAccount");return s.intramanagerAccount;}')=='Sofie Opdatering', 'Updating must retain the confirmed Intramanager account'
+                assert not retired.exists(), 'Updating must remove the obsolete extension module'
+                assert not workers[-1].evaluate('chrome.permissions.contains({origins:["https://5r.intramanager.com/*"]})')
+                assert workers[-1].evaluate('async()=>{const s=await chrome.storage.local.get("masterScript.synthetic");return s["masterScript.synthetic"].name;}')=='Keep workbook setup'
+                wait_for(context, lambda: workers[-1].evaluate('async()=>!Object.hasOwn(await chrome.storage.local.get("intramanagerAccount"),"intramanagerAccount")'),
+                    'retired browser binding removed')
                 assert page.evaluate('window.proviUntouched') == 'keep-me', 'A workbook tab must not be reloaded'
                 assert context.pages == [page], 'Extension update must not open or activate extra tabs'
                 print(f'Actual Chromium/native-host automatic update passed: {initial} -> {updated}; open tab preserved')

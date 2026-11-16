@@ -1262,13 +1262,6 @@ def main():
         payload = read_stdin_json()
 
         args.action = payload.get("action", args.action)
-        if args.action == "chrome-intramanager":
-            from chrome_bridge import request_intramanager
-            try:
-                output(request_intramanager(payload))
-            except Exception as exc:
-                output({"success":False,"error":str(exc)[:500]})
-            return
         if args.action == "chrome-update":
             from chrome_bridge import sync_installed_extension
             try:

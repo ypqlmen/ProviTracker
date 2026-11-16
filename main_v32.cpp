@@ -1228,8 +1228,6 @@ private:
     QDoubleSpinBox* hourlyRateSpin = nullptr;
     QDoubleSpinBox* taxDeductionSpin = nullptr;
     QDoubleSpinBox* taxRateSpin = nullptr;
-    QCheckBox* intramanagerChromeCheck = nullptr;
-    QLineEdit* intramanagerProfileEdit = nullptr;
     QLineEdit* intramanagerUsernameEdit = nullptr;
     QLineEdit* intramanagerPasswordEdit = nullptr;
     QCheckBox* intramanagerEnabledCheck = nullptr;
@@ -1320,8 +1318,21 @@ private:
             + "/intramanager_worker/intramanager_sync.exe";
     }
 
-    QString intramanagerSessionStatePath() const {
-        return appStorageDir() + "/intramanager_session.json";
+    QString intramanagerSessionStatePath(const QString& username) const {
+        const QByteArray account = cloudUsername.trimmed().toCaseFolded().toUtf8()
+            + '\0' + username.trimmed().toCaseFolded().toUtf8();
+        const auto key = QCryptographicHash::hash(account, QCryptographicHash::Sha256).toHex();
+        return appStorageDir() + "/intramanager_session_" + QString::fromLatin1(key) + ".json";
+    }
+
+    bool intramanagerLoginForWorker(QString* usernameOut, QString* passwordOut) const {
+        const QString username = repo.settings.intramanagerUsername.trimmed();
+        QString savedUser, password;
+        if (username.isEmpty() || !loadIntramanagerPassword(&savedUser, &password) || password.isEmpty()
+                || username.compare(savedUser.trimmed(), Qt::CaseInsensitive) != 0) return false;
+        if (usernameOut) *usernameOut = username;
+        if (passwordOut) *passwordOut = password;
+        return true;
     }
 
     bool prepareIntramanagerFetch(QString* usernameOut, QString* passwordOut, QString* workerPathOut, QString* errorOut) const {
@@ -1330,15 +1341,8 @@ private:
             return false;
         }
 
-        const QString username = repo.settings.intramanagerUsername.trimmed();
-        if (username.isEmpty()) {
-            if (errorOut) *errorOut = "Intramanager brugernavn mangler.";
-            return false;
-        }
-
-        QString password;
-        if (!loadIntramanagerPassword(nullptr, &password) || password.isEmpty()) {
-            if (errorOut) *errorOut = "Der er ikke gemt en Intramanager adgangskode.";
+        if (!intramanagerLoginForWorker(usernameOut, passwordOut)) {
+            if (errorOut) *errorOut = "Gem dit Intramanager-brugernavn og din adgangskode under Indstillinger → Intramanager.";
             return false;
         }
 
@@ -1348,8 +1352,6 @@ private:
             return false;
         }
 
-        if (usernameOut) *usernameOut = username;
-        if (passwordOut) *passwordOut = password;
         if (workerPathOut) *workerPathOut = workerPath;
         return true;
     }
@@ -1360,7 +1362,7 @@ private:
         payload["password"] = password;
         payload["fromDate"] = fromDate;
         payload["toDate"] = toDate;
-        payload["sessionState"] = intramanagerSessionStatePath();
+        payload["sessionState"] = intramanagerSessionStatePath(username);
         return payload;
     }
 
@@ -1572,13 +1574,6 @@ private:
     }
 
     void refreshPunchCardUi() {
-        if(repo.settings.intramanagerViaChrome && intramanagerPunchStatusLabel && intramanagerPunchButton) {
-            intramanagerPunchStatusLabel->setText("Intramanager via Chrome");
-            intramanagerPunchButton->setText("Åbn stempelur");intramanagerPunchButton->setEnabled(repo.settings.intramanagerEnabled);
-            if(intramanagerPunchDetailLabel)intramanagerPunchDetailLabel->setText("Løndata hentes med din browserkonto. Stempling foretages på Intramanagers egen side.");
-            return;
-        }
-
         const auto& punch = repo.settings.intramanagerPunch;
 
         if (intramanagerPunchStatusLabel) {
@@ -1641,21 +1636,6 @@ private:
         intramanagerAutoSyncTimer->start();
     }
 
-    void runChromeIntramanager(const QString& operation, const QString& from, const QString& to, std::function<void(QJsonObject)> complete) {
-        auto* process = new QProcess(this);
-        const QJsonObject payload{{"action","chrome-intramanager"},{"operation",operation},{"fromDate",from},{"toDate",to},{"expectedProfile",repo.settings.intramanagerBrowserProfile}};
-        auto finished=std::make_shared<bool>(false);
-        const auto done=[finished,complete](QJsonObject result){if(!*finished){*finished=true;complete(result);}};
-        connect(process,&QProcess::started,this,[process,payload](){process->write(QJsonDocument(payload).toJson(QJsonDocument::Compact));process->closeWriteChannel();});
-        connect(process,QOverload<int,QProcess::ExitStatus>::of(&QProcess::finished),this,[process,done](int,QProcess::ExitStatus){
-            const auto document=QJsonDocument::fromJson(process->readAllStandardOutput());
-            done(document.isObject()?document.object():QJsonObject{{"success",false},{"error","Chrome returnerede ikke et gyldigt svar fra Intramanager."}});process->deleteLater();
-        });
-        connect(process,&QProcess::errorOccurred,this,[process,done](QProcess::ProcessError error){if(error==QProcess::FailedToStart){done({{"success",false},{"error","Chrome-forbindelsen kunne ikke starte. Geninstaller Provi Tracker."}});process->deleteLater();}});
-        QTimer::singleShot(95000,process,[process](){if(process->state()!=QProcess::NotRunning)process->kill();});
-        process->start(intramanagerWorkerPath(),{"--stdin-json"});
-    }
-
     void fetchIntramanagerHoursAsync(const QString& fromDate,const QString& toDate,bool silent,std::function<void(bool)> afterFetch = {}) {
         const QString key=fromDate+"|"+toDate;
         if(intramanagerHoursWaiters.contains(key)){if(afterFetch)intramanagerHoursWaiters[key].append(afterFetch);return;}
@@ -1676,20 +1656,6 @@ private:
         if (intramanagerSyncRunning) {
             QTimer::singleShot(1500, this, [this, fromDate, toDate, silent, afterFetch]() {
                 performIntramanagerHoursFetch(fromDate, toDate, silent, afterFetch);
-            });
-            return;
-        }
-
-        if(repo.settings.intramanagerViaChrome) {
-            if(!repo.settings.intramanagerEnabled){if(afterFetch)afterFetch(false);return;}
-            intramanagerSyncRunning=true;
-            runChromeIntramanager("hours",fromDate,toDate,[this,fromDate,toDate,silent,afterFetch](QJsonObject answer){
-                intramanagerSyncRunning=false;
-                const auto result=parseIntramanagerWorkerOutput(QJsonDocument(answer).toJson(),{});
-                if(result.success){rememberIntramanagerHours(fromDate,toDate,result.hours,result.phoneHours,result.sickHours,result.sickPay,result.cancellations);repo.saveSettings();refreshAll();}
-                if(intramanagerStatusLabel)intramanagerStatusLabel->setText(result.success?"Løndata er opdateret via din Chrome-konto.":result.error);
-                if(!result.success && !silent)QMessageBox::information(this,"Intramanager via Chrome",result.error);
-                if(afterFetch)afterFetch(result.success);
             });
             return;
         }
@@ -1788,12 +1754,6 @@ private:
     }
 
     void refreshIntramanagerOverviewAsync(bool silent = true, std::function<void(bool)> afterFetch = {}) {
-        if(repo.settings.intramanagerViaChrome) {
-            const auto range=payrollBonusRange(QDate::currentDate());
-            fetchIntramanagerHoursAsync(intramanagerDate(range.first.date()),intramanagerDate(range.second.date()),silent,afterFetch);
-            refreshPunchCardUi();return;
-        }
-
         if (intramanagerSyncRunning || intramanagerPunchRunning) {
             QTimer::singleShot(1500, this, [this, silent, afterFetch]() {
                 refreshIntramanagerOverviewAsync(silent, afterFetch);
@@ -1917,7 +1877,7 @@ private:
         payload["password"] = password;
         payload["action"] = action;
         payload["onDate"] = intramanagerDate(QDate::currentDate());
-        payload["sessionState"] = intramanagerSessionStatePath();
+        payload["sessionState"] = intramanagerSessionStatePath(username);
         if (!targetAction.isEmpty()) {
             payload["targetAction"] = targetAction;
         }
@@ -1997,12 +1957,10 @@ private:
     }
 
     void refreshIntramanagerPunchStatusAsync(bool silent = true) {
-        if (repo.settings.intramanagerViaChrome) { refreshPunchCardUi(); return; }
         runIntramanagerPunchWorker("punch-status", silent);
     }
 
     void toggleIntramanagerPunchAsync() {
-        if(repo.settings.intramanagerViaChrome){QDesktopServices::openUrl(QUrl("https://5r.intramanager.com/reports/punch-in/"));return;}
 
         const auto& punch = repo.settings.intramanagerPunch;
         if (!punch.known) {
@@ -2756,25 +2714,6 @@ private:
         imForm->addRow("Brugernavn", intramanagerUsernameEdit);
         imForm->addRow("Adgangskode", intramanagerPasswordEdit);
 
-        intramanagerChromeCheck=new QCheckBox("Brug Chrome til timer, sygeløn og annulleringer");
-        imForm->addRow(intramanagerChromeCheck);
-        intramanagerProfileEdit=new QLineEdit;intramanagerProfileEdit->setPlaceholderText("Fuldt kontonavn fra Intramanager");configureSettingsField(intramanagerProfileEdit);
-        imForm->addRow("Chrome-konto",intramanagerProfileEdit);
-        auto* bindChrome=new QPushButton("Forbind konto i Chrome");configureSettingsButton(bindChrome);imForm->addRow(bindChrome);
-        connect(intramanagerChromeCheck,&QCheckBox::toggled,intramanagerUsernameEdit,&QWidget::setDisabled);
-        connect(intramanagerChromeCheck,&QCheckBox::toggled,intramanagerPasswordEdit,&QWidget::setDisabled);
-        connect(bindChrome,&QPushButton::clicked,this,[this](){
-            if(intramanagerSyncRunning){QMessageBox::information(this,"Intramanager","Vent til den aktuelle hentning er afsluttet.");return;}
-            intramanagerSyncRunning=true;
-            runChromeIntramanager("profile",{}, {},[this](QJsonObject answer){
-                intramanagerSyncRunning=false;
-                if(!answer.value("success").toBool()){QMessageBox::information(this,"Forbind Intramanager",answer.value("error").toString());return;}
-                const QString profile=answer.value("profileName").toString();
-                if(!confirmQuestion(this,"Bekræft din konto",QString("Chrome er logget ind som %1. Er det din Intramanager-konto?").arg(profile)))return;
-                repo.settings.intramanagerBrowserProfile=profile;repo.settings.intramanagerViaChrome=true;repo.settings.intramanagerEnabled=true;
-                repo.saveSettings();refreshAll();setupIntramanagerAutoSync();
-            });
-        });
         auto payrollCard=createCard("Løn & skat");auto* payrollForm=new QFormLayout;configureSettingsForm(payrollForm);
         auto* payrollHelp=premiumLabel("Indtast timeløn, månedsfradrag og trækprocent fra dit skattekort.","muted");payrollHelp->setWordWrap(true);payrollCard.second->addWidget(payrollHelp);payrollCard.second->addSpacing(12);
         payrollForm->addRow("Timeløn",hourlyRateSpin);payrollForm->addRow("Månedsfradrag",taxDeductionSpin);payrollForm->addRow("Trækprocent",taxRateSpin);payrollCard.second->addLayout(payrollForm);
@@ -2946,33 +2885,18 @@ private:
 
             repo.settings.intramanagerEnabled = intramanagerEnabledCheck->isChecked();
             repo.settings.intramanagerUsername = username;
-            repo.settings.intramanagerViaChrome = intramanagerChromeCheck->isChecked();
-            repo.settings.intramanagerBrowserProfile = intramanagerProfileEdit->text().trimmed();
 
             repo.saveSettings();
 
-            bool passwordSaved = true;
-
-            if (!password.isEmpty()) {
-                passwordSaved = saveIntramanagerPassword(username, password);
-                if (passwordSaved && storeIntramanagerSecret(username, password)) {
-                    scheduleCloudSave();
-                }
-            }
-
-            if (!passwordSaved) {
-                intramanagerStatusLabel->setText("Indstillinger gemt, men adgangskoden kunne ikke gemmes krypteret.");
-            } else {
-                intramanagerStatusLabel->setText("Intramanager og løn er gemt.");
-                intramanagerPasswordEdit->clear();
-                intramanagerPasswordEdit->setPlaceholderText(
-                    hasCloudSecret("intramanagerLogin")
-                        ? "Adgangskode er gemt krypteret i cloud"
-                        : "Adgangskode er gemt krypteret lokalt"
-                    );
+            const bool passwordSaved = password.isEmpty() || saveIntramanagerPassword(username, password);
+            if (!password.isEmpty() && passwordSaved && storeIntramanagerSecret(username, password)) {
+                scheduleCloudSave();
             }
 
             refreshAll();
+            if (!passwordSaved) {
+                intramanagerStatusLabel->setText("Adgangskoden kunne ikke gemmes krypteret. Prøv igen.");
+            }
             setupIntramanagerAutoSync();
             refreshIntramanagerPunchStatusAsync(true);
         });
@@ -3458,8 +3382,6 @@ private:
             intramanagerUsernameEdit->setText(repo.settings.intramanagerUsername);
         }
 
-        if(intramanagerChromeCheck)intramanagerChromeCheck->setChecked(repo.settings.intramanagerViaChrome);
-        if(intramanagerProfileEdit)intramanagerProfileEdit->setText(repo.settings.intramanagerBrowserProfile);
         if (intramanagerEnabledCheck) {
             intramanagerEnabledCheck->setChecked(repo.settings.intramanagerEnabled);
         }
@@ -3471,7 +3393,9 @@ private:
 
             intramanagerPasswordEdit->clear();
 
-            if (hasPassword && !storedPass.isEmpty()) {
+            if (hasPassword && !storedPass.isEmpty()
+                    && !repo.settings.intramanagerUsername.trimmed().isEmpty()
+                    && repo.settings.intramanagerUsername.trimmed().compare(storedUser.trimmed(), Qt::CaseInsensitive) == 0) {
                 intramanagerPasswordEdit->setPlaceholderText(
                     hasCloudSecret("intramanagerLogin")
                         ? "Adgangskode er gemt krypteret i cloud"
@@ -3483,7 +3407,11 @@ private:
         }
 
         if (intramanagerStatusLabel) {
-            intramanagerStatusLabel->setText("Timer hentes automatisk.");
+            intramanagerStatusLabel->setText(!repo.settings.intramanagerEnabled
+                ? "Intramanager er slået fra."
+                : intramanagerLoginForWorker(nullptr, nullptr)
+                    ? "Timer, løndata og stempelur hentes gennem Provi Tracker."
+                    : "Gem dit brugernavn og din adgangskode for at forbinde Intramanager.");
         }
 
         if (defaultSellerInitialsEdit) {

@@ -8,14 +8,14 @@ import struct
 import sys
 import time
 import uuid
-import math
-from datetime import datetime
 from contextlib import contextmanager
 from urllib.parse import urlparse, parse_qs
 
 HOST = 'dk.provitracker.masterark'
+WORKBOOK_ACTIONS = {'probe', 'setup', 'install', 'register'}
+RETIRED_EXTENSION_FILES = ('intramanager.js',)
 LIMIT = 16384
-EXTENSION_FILES = ('manifest.json', 'background.js', 'diagnostics.js', 'intramanager.js', 'identity.js', 'probe.js', 'popup.html', 'popup.js', 'office_ui.js', 'office_setup.js', 'receipt.js', 'excel_online_sales_registration_v3.ts', 'excel_online_sales_registration_v4.ts')
+EXTENSION_FILES = ('manifest.json', 'background.js', 'diagnostics.js', 'identity.js', 'probe.js', 'popup.html', 'popup.js', 'office_ui.js', 'office_setup.js', 'receipt.js', 'excel_online_sales_registration_v3.ts', 'excel_online_sales_registration_v4.ts')
 
 def version_tuple(value):
     parts = str(value).split('.')
@@ -153,7 +153,8 @@ def install_extension(only_existing=False):
             return {'success': True, 'status': 'chrome-update-deferred', 'updated': False}
         source = extension_dir()
         contents = {path.relative_to(source).as_posix(): path.read_bytes()
-                    for path in source.rglob('*') if path.is_file()}
+                    for path in source.rglob('*')
+                    if path.is_file() and path.relative_to(source).as_posix() not in RETIRED_EXTENSION_FILES}
         if not valid_package_files(list(contents)):
             raise ValueError('Chrome-udvidelsens pakke er ufuldstændig.')
         manifest = json.loads(contents['manifest.json'])
@@ -178,6 +179,8 @@ def install_extension(only_existing=False):
                     temp.replace(target)
                 finally:
                     temp.unlink(missing_ok=True)
+        for name in RETIRED_EXTENSION_FILES:
+            (destination / name).unlink(missing_ok=True)
         atomic_json(root() / 'installed.json', {'version': manifest['version'], 'hash': package_hash(contents),
             'files': sorted(contents)})
         return {'success': True, 'status': 'chrome-prepared', 'updated': changed,
@@ -204,31 +207,6 @@ def probe(payload):
 def run_registration(payload):
     return request_chrome(payload, 'install' if payload.get('action') == 'chrome-autosetup' else 'setup' if payload.get('action') == 'chrome-setup' else 'register')
 
-def valid_intramanager_request(value):
-    if value.get('type')!='intramanager' or value.get('workbookUrl')!='https://5r.intramanager.com/reports/history/': return False
-    if value.get('operation')=='profile': return True
-    if value.get('operation')!='hours' or not isinstance(value.get('expectedProfile'),str) or not 3<=len(value['expectedProfile'])<=140: return False
-    try:
-        start=datetime.strptime(value['fromDate'],'%d-%m-%Y')
-        end=datetime.strptime(value['toDate'],'%d-%m-%Y')
-        return 0<=(end-start).days<=370
-    except (ValueError,TypeError,KeyError): return False
-
-def valid_intramanager_result(value, query):
-    if value.get('success') is not True or not isinstance(value.get('profileName'),str) or not 3<=len(value['profileName'])<=140: return False
-    if query.get('operation')=='profile': return True
-    normalize=lambda text:' '.join(text.casefold().split())
-    if normalize(value['profileName'])!=normalize(query.get('expectedProfile','')): return False
-    if value.get('periodFrom')!=query.get('fromDate') or value.get('periodTo')!=query.get('toDate') or value.get('payrollSchema')!=2: return False
-    for key in ['hours','phoneHours','sickHours','sickPay','cancellations']:
-        n=value.get(key)
-        if type(n) not in (int,float) or not math.isfinite(n) or abs(n)>10000000: return False
-        if key in ['hours','phoneHours','sickHours'] and n<0: return False
-    return True
-
-def request_intramanager(payload):
-    return request_chrome({**payload,'workbookUrl':'https://5r.intramanager.com/reports/history/'},'intramanager')
-
 def extension_version_loaded(required, seconds=12):
     deadline=time.monotonic()+seconds
     while time.monotonic()<deadline:
@@ -240,9 +218,9 @@ def extension_version_loaded(required, seconds=12):
 
 def request_chrome(payload, kind):
     url = payload.get('workbookUrl', '')
-    if kind!='intramanager' and not valid_workbook(url): raise ValueError('Gem et direkte link til masterarket med sourcedoc i adressen.')
+    if kind not in WORKBOOK_ACTIONS or not valid_workbook(url): raise ValueError('Gem et direkte link til masterarket med sourcedoc i adressen.')
     register_host()
-    if kind in {'install','register','intramanager'}: sync_installed_extension()
+    if kind in {'install','register'}: sync_installed_extension()
     folder = root()
     request_id = str(uuid.uuid4())
     if kind in {'setup','install'} and payload.get('registration', {}).get('requestId'):
@@ -257,17 +235,14 @@ def request_chrome(payload, kind):
         request_id = registration['requestId']
         if registration.get('isTest') is True or not isinstance(registration.get('orderNumber'), str) or not registration['orderNumber'].strip():
             raise ValueError('Ugyldig salgsregistrering.')
-    duration = 420 if kind=='register' else 660 if kind=='install' else 60 if kind=='intramanager' else 35 if kind == 'probe' else 180
+    duration = 420 if kind=='register' else 660 if kind=='install' else 35 if kind == 'probe' else 180
     envelope = {'type': kind, 'requestId': request_id, 'workbookUrl': url, 'expiresAt': time.time()+duration}
-    if kind in {'install','register','intramanager'}: envelope['requiredExtensionVersion']=json.loads((extension_dir()/'manifest.json').read_text(encoding='utf-8'))['version']
-    if kind not in {'probe','intramanager'}: envelope['registration'] = registration
-    if kind=='intramanager':
-        envelope.update({key:payload.get(key) for key in ['operation','fromDate','toDate','expectedProfile']})
-        if not valid_intramanager_request(envelope): raise ValueError('Kontrollér kontonavn og periode for Intramanager i Chrome.')
+    if kind in {'install','register'}: envelope['requiredExtensionVersion']=json.loads((extension_dir()/'manifest.json').read_text(encoding='utf-8'))['version']
+    if kind != 'probe': envelope['registration'] = registration
     if len(json.dumps(envelope, ensure_ascii=False).encode('utf-8')) > LIMIT:
         raise ValueError('Salgsregistreringen er for lang til Chrome. Forkort bemærkningerne og prøv igen.')
-    if kind in {'install','register','intramanager'} and not extension_version_loaded(envelope['requiredExtensionVersion']):
-        return {'success':False,'status':'chrome-update-required','requestId':request_id,'error':'Afventer den opdaterede Chrome-udvidelse. Åbn Chrome og klik på Provi Tracker-udvidelsen. Prøv hentningen igen, når den nye version er klar.' if kind=='intramanager' else 'Afventer den opdaterede Chrome-udvidelse. Åbn Chrome og klik på Provi Tracker-udvidelsen. Salget afventer, indtil den nye version er klar.'}
+    if kind in {'install','register'} and not extension_version_loaded(envelope['requiredExtensionVersion']):
+        return {'success':False,'status':'chrome-update-required','requestId':request_id,'error':'Afventer den opdaterede Chrome-udvidelse. Åbn Chrome og klik på Provi Tracker-udvidelsen. Salget afventer, indtil den nye version er klar.'}
     request = folder / 'request.json'
     response = folder / 'response.json'
     with update_lock():
@@ -286,7 +261,7 @@ def request_chrome(payload, kind):
                     print('PROVITRACKER_PROGRESS:'+json.dumps({'phase':phase}),file=sys.stderr,flush=True)
             result = read_json(response)
             if result.get('requestId') == request_id:
-                if kind=='probe' or result.get('success') is not True or (valid_intramanager_result(result,envelope) if kind=='intramanager' else valid_receipt(result, registration)): return result
+                if kind=='probe' or result.get('success') is not True or valid_receipt(result, registration): return result
                 return {'success':False,'error':'Excel returnerede en forkert kvittering. Kontrollér salget før genforsøg.'}
             time.sleep(.2)
         return {'success':False, 'error':'Chrome svarede ikke. Åbn Chrome og masterarket, og klik på Provi Tracker-udvidelsen. Prøv derefter igen.'}
@@ -308,7 +283,7 @@ def native_main(origin):
         message = read_frame(sys.stdin.buffer)
         if message is None: return 0
         request = read_json(root() / 'request.json')
-        live = request.get('expiresAt', 0) > time.time()
+        live = request.get('type') in WORKBOOK_ACTIONS and request.get('expiresAt', 0) > time.time()
         if message.get('type') == 'poll':
             if not live:
                 try:
@@ -316,7 +291,7 @@ def native_main(origin):
                     with update_lock():
                         # A probe or another updater may have started since the initial read.
                         request = read_json(root() / 'request.json')
-                        live = request.get('expiresAt', 0) > time.time()
+                        live = request.get('type') in WORKBOOK_ACTIONS and request.get('expiresAt', 0) > time.time()
                         ready = ready_package()
                         loaded = message.get('extensionVersion')
                         if not live and ready and loaded:
@@ -332,18 +307,14 @@ def native_main(origin):
                 if current_version < version_tuple(request['requiredExtensionVersion']):
                     write_frame(sys.stdout.buffer,{'type':'reload-extension','version':request['requiredExtensionVersion']})
                     continue
-            if live and request.get('requestId') != last_id and (valid_intramanager_request(request) if request.get('type')=='intramanager' else valid_workbook(request.get('workbookUrl', ''))):
+            if live and request.get('requestId') != last_id and valid_workbook(request.get('workbookUrl', '')):
                 last_id = request['requestId']
                 write_frame(sys.stdout.buffer, request)
         elif message.get('type') == 'progress' and live and request.get('type') in {'install','register'} and message.get('requestId')==last_id==request.get('requestId'):
             if message.get('phase') in SETUP_PHASES:
                 atomic_json(root() / 'progress.json', {'requestId':last_id,'phase':message['phase']})
         elif message.get('type') == 'result' and live and message.get('requestId') == last_id == request.get('requestId'):
-            if request.get('type')=='intramanager':
-                success=valid_intramanager_result(message,request)
-                result={key:message.get(key) for key in ['profileName','periodFrom','periodTo','payrollSchema','hours','phoneHours','sickHours','sickPay','cancellations']}
-                result.update({'requestId':last_id,'success':success})
-            elif request.get('type') == 'probe':
+            if request.get('type') == 'probe':
                 success = message.get('success') is True and message.get('status') == 'chrome-connected'
                 waiting_status = message.get('status') if message.get('status') in {'chrome-sleeping', 'chrome-login-required'} else 'error'
                 result = {'requestId':last_id,'success':success,'status':'chrome-connected' if success else waiting_status}

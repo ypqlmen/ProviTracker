@@ -153,8 +153,6 @@ struct AppSettings {
     double hourlyRate = 0.0;
     double taxDeduction = 0.0;
     double taxRatePercent = 0.0;
-    bool intramanagerViaChrome = false;
-    QString intramanagerBrowserProfile;
     QString intramanagerUsername;
     bool intramanagerEnabled = false;
 
@@ -446,8 +444,6 @@ static QJsonObject toJson(const AppSettings& s) {
         {"hourlyRate", s.hourlyRate},
         {"taxDeduction", s.taxDeduction},
         {"taxRatePercent", s.taxRatePercent},
-        {"intramanagerViaChrome", s.intramanagerViaChrome},
-        {"intramanagerBrowserProfile", s.intramanagerBrowserProfile},
         {"intramanagerUsername", s.intramanagerUsername},
         {"intramanagerEnabled", s.intramanagerEnabled},
         {"defaultSellerInitials", s.defaultSellerInitials},
@@ -474,8 +470,6 @@ static AppSettings fromSettingsJson(const QJsonObject& o) {
     s.hourlyRate = o.value("hourlyRate").toDouble(0.0);
     s.taxDeduction = o.value("taxDeduction").toDouble(0.0);
     s.taxRatePercent = o.value("taxRatePercent").toDouble(0.0);
-    s.intramanagerViaChrome = o.value("intramanagerViaChrome").toBool(false);
-    s.intramanagerBrowserProfile = o.value("intramanagerBrowserProfile").toString();
     s.intramanagerUsername = o.value("intramanagerUsername").toString();
     s.intramanagerEnabled = o.value("intramanagerEnabled").toBool(false);
     s.defaultSellerInitials = o.value("defaultSellerInitials").toString();

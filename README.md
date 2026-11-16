@@ -8,7 +8,7 @@ Qt Widgets desktop-app i C++ med Supabase cloud-login, per-user installation og 
 - Én sælger pr. bruger, knyttet til brugerens cloud-login.
 - Fuld sygeløn og annulleringer fra Intramanager indgår i lønperioderne. Skatteprocent og fradrag indtastes manuelt.
 - Chrome-udvidelse 0.1.21 opsætter og opdaterer selv masterarkets Office Script, åbner det gemte masterark-link i baggrunden og kræver kvittering før et salg markeres som registreret.
-- Intramanager kan hentes gennem brugerens eksisterende Chrome-login, og forbindelsen bevares på tværs af sessioner og opdateringer.
+- Intramanager hentes gennem programmets egen worker. Gem login til timer, sygeløn, annulleringer og stempelur under Indstillinger → Intramanager.
 - Kontakter, PDF-eksport og manuelle backupkontroller er fjernet. Installation og opdatering foregår fortsat pr. Windows-bruger uden administratorrettigheder.
 
 ## Nyt i 1.6.2
