@@ -1,8 +1,8 @@
 {
-  "version": "2.0.3",
-  "build_version": 20003,
-  "run_id": 42373901053,
-  "source_sha": "f20f2232ffea6f0c756d7a0602fac62c98d5e55d",
-  "artifact_id": 13575481152,
-  "release_notes": "- Månedsbonussen bruger nu den sats, der gjaldt i den måned, hvor pointene blev optjent.\n- Nye satser kan træde i kraft fra en bestemt måned, så tidligere måneder bevarer deres satser.\n- Lønperioder og tidspunktet for udbetaling af månedsbonus er uændrede."
+  "version": "2.0.4",
+  "build_version": 20004,
+  "run_id": 43959008205,
+  "source_sha": "18f83abec6efe5d64f11e2f16838f6ff618fac5b",
+  "artifact_id": 14274181299,
+  "release_notes": "- Salgsregistrering finder nu produktkolonner efter navn, også i ældre masterark med en anden placering. Arkets overskrifter og produktklasser ændres ikke. Point beregnes fortsat ud fra Provi Trackers produktkatalog.\n- Hvis en ordre kræver en produktkolonne, som mangler eller er uklar, bliver ordren i Provi Tracker, og Excel-overførslen stopper med en besked.\n- Timer, sygeløn, annulleringer og stempelur hentes gennem Provi Tracker. Brugere, der kun havde forbundet Intramanager via Chrome-udvidelsen, skal gemme deres Intramanager-login under Indstillinger → Intramanager én gang.\n- Chrome-udvidelsen håndterer masterarket. Den automatiske opdatering kræver fortsat ikke administratorrettigheder."
 }
