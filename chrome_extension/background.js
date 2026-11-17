@@ -1,3 +1,4 @@
+import {startOutlook,outlookStatus,isOutlookOrigin,cleanupOutlook} from './outlook.js';
 import {workbookIdentity} from './identity.js';
 import {installStep} from './office_setup.js';
 import {officeStep} from './office_ui.js';
@@ -95,6 +96,18 @@ async function protectBackgroundTab(tab) {
   if(tab.status==='loading' || tab.discarded || tab.frozen)return;
   await chrome.scripting.executeScript({target:{tabId:tab.id,frameIds:[0]},func:keepDocumentAwake}).catch(()=>{});
 }
+async function protectOutlook(tab){
+  if(!isOutlookOrigin(originOf(tab.url)))return;
+  const key='outlookProtection.'+tab.id;
+  if(!(await chrome.storage.session.get(key))[key])await chrome.storage.session.set({[key]:{autoDiscardable:tab.autoDiscardable!==false}});
+  await protectBackgroundTab(tab);
+}
+async function releaseOutlook(id,tab){
+  const key='outlookProtection.'+id,saved=(await chrome.storage.session.get(key))[key];
+  if(!saved || (tab && isOutlookOrigin(originOf(tab.url))))return;
+  await chrome.storage.session.remove(key);
+  if(tab)await chrome.tabs.update(id,{autoDiscardable:saved.autoDiscardable}).catch(()=>{});
+}
 async function protectWorkbook(tab, identity) {
   tab=await chrome.tabs.get(tab.id);
   if (workbookIdentity(tab.url)!==identity) throw new Error('Workbook changed');
@@ -117,6 +130,7 @@ async function restoreProtection() {
   const tabs=await chrome.tabs.query({});
   for(const tab of tabs){
     if(values[protectionKey(tab.id)]?.identity===workbookIdentity(tab.url) && workbookIdentity(tab.url))await protectWorkbook(tab,workbookIdentity(tab.url));
+    if(tab.id===values.outlookTab && isOutlookOrigin(originOf(tab.url)))await protectOutlook(tab);
   }
 
 }
@@ -261,6 +275,7 @@ async function scanOffice(job) {
   finally { job.scanning=false; }
 }
 async function scan(job) {
+  if(job.type==='outlook') return job.scan?.();
   if (pending!==job || job.finishing) return;
   try {
     const tab=await chrome.tabs.get(job.tabId);
@@ -296,12 +311,13 @@ async function finish(job, result) {
   job.finishing=true;
   clearInterval(job.poll);
   clearTimeout(job.timeout);
+  if(job.type==='outlook')await cleanupOutlook(job);
   const lastStage=job.phaseTimeline?.find(step=>step.phase===job.lastStage);if(lastStage)lastStage.lastMs=Math.max(0,Date.now()-job.startedAt);
   traceStep(job,'finished',{phase:job.phase,outcome:result.success?'result':'error',locked:job.scanning===true,inflight:job.inflight || 0});
   if(job.type==='install' || job.hadScriptUpdate){result.diagnostics={...diagnosticReport({...job,type:'install'},loadedVersion),scriptUpdated:job.scriptUpdated===true};chrome.storage.local.set({lastSetup:result.diagnostics}).catch(()=>{});}
-  if(!result.success) chrome.storage.local.set({lastFailure:diagnosticReport(job,loadedVersion)}).catch(()=>{});
+  if(!result.success && job.type!=='outlook') chrome.storage.local.set({lastFailure:diagnosticReport(job,loadedVersion)}).catch(()=>{});
   pending = null;
-  status = result.success ? (job.type==='probe' ? 'Forbindelsen til masterarket virker.' : job.type==='install' ? 'Masterarket er opsat og kontrolleret uden at registrere salg.' : 'Excel har bekræftet registreringen.') : result.error;
+  status = result.success ? (job.type==='outlook' ? (job.operation==='connect'?'Outlook er tilknyttet.':'Outlook har bekræftet afsendelsen.') : job.type==='probe' ? 'Forbindelsen til masterarket virker.' : job.type==='install' ? 'Masterarket er opsat og kontrolleret uden at registrere salg.' : 'Excel har bekræftet registreringen.') : result.error;
   port?.postMessage({type:'result', requestId:job.requestId, worksheetName:job.registration?.worksheetName, extensionVersion:loadedVersion, ...result});
   reloadWhenIdle();
 }
@@ -324,6 +340,12 @@ function connect() {
       return;
     }
     if(pending && message.requestId && message.requestId!==pending.requestId && pending.expiresAt && pending.expiresAt*1000<Date.now())finish(pending,{success:false,error:'Den forrige Chrome-opgave udløb. Forbindelsen er frigivet.'});
+    if(message.type==='outlook' && !pending){
+      const job=pending={...message,startedAt:Date.now()};
+      try{await startOutlook(job,finish,()=>pending===job && !job.finishing,{protectTab:protectOutlook});}
+      catch{finish(job,{success:false,status:'mail-uncertain',error:'Outlook-forbindelsen blev afbrudt. Kontrollér Sendt post før genforsøg.'});}
+      return;
+    }
     if (!['probe','setup','install','register'].includes(message.type) || pending) return;
     const identity = workbookIdentity(message.workbookUrl);
     if (!identity) return;
@@ -372,7 +394,16 @@ function connect() {
   poll();
 }
 chrome.runtime.onMessage.addListener((message, sender, reply) => {
-  if (message?.type === 'status' && !sender.tab) { reply({status,extensionVersion:loadedVersion}); connect(); return; }
+  const ownPopup=!sender.tab || sender.url?.split('#')[0]===chrome.runtime.getURL('popup.html');
+  if(message?.type==='outlook-status' && ownPopup){outlookStatus().then(reply);return true;}
+  if(message?.type==='outlook-connect' && ownPopup){
+    if(pending){reply({started:pending.type==='outlook' && pending.operation==='connect'});return;}
+    const job=pending={type:'outlook',operation:'connect',requestId:crypto.randomUUID(),expiresAt:Date.now()/1000+660};
+    startOutlook(job,finish,()=>pending===job && !job.finishing,{protectTab:protectOutlook}).catch(()=>finish(job,{success:false,error:'Outlook kunne ikke forbindes.'}));
+    reply({started:true});return;
+  }
+
+  if (message?.type === 'status' && ownPopup) { reply({status,extensionVersion:loadedVersion}); connect(); return; }
   const job = pending;
   if (message?.type !== 'probe-result' || !job || job.connected || sender.tab?.id !== job.tabId ||
       message.requestId !== job.requestId || workbookIdentity(sender.tab.url) !== job.identity) return;
@@ -381,14 +412,16 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
   confirmWorkbook(job,message.sheet);
 });
 chrome.tabs.onUpdated.addListener((id, change, tab) => {
-  if(change.url){releaseWorkbook(id,tab).catch(()=>{});}
+  if(change.url){releaseWorkbook(id,tab).catch(()=>{});releaseOutlook(id,tab).catch(()=>{});}
   if(change.status==='complete'){
     chrome.storage.session.get(protectionKey(id)).then(saved=>{if(saved[protectionKey(id)]?.identity===workbookIdentity(tab.url))protectWorkbook(tab,workbookIdentity(tab.url)).catch(()=>{});});
+    chrome.storage.session.get('outlookTab').then(saved=>{if(saved.outlookTab===id)protectOutlook(tab).catch(()=>{});});
   }
   if (pending?.tabId===id && (change.discarded || change.frozen)) scan(pending);
 });
 chrome.tabs.onRemoved.addListener(id => {
-  releaseWorkbook(id,null).catch(()=>{});
+  releaseWorkbook(id,null).catch(()=>{});releaseOutlook(id,null).catch(()=>{});
+  if(pending?.tabId===id && pending.type==='outlook'){finish(pending,{success:false,status:pending.armed?'mail-uncertain':'mail-not-sent',notSent:!pending.armed,error:'Outlook-fanen blev lukket. Kontrollér mailens status før genforsøg.'});return;}
   if (pending?.tabId===id) finish(pending,{success:false,error:'Masterarket blev lukket. Åbn det igen, og prøv fra Ordrer.'});
 });
 setInterval(poll, 3000);

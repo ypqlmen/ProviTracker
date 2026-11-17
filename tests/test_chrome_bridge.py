@@ -49,7 +49,8 @@ class ChromeBridgeTests(unittest.TestCase):
         manifest = json.loads((bridge.extension_dir() / 'manifest.json').read_text())
         self.assertEqual(manifest['host_permissions'], ['https://5rmarketing-my.sharepoint.com/*', 'https://euc-excel.officeapps.live.com/*', 'https://fa000000043.mro1cdnstorage.public.onecdn.static.microsoft/*'])
         self.assertNotIn('cookies', manifest['permissions'])
-        self.assertNotIn('optional_host_permissions', manifest)
+        self.assertCountEqual(manifest['optional_host_permissions'], [
+            'https://outlook.office.com/*', 'https://outlook.cloud.microsoft/*', 'https://outlook.office365.com/*'])
         self.assertFalse((bridge.extension_dir()/'intramanager.js').exists())
 
     def test_native_roundtrip_rejects_stale_receipt(self):

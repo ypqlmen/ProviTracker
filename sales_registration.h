@@ -1,5 +1,6 @@
 #pragma once
 #include "domain.h"
+#include "sales_mail.h"
 
 // Kept with the order so retries use the originally registered products,
 // not a later version of the product catalogue.
@@ -22,7 +23,7 @@ static QJsonObject makeSalesRegistration(const Order& order, const QVector<Produ
     };
 }
 
-static QString salesRegistrationStateText(const Order& order) {
+static QString masterRegistrationStateText(const Order& order) {
     if (order.masterRegistrationState == "registered") return "Registreret i masterark";
     if (!order.masterRegistration.isEmpty() && order.masterRegistration.value("schemaVersion").toInt() != 3) return "Kontrollér tidligere registrering manuelt";
     if (order.masterRegistrationState == "pending" || order.masterRegistrationState == "transferring") return "Afventer masterark";
@@ -30,6 +31,11 @@ static QString salesRegistrationStateText(const Order& order) {
     if (order.masterRegistrationState == "error") return "Kræver handling";
     if (order.masterRegistrationState == "changed") return "Ændret – kontrollér masterark";
     return "Ikke oprettet";
+}
+
+static QString salesRegistrationStateText(const Order& order) {
+    const QString mail=salesMailStatusText(order);
+    return masterRegistrationStateText(order)+(mail.isEmpty()?QString():" · "+mail);
 }
 
 static bool isMasterWorkbookUrl(const QString& value) {
