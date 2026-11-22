@@ -1,8 +1,8 @@
 {
-  "version": "2.0.6",
-  "build_version": 20006,
-  "run_id": 44168884522,
-  "source_sha": "eb5bb6ef2bd8de08d4bedd97c51d6c73490c64b6",
-  "artifact_id": 14367632536,
-  "release_notes": "- Nye ordrer kan automatisk sendes som salgs reg fra sælgerens egen Outlook-konto efter bekræftet registrering i masterarket.\n- Forbind Outlook, vælg modtager og slå mail til under Indstillinger → Masterark. Ordrer viser mailstatus særskilt.\n- Mailen bruger salgets bekræftede historikrække og de relevante kolonner fra det valgte masterark.\n- Chrome-udvidelsen er opdateret til 0.1.25."
+  "version": "2.0.7",
+  "build_version": 20007,
+  "run_id": 45067777673,
+  "source_sha": "1b6532e7e99111dd13d91d0205411a37ff16f063",
+  "artifact_id": 14771768793,
+  "release_notes": "- Automatisk salgs reg bruger sælgerens åbne Outlook-fane i Chrome. Hvis Outlook er lukket, åbner udvidelsen en baggrundsfane.\n- En åben kladde sætter afsendelsen på pause. Når Outlook bekræfter afsendelsen, vender fanen tilbage til den side, der var åben.\n- Begge lønkorts timelønsprognoser følger den faktiske ugeplan på 34,25 timer og justeres efter hentede timer, sygdom og kendte fridage.\n- Chrome-udvidelsen er opdateret til 0.1.27."
 }
