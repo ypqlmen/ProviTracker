@@ -339,11 +339,23 @@ function connect() {
       status = 'Udvidelsen kunne ikke opdateres. Åbn Provi Tracker igen, og prøv Kontrollér Chrome.';
       return;
     }
-    if(pending && message.requestId && message.requestId!==pending.requestId && pending.expiresAt && pending.expiresAt*1000<Date.now())finish(pending,{success:false,error:'Den forrige Chrome-opgave udløb. Forbindelsen er frigivet.'});
-    if(message.type==='outlook' && !pending){
+    if(pending && message.requestId && message.requestId!==pending.requestId && pending.expiresAt && pending.expiresAt*1000<Date.now())await finish(pending,{success:false,error:'Den forrige Chrome-opgave udløb. Forbindelsen er frigivet.'});
+    if(message.type==='outlook'){
+      if(pending){
+        port?.postMessage({type:'result',requestId:message.requestId,success:false,notSent:true,status:'mail-busy',
+          error:'Chrome arbejder allerede på en opgave for Provi Tracker. Prøv igen, når den er færdig.'});
+        return;
+      }
       const job=pending={...message,startedAt:Date.now()};
-      try{await startOutlook(job,finish,()=>pending===job && !job.finishing,{protectTab:protectOutlook});}
-      catch{finish(job,{success:false,status:'mail-uncertain',error:'Outlook-forbindelsen blev afbrudt. Kontrollér Sendt post før genforsøg.'});}
+      try{
+        await startOutlook(job,finish,()=>pending===job && !job.finishing,{
+          protectTab:protectOutlook,
+          progress:phase=>port?.postMessage({type:'progress',requestId:job.requestId,phase})
+        });
+      }catch{
+        finish(job,{success:false,status:job.armed?'mail-uncertain':'mail-not-sent',notSent:!job.armed,
+          error:job.armed?'Outlook-forbindelsen blev afbrudt. Kontrollér Sendt post før genforsøg.':'Outlook-forbindelsen kunne ikke startes. Prøv igen i Chrome.'});
+      }
       return;
     }
     if (!['probe','setup','install','register'].includes(message.type) || pending) return;

@@ -30,8 +30,8 @@
 #include "updater_safety.h"
 #include "sales_registration.h"
 
-static constexpr const char* APP_VERSION = "2.0.6";
-static constexpr int APP_BUILD_VERSION = 20006;
+static constexpr const char* APP_VERSION = "2.0.7";
+static constexpr int APP_BUILD_VERSION = 20007;
 static constexpr const char* UPDATE_APPCAST_URL = "https://raw.githubusercontent.com/ypqlmen/ProviTracker/main/appcast.xml";
 
 static QString psSingleQuoted(QString value) {
@@ -1275,6 +1275,7 @@ private:
     QLineEdit* salesMailRecipientEdit = nullptr;
     QCheckBox* salesMailEnabledCheck = nullptr;
     QLabel* salesMailStatusLabel = nullptr;
+    QPushButton* connectOutlookButton = nullptr;
     QPointer<QPlainTextEdit> masterSetupLog;
 
     struct IntramanagerFetchResult {
@@ -1284,6 +1285,7 @@ private:
         double sickHours = 0.0;
         double sickPay = 0.0;
         double cancellations = 0.0;
+        QJsonValue dailyHours;
         QString error;
     };
 
@@ -1307,6 +1309,7 @@ private:
         double sickHours = 0.0;
         double sickPay = 0.0;
         double cancellations = 0.0;
+        QJsonValue dailyHours;
         IntramanagerPunchResult punch;
         QString hoursError;
         QString punchError;
@@ -1445,6 +1448,7 @@ private:
         result.sickHours = obj.value("sickHours").toDouble(0.0);
         result.sickPay = obj.value("sickPay").toDouble(0.0);
         result.cancellations = obj.value("cancellations").toDouble(0.0);
+        result.dailyHours = obj.value("dailyHours");
         return result;
     }
 
@@ -1502,6 +1506,7 @@ private:
         result.sickHours = obj.value("sickHours").toDouble(0.0);
         result.sickPay = obj.value("sickPay").toDouble(0.0);
         result.cancellations = obj.value("cancellations").toDouble(0.0);
+        result.dailyHours = obj.value("dailyHours");
         result.hoursError = obj.value("hoursError").toString();
         result.punchError = obj.value("punchError").toString();
 
@@ -1542,7 +1547,8 @@ private:
         double phoneHours,
         double sickHours,
         double sickPay,
-        double cancellations = 0.0
+        double cancellations,
+        const QJsonValue& dailyHours
         ) {
         const QString syncedAt = QDateTime::currentDateTime().toString(Qt::ISODate);
 
@@ -1561,6 +1567,7 @@ private:
         entry.cancellations = cancellations;
         entry.payrollSchema = 2;
         entry.syncedAt = syncedAt;
+        entry.dailyHours = dailyHours;
 
         repo.settings.intramanagerHoursCache[intramanagerPeriodKey(fromDate, toDate)] = entry;
     }
@@ -1752,7 +1759,7 @@ private:
                         return;
                     }
 
-                    rememberIntramanagerHours(fromDate, toDate, result.hours, result.phoneHours, result.sickHours, result.sickPay, result.cancellations);
+                    rememberIntramanagerHours(fromDate, toDate, result.hours, result.phoneHours, result.sickHours, result.sickPay, result.cancellations, result.dailyHours);
                     repo.saveSettings();
                     refreshAll();
 
@@ -1840,7 +1847,7 @@ private:
                     const IntramanagerOverviewResult result = parseIntramanagerOverviewWorkerOutput(stdoutData, stderrData);
 
                     if (result.hoursSuccess) {
-                        rememberIntramanagerHours(fromDate, toDate, result.hours, result.phoneHours, result.sickHours, result.sickPay, result.cancellations);
+                        rememberIntramanagerHours(fromDate, toDate, result.hours, result.phoneHours, result.sickHours, result.sickPay, result.cancellations, result.dailyHours);
                     }
 
                     if (result.punchSuccess) {
@@ -2965,9 +2972,15 @@ private:
         salesMailRecipientEdit=new QLineEdit;salesMailRecipientEdit->setPlaceholderText("Modtagerens mailadresse");configureSettingsField(salesMailRecipientEdit);
         salesMailEnabledCheck=new QCheckBox("Send automatisk salgs reg efter registrering");salesMailEnabledCheck->setFocusPolicy(Qt::NoFocus);
         salesMailStatusLabel=premiumLabel("Forbind sælgerens arbejdsmail i Outlook.","muted");salesMailStatusLabel->setTextFormat(Qt::PlainText);salesMailStatusLabel->setWordWrap(true);
-        auto* connectOutlookBtn=new QPushButton("Forbind Outlook i Chrome");auto* saveMailBtn=new QPushButton("Gem mailindstillinger");saveMailBtn->setProperty("primary",true);
-        mailForm->addRow("Modtager",salesMailRecipientEdit);mailForm->addRow(salesMailEnabledCheck);mailForm->addRow(createSettingsButtonGrid(QVector<QPushButton*>{connectOutlookBtn,saveMailBtn},2));mailForm->addRow(salesMailStatusLabel);mailCard.second->addLayout(mailForm);
-        connect(connectOutlookBtn,&QPushButton::clicked,this,[this](){runOutlookWorker(true);});
+        connectOutlookButton=new QPushButton("Forbind Outlook i Chrome");auto* saveMailBtn=new QPushButton("Gem mailindstillinger");saveMailBtn->setProperty("primary",true);
+        mailForm->addRow("Modtager",salesMailRecipientEdit);mailForm->addRow(salesMailEnabledCheck);mailForm->addRow(createSettingsButtonGrid(QVector<QPushButton*>{connectOutlookButton,saveMailBtn},2));mailForm->addRow(salesMailStatusLabel);mailCard.second->addLayout(mailForm);
+        connect(connectOutlookButton,&QPushButton::clicked,this,[this](){
+            if (masterRegistrationRunning || salesMailRunning) {
+                salesMailStatusLabel->setText("Chrome arbejder allerede på en opgave. Prøv igen, når den er færdig.");
+                return;
+            }
+            runOutlookWorker(true);
+        });
         connect(saveMailBtn,&QPushButton::clicked,this,[this](){if(saveSalesMailSettingsFromUi()){salesMailStatusLabel->setText("Mailindstillinger er gemt.");processMasterQueue();}});
 
         auto sellerCard=createCard("Konto");
@@ -3128,7 +3141,7 @@ private:
 
         if (cached.has_value()) {
             if (periodEnded && intramanagerHoursEntryCompletesRange(*cached, range.second)) return;
-            if (!periodEnded && intramanagerHoursEntryIsFresh(*cached, maxAgeMinutes)) return;
+            if (!periodEnded && !cached->dailyHours.isUndefined() && intramanagerHoursEntryIsFresh(*cached, maxAgeMinutes)) return;
         }
 
         const QDateTime nowUtc = QDateTime::currentDateTimeUtc();
@@ -3178,16 +3191,14 @@ private:
             return cached.has_value() ? cached->sickPay : 0.0;
         };
         auto hourlyForecastForRange = [this, now](const QPair<QDateTime, QDateTime>& range) -> QString {
-            if (range.first.date() > now) return "Perioden er ikke startet";
             const auto cached = cachedIntramanagerHours(
                 intramanagerDate(range.first.date()), intramanagerDate(range.second.date()));
-            if (!cached) return "Afventer timedata";
-            const QDateTime synced = QDateTime::fromString(cached->syncedAt, Qt::ISODate);
+            const QDateTime synced = cached ? QDateTime::fromString(cached->syncedAt, Qt::ISODate) : QDateTime();
             const auto forecast = forecastHourlyPay(
-                cached->hours * repo.settings.hourlyRate, range.first.date(), range.second.date(),
-                synced.isValid() ? synced.toLocalTime().date() : QDate(), now);
+                repo.settings.hourlyRate, range.first.date(), range.second.date(), now,
+                cached ? cached->hours : 0.0, synced.toLocalTime().date(), cached ? cached->dailyHours : QJsonValue());
             if (!forecast) return "Afventer beregningsgrundlag";
-            return money(forecast->amount) + " kr";
+            return money(*forecast) + " kr" + (synced.isValid() || now < range.first.date() ? "" : " (afventer timedata)");
         };
         auto delayedBonus = [](const Metrics& metrics) {
             return metrics.monthlyBonus + metrics.simoBonus + metrics.voiceBonus;
@@ -3751,16 +3762,39 @@ private:
             }
         }
         salesMailRunning=true;
+        if(connectAccount)connectOutlookButton->setEnabled(false);
         if(salesMailStatusLabel)salesMailStatusLabel->setText(connectAccount?"Forbinder Outlook i Chrome. Godkend adgang eller login i browseren.":"Sender salgs reg fra Outlook…");
         refreshOrders();
         auto* process=new QProcess(this);auto completed=std::make_shared<bool>(false);
         connect(process,&QProcess::started,this,[process,input](){process->write(QJsonDocument(input).toJson(QJsonDocument::Compact));process->closeWriteChannel();});
+        if (connectAccount) {
+            auto buffer = std::make_shared<QByteArray>();
+            connect(process, &QProcess::readyReadStandardError, this, [this, process, buffer]() {
+                static const QMap<QString,QString> steps = {
+                    {"outlook-permission", "Tillad Outlook-adgang i Provi Tracker-udvidelsen i Chrome."},
+                    {"outlook-open", "Finder din Outlook-indbakke i Chrome…"},
+                    {"outlook-login", "Log ind i Outlook-fanen med din arbejdsmail."},
+                    {"outlook-account", "Læser mailadressen fra Outlooks kontomenu…"},
+                    {"outlook-account-choice", "Vælg din egen arbejdsmail i Outlooks kontomenu."}
+                };
+                buffer->append(process->readAllStandardError());
+                while (buffer->contains('\n')) {
+                    const int end = buffer->indexOf('\n');
+                    const auto line = buffer->left(end);
+                    buffer->remove(0,end+1);
+                    if (!line.startsWith("PROVITRACKER_PROGRESS:")) continue;
+                    const QString phase = QJsonDocument::fromJson(line.mid(22)).object().value("phase").toString();
+                    if (steps.contains(phase)) salesMailStatusLabel->setText(steps.value(phase));
+                }
+            });
+        }
         const auto finish=[this,process,completed,connectAccount,registrationId,requestId,recipient,sender](QJsonObject result){
             if(*completed)return;*completed=true;salesMailRunning=false;
             const QString status=result.value("status").toString();
             const bool identity=result.value("requestId").toString()==requestId;
             bool ok=result.value("success").toBool() && identity;
             if(connectAccount){
+                connectOutlookButton->setEnabled(true);
                 ok=ok && status=="outlook-connected" && isSalesMailAddress(result.value("senderEmail").toString());
                 if(ok){repo.settings.salesMailSender=result.value("senderEmail").toString();repo.saveSettings();}
                 if(salesMailStatusLabel)salesMailStatusLabel->setText(ok?"Tilknyttet "+repo.settings.salesMailSender:result.value("error").toString("Outlook kunne ikke forbindes. Kontrollér browseren."));

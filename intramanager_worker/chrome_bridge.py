@@ -325,10 +325,11 @@ def request_chrome(payload, kind):
         last_phase = None
         deadline = time.monotonic() + duration
         while time.monotonic() < deadline:
-            if kind in {'install','register'}:
+            if kind in VERSIONED_ACTIONS:
                 progress = read_json(folder / 'progress.json')
                 phase = progress.get('phase')
-                if progress.get('requestId')==request_id and phase in SETUP_PHASES and phase!=last_phase:
+                phases = OUTLOOK_PHASES if kind == 'outlook' else SETUP_PHASES
+                if progress.get('requestId')==request_id and phase in phases and phase!=last_phase:
                     last_phase=phase
                     print('PROVITRACKER_PROGRESS:'+json.dumps({'phase':phase}),file=sys.stderr,flush=True)
             result = read_json(response)
@@ -336,6 +337,9 @@ def request_chrome(payload, kind):
                 if kind=='probe' or result.get('success') is not True or (valid_outlook_result(result,envelope) if kind=='outlook' else valid_receipt(result, registration)): return result
                 return {'success':False,'error':'Excel returnerede en forkert kvittering. Kontrollér salget før genforsøg.'}
             time.sleep(.2)
+        if kind == 'outlook':
+            return {'success':False, 'requestId':request_id,
+                    'error':'Chrome svarede ikke på Outlook-opgaven. Åbn Outlook og Provi Tracker-udvidelsen i Chrome.'}
         return {'success':False, 'error':'Chrome svarede ikke. Åbn Chrome og masterarket, og klik på Provi Tracker-udvidelsen. Prøv derefter igen.'}
     finally:
         if read_json(request).get('requestId') == request_id: request.unlink(missing_ok=True)
@@ -382,8 +386,9 @@ def native_main(origin):
             if live and request.get('requestId') != last_id and (valid_outlook_request(request) if request.get('type')=='outlook' else valid_workbook(request.get('workbookUrl', ''))):
                 last_id = request['requestId']
                 write_frame(sys.stdout.buffer, request)
-        elif message.get('type') == 'progress' and live and request.get('type') in {'install','register'} and message.get('requestId')==last_id==request.get('requestId'):
-            if message.get('phase') in SETUP_PHASES:
+        elif message.get('type') == 'progress' and live and request.get('type') in VERSIONED_ACTIONS and message.get('requestId')==last_id==request.get('requestId'):
+            phases = OUTLOOK_PHASES if request.get('type') == 'outlook' else SETUP_PHASES
+            if message.get('phase') in phases:
                 atomic_json(root() / 'progress.json', {'requestId':last_id,'phase':message['phase']})
         elif message.get('type') == 'result' and live and message.get('requestId') == last_id == request.get('requestId'):
             if request.get('type')=='outlook':
@@ -408,6 +413,7 @@ def native_main(origin):
 
 
 SETUP_PHASES = {'login','probe','install-open','install-find','install-name','install-write','install-save','install-reopen','install-verify','open','run','parameter','submit','receipt'}
+OUTLOOK_PHASES = {'outlook-permission','outlook-open','outlook-login','outlook-account','outlook-account-choice'}
 def safe_setup_report(value):
     if not isinstance(value,dict): return {}
     report={'format':1,'kind':'install','extensionVersion':value.get('extensionVersion','') if isinstance(value.get('extensionVersion'),str) and value['extensionVersion'].replace('.','').isdigit() and len(value['extensionVersion'])<=24 else 'unknown'}

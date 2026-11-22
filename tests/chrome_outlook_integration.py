@@ -6,8 +6,17 @@ REPO=Path(__file__).resolve().parents[1]
 from sys import path
 path.insert(0, str(REPO/'intramanager_worker'))
 from chrome_bridge import valid_outlook_request, valid_outlook_result
-PAGE=r'''<div role="row" aria-label="&#xE488;seller@example.com&#x200E;">seller@example.com</div><button id="new">Ny mail</button><div id="mail-list"></div><div id="read"></div><div id="app"></div><div id="toasts"></div>
+PAGE=r'''<button id="mectrl_main_trigger" aria-label="Kontoadministration" aria-expanded="false">Kontoadministration</button><div role="tree"><div role="treeitem">Indbakke</div></div><div role="row">unrelated@example.com</div><button id="new">Ny mail</button><div id="mail-list"></div><div id="read"></div><div id="app"></div><div id="toasts"></div>
 <script>
+document.getElementById('mectrl_main_trigger').onclick=e=>{
+ const previous=document.querySelector('#mectrl_currentAccount_secondary');
+ if(previous)previous.remove();
+ else{
+  const email=document.createElement('div');email.id='mectrl_currentAccount_secondary';email.textContent='seller@example.com';
+  document.body.append(email);
+ }
+ e.currentTarget.setAttribute('aria-expanded',String(!previous));
+};
 for(const flag of ['chipMode','tamperTo','noToast'])Object.defineProperty(window,flag,{get:()=>sessionStorage.getItem(flag)==='true',set:value=>sessionStorage.setItem(flag,String(value))});
 window.sent=JSON.parse(localStorage.getItem('sent') || '[]');
 function card(recipient){if(document.querySelector('#card'))return;const panel=document.createElement('aside');panel.id='card';const address=document.createElement('button');address.setAttribute('aria-label','Mail (arbejde): '+recipient);address.textContent=recipient;const close=document.createElement('button');close.textContent='Luk';close.onclick=()=>panel.remove();panel.append(address,close);document.body.append(panel)}
@@ -59,7 +68,9 @@ chrome.runtime.connectNative=()=>({postMessage:m=>{if(m.type==='result')fixtureR
    context.route('https://outlook.office.com/**',lambda r:r.fulfill(content_type='text/html; charset=utf-8',body=PAGE))
    context.route('https://outlook.cloud.microsoft/**',lambda r:r.fulfill(content_type='text/html; charset=utf-8',body=PAGE))
    service=context.service_workers[0] if context.service_workers else context.wait_for_event('serviceworker')
-   front=context.new_page();front.bring_to_front();book=None
+   front=context.new_page();front.goto('https://outlook.cloud.microsoft/mail/');front.bring_to_front();book=None
+   front.evaluate('compose()')
+   initial_pages=set(context.pages)
    ready_deadline=time.monotonic()+15
    while not service.evaluate('typeof fixtureNative === "function"'):
     if time.monotonic()>=ready_deadline:
@@ -73,10 +84,12 @@ chrome.runtime.connectNative=()=>({postMessage:m=>{if(m.type==='result')fixtureR
     service.evaluate('m=>fixtureNative(m)',query)
     deadline=time.monotonic()+30
     while time.monotonic()<deadline:
-     if book is None:
-      matches=[page for page in context.pages if any(page.url.startswith(origin+'/mail/') for origin in ('https://outlook.office.com','https://outlook.cloud.microsoft'))]
+     if book is None and operation=='send':
+      matches=[page for page in context.pages if page not in initial_pages]
       if matches:
-       assert len(matches)==1;book=matches[0];book.route('https://outlook.office.com/**',lambda r:r.fulfill(content_type='text/html; charset=utf-8',body=PAGE));book.route('https://outlook.cloud.microsoft/**',lambda r:r.fulfill(content_type='text/html; charset=utf-8',body=PAGE));book.goto('https://outlook.cloud.microsoft/mail/') # Attach synthetic routes before the redirected fixture.
+       assert len(matches)==1;book=matches[0]
+       book.route('https://outlook.cloud.microsoft/**',lambda r:r.fulfill(content_type='text/html; charset=utf-8',body=PAGE))
+       book.goto('https://outlook.cloud.microsoft/mail/')
      result=service.evaluate('id=>fixtureResults.find(r=>r.requestId===id)',request_id)
      if result:
       assert result['success'] is success,result
@@ -85,11 +98,15 @@ chrome.runtime.connectNative=()=>({postMessage:m=>{if(m.type==='result')fixtureR
      front.wait_for_timeout(100)
     raise AssertionError(('Outlook timed out',{'url':book.url.split('?')[0] if book else None,'job':service.evaluate('()=>fixtureState()'),'pages':[page.url.split('?')[0] for page in context.pages]}))
    connected=request('connect');assert connected['senderEmail']=='seller@example.com'
+   assert len([page for page in context.pages if '/mail/' in page.url])==1
+   assert front.locator('#compose').count()==1
+   assert front.locator('#mectrl_main_trigger').get_attribute('aria-expanded')=='false'
    mail={**snapshots['currentMail'],'recipient':'receiver@example.com','subject':'salgs reg'}
    sent=request('send',mail);assert sent['status']=='mail-sent';assert book.evaluate('sent.length')==1
    assert book.evaluate('sent[0].recipient')==mail['recipient'];assert book.evaluate('sent[0].html').count('<td ')==102
    assert not book.evaluate('sent[0].html').find('Personal signature')>=0
-   tab=service.evaluate('async()=> (await chrome.tabs.query({url:"https://outlook.cloud.microsoft/*"}))[0]');assert tab['active'] is False and tab['autoDiscardable'] is False
+   tabs=service.evaluate('async()=> chrome.tabs.query({url:"https://outlook.cloud.microsoft/*"})')
+   assert len(tabs)==2 and any(tab['active'] is False and tab['autoDiscardable'] is False for tab in tabs)
    repeat=request('send',mail);assert repeat['status']=='mail-already-sent' and book.evaluate('sent.length')==1
    wrong=request('send',{**mail,'recipient':'other@example.com'},False);assert wrong['status']=='mail-not-sent' and book.evaluate('sent.length')==1
    book.evaluate('chipMode=true');chipmail={**mail,**snapshots['shiftedMail'],'registrationId':str(uuid.uuid4())};chip=request('send',chipmail);assert chip['status']=='mail-sent' and book.evaluate('sent.length')==2
@@ -101,6 +118,7 @@ chrome.runtime.connectNative=()=>({postMessage:m=>{if(m.type==='result')fixtureR
    repeatUncertain=request('send',uncertainMail,False);assert repeatUncertain['status']=='mail-uncertain' and book.evaluate('sent.length')==3
    book.evaluate('noToast=false')
    book.evaluate('compose()');draft=request('send',{**mail,'registrationId':str(uuid.uuid4())},False);assert 'under redigering' in draft['error'];assert book.evaluate('sent.length')==3
+   assert front.locator('#compose').count()==1
    print('Actual inactive Outlook fixture passed: own-account connection, recipient commit, subject, 3x34 formatted cells, signature replacement, new server copy in Sent Items, verified recipient and full table, duplicate/content guard, personal-draft preservation and background tab.')
   finally:context.close()
 if __name__=='__main__':run()

@@ -127,6 +127,7 @@ struct IntramanagerHoursEntry {
     double cancellations = 0.0;
     int payrollSchema = 2;
     QString syncedAt;
+    QJsonValue dailyHours = QJsonValue::Undefined;
 };
 
 static bool intramanagerHoursEntryCompletesRange(
@@ -388,7 +389,7 @@ static QJsonObject toJson(const IntramanagerPunchState& s);
 static IntramanagerPunchState fromIntramanagerPunchJson(const QJsonObject& o);
 
 static QJsonObject toJson(const IntramanagerHoursEntry& e) {
-    return {
+    QJsonObject object = {
         {"fromDate", e.fromDate},
         {"toDate", e.toDate},
         {"hours", e.hours},
@@ -400,6 +401,8 @@ static QJsonObject toJson(const IntramanagerHoursEntry& e) {
         {"payrollSchema", e.payrollSchema},
         {"syncedAt", e.syncedAt}
     };
+    object.insert("dailyHours", e.dailyHours);
+    return object;
 }
 
 static IntramanagerHoursEntry fromIntramanagerHoursJson(const QJsonObject& o) {
@@ -414,6 +417,7 @@ static IntramanagerHoursEntry fromIntramanagerHoursJson(const QJsonObject& o) {
     e.cancellations = o.value("cancellations").toDouble(0.0);
     // Keep the old sickPay field halved for older clients; sickPayFull is authoritative.
     e.syncedAt = o.value("syncedAt").toString();
+    e.dailyHours = o.value("dailyHours");
     return e;
 }
 

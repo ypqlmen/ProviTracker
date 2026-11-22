@@ -19,5 +19,10 @@ int main() {
     invalidEntry.syncedAt = "invalid";
     if (intramanagerHoursEntryCompletesRange(invalidEntry, periodEnd)) return 3;
 
+    auto older = fromIntramanagerHoursJson(QJsonObject{{"hours", 6.0}});
+    if (!older.dailyHours.isUndefined() || toJson(older).contains("dailyHours")) return 4;
+    completedEntry.dailyHours = QJsonObject{{"2026-06-19", QJsonObject{{"hours", 4.75}}}};
+    if (fromIntramanagerHoursJson(toJson(completedEntry)).dailyHours != completedEntry.dailyHours) return 5;
+
     return 0;
 }

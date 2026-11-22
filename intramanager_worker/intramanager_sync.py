@@ -492,6 +492,20 @@ def payroll_money_from_cells(cells):
     return round(total * INTRAMANAGER_SICK_PAY_FACTOR, 2) if found_any else 0.0
 
 
+def payroll_row_date(value):
+    from datetime import date
+
+    match = re.search(r"(?<!\d)(\d{1,2})[./-](\d{1,2})[./-](\d{4})(?!\d)", value)
+    try:
+        if match:
+            day, month, year = map(int, match.groups())
+            return date(year, month, day).isoformat()
+        match = re.search(r"(?<!\d)\d{4}-\d{2}-\d{2}(?!\d)", value)
+        return date.fromisoformat(match.group()).isoformat() if match else None
+    except ValueError:
+        return None
+
+
 def payroll_summary_from_result_rows(page):
     paid_hours = 0.0
     phone_hours = 0.0
@@ -499,6 +513,8 @@ def payroll_summary_from_result_rows(page):
     absence_pay = 0.0
     cancellations = 0.0
     found_any = False
+    daily_hours = {}
+    all_work_dates_known = True
 
     try:
         rows = page.locator("#main tbody tr")
@@ -526,12 +542,22 @@ def payroll_summary_from_result_rows(page):
                 cancellations += payroll_money_from_cells(cells)
                 found_any = True
                 continue
-            if is_absence_pay_project(project):
+            absence = is_absence_pay_project(project)
+            if absence:
                 absence_hours += paid
                 absence_pay += payroll_money_from_cells(cells)
             else:
                 paid_hours += paid
                 phone_hours += phone or 0.0
+            work_date = payroll_row_date(cells[1])
+            if work_date:
+                day = daily_hours.setdefault(work_date, {"hours": 0.0, "absenceHours": 0.0})
+                key = "absenceHours" if absence else "hours"
+                day[key] = round(day[key] + paid, 2)
+                if re.fullmatch(r"(?:fri|fridag|helligdag|afspadsering)(?: uden loen)?", fold_danish_letters(project).lower()):
+                    day["dayOff"] = True
+            elif paid:
+                all_work_dates_known = False
             found_any = True
 
     except Exception:
@@ -547,6 +573,7 @@ def payroll_summary_from_result_rows(page):
         "sickPay": round(absence_pay, 2),
         "cancellations": round(cancellations, 2),
         "payrollSchema": 2,
+        "dailyHours": daily_hours if all_work_dates_known else None,
     }
 
 
@@ -580,6 +607,7 @@ def fetch_hours(page, args, debug_dir):
             "phoneHours": 0.0,
             "sickHours": 0.0,
             "sickPay": 0.0,
+            "dailyHours": {},
             "debugDir": str(debug_dir)
         }
 
@@ -605,6 +633,7 @@ def fetch_hours(page, args, debug_dir):
         "sickPay": sick_pay,
         "cancellations": cancellations,
         "payrollSchema": 2,
+        "dailyHours": row_summary["dailyHours"],
         "debugDir": str(debug_dir)
     }
 
@@ -868,6 +897,7 @@ def fetch_overview(page, args, debug_dir):
         "sickHours": hours.get("sickHours", 0.0),
         "sickPay": hours.get("sickPay", 0.0),
         "cancellations": hours.get("cancellations", 0.0),
+        "dailyHours": hours.get("dailyHours"),
         "payrollSchema": 2,
         "statusKnown": punch.get("statusKnown", False),
         "clockedIn": punch.get("clockedIn", False),

@@ -6,34 +6,41 @@ int main() {
     auto check = [&](bool condition, const char* label) {
         if (!condition) { std::cerr << label << '\n'; ++failures; }
     };
-    const QDate start(2026, 8, 21), end(2026, 9, 20), today(2026, 9, 11);
-    const auto partial = forecastHourlyPay(16000.0, start, end, today, today);
-    check(partial.has_value(), "Partial period has a forecast");
-    if (partial) {
-        check(partial->elapsedWorkingDays == 16, "16 weekdays elapsed across month boundary");
-        check(partial->totalWorkingDays == 21, "21 weekdays in the payroll period");
-        check(std::abs(partial->amount - 21000.0) < 0.001, "Projects earned pay over entire period");
-    }
-    const auto stale = forecastHourlyPay(10000.0, start, end, QDate(2026, 9, 3), today);
-    check(stale && std::abs(stale->amount - 21000.0) < 0.001,
-          "Stale hours use their snapshot date, not today's denominator");
-    const auto weekend = forecastHourlyPay(16000.0, start, end, QDate(2026, 9, 13), QDate(2026, 9, 13));
-    check(weekend && std::abs(weekend->amount - 21000.0) < 0.001, "Weekend does not lower forecast");
-    const auto ended = forecastHourlyPay(21000.0, start, end, QDate(2026, 9, 22), QDate(2026, 9, 22));
-    check(ended && ended->amount == 21000.0, "Ended period equals final earned pay");
-    check(!forecastHourlyPay(0, QDate(2026, 9, 21), QDate(2026, 10, 20), today, today),
-          "Future period has no forecast");
-    check(!forecastHourlyPay(0, start, end, QDate(), today), "Missing timestamp has no forecast");
-    check(!forecastHourlyPay(0, start, end, today.addDays(1), today), "Future timestamp is rejected");
-    check(!forecastHourlyPay(0, QDate(2026, 8, 22), QDate(2026, 9, 20),
-                             QDate(2026, 8, 23), QDate(2026, 8, 23)),
-          "Period starting on weekend waits for a weekday");
-    const auto zero = forecastHourlyPay(0, start, end, today, today);
-    check(zero && zero->amount == 0, "Known zero hours differs from missing hours");
-    check(!forecastHourlyPay(100, end, start, today, today), "Invalid period rejected");
-    check(payrollWorkingDays(QDate(2025, 12, 21), QDate(2026, 1, 20)) == 22,
-          "Year boundary weekdays");
-    check(payrollWorkingDays(QDate(2024, 2, 21), QDate(2024, 3, 20)) == 21,
-          "Leap year weekdays");
+    const auto exact = [&](std::optional<double> amount, double wanted, const char* label) {
+        check(amount && std::abs(*amount - wanted) < 0.001, label);
+    };
+    const QDate monday(2026, 11, 23), friday(2026, 11, 27);
+    const QDate tuesday = monday.addDays(1), saturday = friday.addDays(1);
+    const QJsonObject partialDay{{"2026-11-24", QJsonObject{{"hours", 1.0}}}};
+    const QJsonObject absence{{"2026-11-24", QJsonObject{{"absenceHours", 7.5}}},
+                              {"2026-11-26", QJsonObject{{"absenceHours", 3.0}}},
+                              {"2026-11-27", QJsonObject{{"dayOff", true}}}};
+
+    exact(forecastHourlyPay(100, monday, friday, monday.addDays(-1)), 3425,
+          "A normal week before first sync is 34.25 hours at the user's rate");
+    exact(forecastHourlyPay(200, monday, friday, monday, 0, monday, QJsonObject{}), 6850,
+          "The morning sync includes the unfinished first day");
+    exact(forecastHourlyPay(100, monday, friday, tuesday, 1, tuesday, partialDay), 2675,
+          "A missed completed weekday counts zero and partially recorded today is counted once");
+    exact(forecastHourlyPay(100, monday, friday, tuesday, 7.5, tuesday, absence), 1900,
+          "Current sickness, partial absence and a planned day off lower projected regular hours");
+    exact(forecastHourlyPay(100, monday, friday, friday, 1, tuesday, partialDay), 2675,
+          "No sync since Tuesday means later days remain scheduled");
+    exact(forecastHourlyPay(100, monday, friday, saturday, 28.5, saturday, QJsonObject{}), 2850,
+          "Finished and synced period uses paid hours exactly");
+    exact(forecastHourlyPay(100, monday, friday, saturday, 0, saturday, QJsonObject{}), 0,
+          "Finished period with confirmed zero hours counts no pay");
+    exact(forecastHourlyPay(100, monday, friday, tuesday, 11, tuesday), 3025,
+          "Legacy aggregate does not add a second copy of Tuesday");
+    const QDate from(2026, 10, 21), to(2026, 11, 20);
+    exact(forecastHourlyPay(100, from, to, to, 0, from, QJsonObject{}), 15625,
+          "The 21st through the 20th includes both boundary weekdays");
+    exact(forecastHourlyPay(100, friday, saturday, friday), 475, "Friday is 4.75 hours");
+    exact(forecastHourlyPay(100, monday.addDays(2), monday.addDays(2), monday), 700, "Wednesday is seven hours");
+    check(!forecastHourlyPay(100, friday, monday, friday), "Invalid period rejected");
+    exact(forecastHourlyPay(100, QDate(2025, 12, 21), QDate(2026, 1, 20), monday),
+          15200, "Year boundary weekdays");
+    exact(forecastHourlyPay(100, QDate(2024, 2, 21), QDate(2024, 3, 20), monday),
+          14400, "Leap year weekdays");
     return failures ? 1 : 0;
 }
