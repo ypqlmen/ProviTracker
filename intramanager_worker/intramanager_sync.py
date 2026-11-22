@@ -529,11 +529,10 @@ def payroll_summary_from_result_rows(page):
                 return None
 
             project = clean_text(cells[0])
+            day_off = bool(re.fullmatch(r"(?:fri|fridag|helligdag|afspadsering)(?: uden loen)?", fold_danish_letters(project)))
             hour_lines = text_lines(cells[2])
-            if not hour_lines:
-                return None
-
-            paid = parse_hours(hour_lines[0])
+            hours_text = hour_lines[0] if hour_lines else ""
+            paid = 0.0 if day_off and hours_text in ("", "-", "—") else parse_hours(hours_text)
             if paid is None:
                 return None
 
@@ -554,9 +553,9 @@ def payroll_summary_from_result_rows(page):
                 day = daily_hours.setdefault(work_date, {"hours": 0.0, "absenceHours": 0.0})
                 key = "absenceHours" if absence else "hours"
                 day[key] = round(day[key] + paid, 2)
-                if re.fullmatch(r"(?:fri|fridag|helligdag|afspadsering)(?: uden loen)?", fold_danish_letters(project).lower()):
+                if day_off:
                     day["dayOff"] = True
-            elif paid:
+            elif paid or day_off:
                 all_work_dates_known = False
             found_any = True
 

@@ -18,6 +18,7 @@ def run():
     rows = [
         ['Telenor Erhverv', '19-10-2026 08:00\n19-10-2026 15:30', '7 t. 30 min.\n6 t. 00 min.', '1', '1', '771,83', '50,00', '0,00'],
         ['Sygdom Fuldtid - 50%', '20.10.2026', '4 t. 00 min.', '0', '0', '411,64', '0,00', '388,80'],
+        ['Fri uden løn', '16.10.2026', '—', '0', '0', '-', '-', '-'],
         ['Annullering - Beløb', '20.10.2026', '0 t. 00 min.', '0', '0', '0,00', '0,00', '-380,40'],
     ]
     table = '<table><tbody>' + ''.join(
@@ -89,6 +90,7 @@ def run():
         assert overview['hours'] == 7.5 and overview['phoneHours'] == 6
         assert overview['sickPay'] == 800.44 and overview['cancellations'] == -380.40
         assert overview['dailyHours'] == {
+            '2026-10-16': {'hours': 0.0, 'absenceHours': 0.0, 'dayOff': True},
             '2026-10-19': {'hours': 7.5, 'absenceHours': 0.0},
             '2026-10-20': {'hours': 0.0, 'absenceHours': 4.0},
         }
