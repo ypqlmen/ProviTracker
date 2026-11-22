@@ -3,6 +3,7 @@ export const outlookOrigins=['https://outlook.office.com/*','https://outlook.clo
 export const isOutlookOrigin=value=>outlookOrigins.some(origin=>origin===value+'/*');
 const base='https://outlook.office.com/mail/';
 const loginOrigin='https://login.microsoftonline.com';
+const isMailPath=path=>/^\/mail(?:\/|$)/.test(path);
 export const validEmail=value=>typeof value==='string' && value.length<=254 && /^[A-Z0-9.!#$%&'*+\/=?^_`{|}~-]+@[A-Z0-9](?:[A-Z0-9.-]*[A-Z0-9])?\.[A-Z]{2,}$/i.test(value);
 export async function mailHash(mail,sender) {
   const text=[mail.recipient.toLowerCase(),sender.toLowerCase(),mail.registrationId,mail.html,mail.text].join('\n');
@@ -16,14 +17,13 @@ async function tabAddress(tab) {
 }
 
 async function selectOutlookTab(job) {
-  if(job.operation==='connect'){
-    const existing=(await chrome.tabs.query({url:outlookOrigins})).filter(tab=>
-      tab.url && !tab.incognito && !tab.discarded && !tab.frozen && /^\/mail(?:\/|$)/.test(new URL(tab.url).pathname));
-    const best=existing.find(tab=>tab.active) || (existing.length===1 ? existing[0] : null);
-    if(best){
-      job.existingTab=true;
-      return best;
-    }
+  job.candidates=(await chrome.tabs.query({url:outlookOrigins})).filter(tab=>
+    tab.url && !tab.incognito && isMailPath(new URL(tab.url).pathname));
+  job.candidates.sort((a,b)=>Number(b.active)-Number(a.active) || (b.lastAccessed || 0)-(a.lastAccessed || 0));
+  const existing=job.candidates.shift();
+  if(existing){
+    job.existingTab=true;
+    return existing;
   }
 
   const saved=(await chrome.storage.session.get('outlookTab')).outlookTab;
@@ -31,16 +31,32 @@ async function selectOutlookTab(job) {
     const tab=await chrome.tabs.get(saved), url=await tabAddress(tab);
     if(url && (isOutlookOrigin(url.origin) || url.origin===loginOrigin))return tab;
   }catch{}
-  // A dedicated tab keeps the user's personal drafts and existing mail tabs intact.
   const origin=(await chrome.storage.local.get('outlookOrigin')).outlookOrigin;
   const tab=await chrome.tabs.create({url:isOutlookOrigin(origin) ? origin+'/mail/' : base,active:job.operation==='connect'});
   await chrome.storage.session.set({outlookTab:tab.id});return tab;
 }
 export function outlookStep(request) {
   if(!['https://outlook.office.com','https://outlook.cloud.microsoft','https://outlook.office365.com'].includes(location.origin) || !/^\/mail(?:\/|$)/.test(location.pathname))return null;
-  if(request.operation==='cleanup'){const state=globalThis.proviOutlookJob;if(state?.requestId===request.requestId){state.observer?.disconnect();state.recipientObserver?.disconnect();delete globalThis.proviOutlookJob;}return {cleaned:true};}
   const label=el=>(el.getAttribute('aria-label') || (el.getAttribute('aria-labelledby') || '').split(/\s+/).map(id=>document.getElementById(id)?.textContent || '').join(' ').trim() || el.textContent || '').replace(/[\u200b-\u200f\u202a-\u202e\u2066-\u2069\ue000-\uf8ff\ufeff]/g,'').replace(/\s+/g,' ').trim();
   const visible=el=>!el.closest('[hidden],[aria-hidden="true"]') && getComputedStyle(el).display!=='none' && getComputedStyle(el).visibility!=='hidden' && el.getBoundingClientRect().width>0;
+  const editableMail=[...document.querySelectorAll('input,[contenteditable="true"]')].filter(el=>
+    visible(el) && ['Emne','Subject','Meddelelsens brødtekst','Message body'].includes(label(el)));
+  if(request.operation==='cleanup'){
+    const state=globalThis.proviOutlookJob;
+    if(state?.requestId===request.requestId){
+      state.observer?.disconnect();
+      state.recipientObserver?.disconnect();
+      delete globalThis.proviOutlookJob;
+      if(request.returnUrl && !editableMail.length && state.receiptUrl===location.href){
+        const target=new URL(request.returnUrl);
+        if(target.origin===location.origin && /^\/mail(?:\/|$)/.test(target.pathname) && target.href!==location.href){
+          location.replace(target.href);
+        }
+      }
+    }
+    if(globalThis.proviOutlookProfileProbe?.requestId===request.requestId)delete globalThis.proviOutlookProfileProbe;
+    return {cleaned:true};
+  }
   const email=value=>/^[A-Z0-9.!#$%&'*+\/=?^_`{|}~-]+@[A-Z0-9](?:[A-Z0-9.-]*[A-Z0-9])?\.[A-Z]{2,}$/i.test(value);
   const addresses=elements=>[...new Set([...elements].filter(visible).flatMap(el=>
     [label(el),el.getAttribute('title') || ''].flatMap(text=>
@@ -70,13 +86,19 @@ export function outlookStep(request) {
     probe.email=senderEmail;
     if(profile.getAttribute('aria-expanded')==='true')profile.click();
   }
-  if(request.operation==='identity')return {senderEmail,hasDraft:[...document.querySelectorAll('input,[contenteditable="true"]')].some(el=>visible(el) && ['Emne','Subject','Meddelelsens brødtekst','Message body'].includes(label(el)))};
+  if(request.operation==='identity')return {senderEmail,hasDraft:editableMail.length>0};
   if(senderEmail!==request.expectedSender?.toLowerCase())return {error:'Outlook er logget ind med en anden afsender. Forbind den rigtige arbejdsmail i indstillingerne.'};
   const norm=s=>String(s || '').replace(/[\u200b-\u200f\u202a-\u202e\u2066-\u2069\ufeff]/g,'').replace(/\u00a0/g,' ').replace(/\s+/g,' ').trim();
   const one=(selector,names,root=document)=>{const found=[...root.querySelectorAll(selector)].filter(el=>visible(el)&&names.includes(label(el)));return found.length===1?found[0]:null;};
   const subject=one('input',['Emne','Subject']);
   const body=one('[contenteditable="true"]',['Meddelelsens brødtekst','Message body']);
   const state=globalThis.proviOutlookJob?.requestId===request.requestId?globalThis.proviOutlookJob:(globalThis.proviOutlookJob={requestId:request.requestId});
+  if(request.operation==='navigate-sent'){
+    if(location.href!==request.fromUrl)return {error:'Outlook-fanen skiftede side. Prøv afsendelsen igen.'};
+    if(editableMail.length)return {draftOpen:true};
+    if(location.pathname!=='/mail/sentitems')location.assign(location.origin+'/mail/sentitems');
+    return {navigated:true};
+  }
   const focus=el=>{el.focus({preventScroll:true});el.dispatchEvent(new FocusEvent('focus',{composed:true}));el.dispatchEvent(new FocusEvent('focusin',{bubbles:true,composed:true}));};
   const enter=el=>{for(const type of ['keydown','keyup'])el.dispatchEvent(new KeyboardEvent(type,{key:'Enter',code:'Enter',keyCode:13,which:13,bubbles:true,cancelable:true,composed:true}));};
   const fill=(el,value)=>{focus(el);if(el instanceof HTMLInputElement){Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(el,value);}else{const range=document.createRange();range.selectNodeContents(el);const selection=getSelection();selection.removeAllRanges();selection.addRange(range);document.execCommand('insertText',false,value);}el.dispatchEvent(new InputEvent('input',{data:value,inputType:'insertReplacementText',bubbles:true,composed:true}));el.dispatchEvent(new Event('change',{bubbles:true}));};
@@ -114,16 +136,26 @@ export function outlookStep(request) {
     // The copy must be new since the pre-send snapshot, with matching content
     // and an explicitly verified recipient in the same bound sender's mailbox.
     const close=one('button,[role="button"]',['Luk','Close']);if(close)close.click();
+    state.receiptUrl=location.href;
     return {sent:true,senderEmail,verifiedRecipient:addresses[0],messageKey:selected};
   }
   if(request.operation==='compose'){
-    if(state.created)return subject && body?{composed:true}:null;
-    if(subject || body)return {error:'En mail er allerede under redigering i Provi Trackers Outlook-fane. Gem eller luk den før genforsøg.'};
+    if(state.created){
+      if(!subject || !body || editableMail.length!==2)return null;
+      state.subject=subject;
+      state.body=body;
+      return {composed:true};
+    }
+    if(editableMail.length)return {draftOpen:true};
+    if(location.href!==request.fromUrl)return {error:'Outlook-fanen skiftede side. Prøv afsendelsen igen.'};
     const button=one('button,[role="button"]',['Ny mail','New mail','New message']);
     if(button && !button.disabled && !state.clickedNew){state.clickedNew=true;state.created=true;button.click();}
     return null;
   }
   if(!state.created || !subject || !body)return {waiting:'compose'};
+  if(editableMail.length!==2 || state.subject!==subject || state.body!==body){
+    return {error:'Outlooks skrivevindue skiftede under afsendelsen. Kontrollér mailen før genforsøg.'};
+  }
   let root=subject.parentElement;while(root && root!==document.body && (!root.contains(body) || !one('input,[contenteditable="true"]',['Til','To'],root) || !one('button,[role="button"]',['Send'],root)))root=root.parentElement;
   if(!root || root===document.body)return {error:'Outlooks skrivevindue kunne ikke identificeres sikkert.'};
   const to=one('input,[contenteditable="true"]',['Til','To'],root);
@@ -215,6 +247,14 @@ export async function startOutlook(job,finish,current,{protectTab=async()=>{},pr
   }
   job.phase='identity';job.startedAt=Date.now();let scanning=false;
   const report=phase=>{if(job.waiting!==phase){job.waiting=phase;progress(phase);}};
+  const draftMessage='Der er en mail under redigering i Outlook. Salgs reg afventer, til kladden er gemt eller lukket.';
+  const tryAnotherTab=(status,error)=>{
+    if(status==='mail-draft-open')job.blockedDraft=true;
+    const next=job.phase==='identity' ? job.candidates.shift() : null;
+    if(next){job.tabId=next.id;return;}
+    if(job.blockedDraft)failed(draftMessage,'mail-draft-open');
+    else failed(error,status);
+  };
   const scan=async()=>{
     if(!current() || scanning)return;scanning=true;
     try{
@@ -239,13 +279,15 @@ export async function startOutlook(job,finish,current,{protectTab=async()=>{},pr
         failed('Log ind på Outlook i Chrome. Mailen afventer; salget er allerede registreret.','mail-login-required');return;
       }
       if(!url || url.href==='about:blank' || tab.status==='loading')return;
-      if(!isOutlookOrigin(url.origin) || !/^\/mail(?:\/|$)/.test(url.pathname)){failed('Den åbne side er ikke Outlook på nettet til arbejdsbrug. Åbn din indbakke i Chrome, og vælg Forbind Outlook igen.');return;}
-      if(tab.discarded || tab.frozen){failed('Åbn Provi Trackers Outlook-fane én gang for at genoptage mailforbindelsen.','mail-sleeping');return;}
-      if(!job.existingTab)await protectTab(tab);
-      if(['sent-baseline','sent-list'].includes(job.phase) && job.sentNavigation!==job.phase){
-        job.sentNavigation=job.phase;await chrome.tabs.update(job.tabId,{url:url.origin+'/mail/sentitems'});return;
+      if(!isOutlookOrigin(url.origin) || !isMailPath(url.pathname)){failed('Den åbne side er ikke Outlook på nettet til arbejdsbrug. Åbn din indbakke i Chrome, og vælg Forbind Outlook igen.');return;}
+      if(tab.discarded || tab.frozen){
+        tryAnotherTab('mail-sleeping','Åbn Outlook-fanen i Chrome én gang for at genoptage mailforbindelsen.');return;
       }
-      const args={operation:job.phase,requestId:job.requestId,expectedSender:job.expectedSender,recipient:job.mail?.recipient,html:job.mail?.html,text:job.mail?.text,baseline:job.baseline || [],candidate:job.candidate};
+      if(!job.existingTab)await protectTab(tab);
+      const navigate=['sent-baseline','sent-list'].includes(job.phase) && job.sentNavigation!==job.phase;
+      const args={operation:navigate?'navigate-sent':job.phase,requestId:job.requestId,expectedSender:job.expectedSender,
+        recipient:job.mail?.recipient,html:job.mail?.html,text:job.mail?.text,baseline:job.baseline || [],candidate:job.candidate,
+        fromUrl:navigate ? job.navigateFrom : job.composeUrl};
       const readings=await chrome.scripting.executeScript({target:{tabId:job.tabId,frameIds:[0]},func:outlookStep,args:[args]});
       if(!current())return;
       const result=readings[0]?.result;
@@ -254,19 +296,30 @@ export async function startOutlook(job,finish,current,{protectTab=async()=>{},pr
       }
       if(!result || result.waiting)return;
       if(result.error){failed(result.error);return;}
+      if(result.draftOpen){
+        // The editor can remain visible briefly while Outlook submits our message.
+        if(job.phase==='sent-list')return;
+        tryAnotherTab('mail-draft-open',draftMessage);return;
+      }
+      if(result.navigated){job.sentNavigation=job.phase;return;}
       if(job.phase==='identity'){
         if(job.operation==='connect'){
           if(!validEmail(result.senderEmail)){failed('Outlook-kontoen kunne ikke identificeres.');return;}
           await chrome.storage.local.set({outlookAccount:result.senderEmail,outlookOrigin:url.origin});done({success:true,status:'outlook-connected',senderEmail:result.senderEmail});return;
         }
-        if(result.hasDraft){failed('En mail er allerede under redigering i Provi Trackers Outlook-fane. Gem eller luk den før genforsøg.');return;}
         const account=(await chrome.storage.local.get('outlookAccount')).outlookAccount;
-        if(account?.toLowerCase()!==job.expectedSender.toLowerCase() || result.senderEmail!==job.expectedSender.toLowerCase()){failed('Forbind den valgte afsenderkonto i Outlook igen.');return;}
+        if(account?.toLowerCase()!==job.expectedSender.toLowerCase()){failed('Forbind den valgte afsenderkonto i Outlook igen.');return;}
+        if(result.senderEmail!==job.expectedSender.toLowerCase()){
+          tryAnotherTab('mail-not-sent','Åbn den tilknyttede arbejdsmail i Outlook, og prøv igen.');return;
+        }
+        if(result.hasDraft){tryAnotherTab('mail-draft-open',draftMessage);return;}
+        job.originalUrl=url.href;
+        job.navigateFrom=url.href;
         job.phase='sent-baseline';return;
       }
       if(result.baseline){
         const snapshot=JSON.stringify(result.baseline);if(job.baselineReading!==snapshot){job.baselineReading=snapshot;return;}
-        job.baseline=result.baseline;job.phase='compose';return;
+        job.baseline=result.baseline;job.composeUrl=url.href;job.phase='compose';return;
       }
       if(result.opened){job.candidate=result.opened;job.phase='sent-message';return;}
       if(result.composed){job.phase='recipient';return;}
@@ -274,8 +327,12 @@ export async function startOutlook(job,finish,current,{protectTab=async()=>{},pr
       if(result.subject){job.phase='body';return;}
       if(result.body){job.phase='ready';return;}
       if(result.ready){await chrome.storage.local.set({[job.ledgerKey]:{state:'sending',hash:job.contentHash,at:Date.now(),baseline:job.baseline}});job.armed=true;job.phase='send';return;}
-      if(result.submitted){job.phase='sent-list';return;}
-      if(result.sent){await chrome.storage.local.set({[job.ledgerKey]:{state:'sent',hash:job.contentHash,at:Date.now(),messageKey:result.messageKey}});done({success:true,status:'mail-sent'});}
+      if(result.submitted){job.navigateFrom=url.href;job.phase='sent-list';return;}
+      if(result.sent){
+        await chrome.storage.local.set({[job.ledgerKey]:{state:'sent',hash:job.contentHash,at:Date.now(),messageKey:result.messageKey}});
+        if(job.existingTab)job.returnUrl=job.originalUrl;
+        done({success:true,status:'mail-sent'});
+      }
     }catch{if(current())failed('Chrome kunne ikke læse Outlook-fanen. Kontrollér udvidelsens adgang på Outlook-siden, og prøv igen.');}
     finally{scanning=false;}
   };
@@ -294,7 +351,9 @@ export async function cleanupOutlook(job){
   let timeout;
   try {
     await Promise.race([
-      chrome.scripting.executeScript({target:{tabId:job.tabId,frameIds:[0]},func:outlookStep,args:[{operation:'cleanup',requestId:job.requestId}]}),
+      chrome.scripting.executeScript({target:{tabId:job.tabId,frameIds:[0]},func:outlookStep,args:[{
+        operation:'cleanup',requestId:job.requestId,returnUrl:job.returnUrl
+      }]}),
       new Promise(resolve=>{timeout=setTimeout(resolve,2000);})
     ]);
   } catch {} finally {clearTimeout(timeout);}

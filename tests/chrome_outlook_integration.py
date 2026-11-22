@@ -68,15 +68,17 @@ chrome.runtime.connectNative=()=>({postMessage:m=>{if(m.type==='result')fixtureR
    context.route('https://outlook.office.com/**',lambda r:r.fulfill(content_type='text/html; charset=utf-8',body=PAGE))
    context.route('https://outlook.cloud.microsoft/**',lambda r:r.fulfill(content_type='text/html; charset=utf-8',body=PAGE))
    service=context.service_workers[0] if context.service_workers else context.wait_for_event('serviceworker')
-   front=context.new_page();front.goto('https://outlook.cloud.microsoft/mail/');front.bring_to_front();book=None
-   front.evaluate('compose()')
+   inbox='https://outlook.cloud.microsoft/mail/inbox'
+   book=context.new_page();book.goto(inbox)
+   book.evaluate('compose();document.querySelector("[aria-label=Emne]").value="User draft"')
+   front=context.new_page();front.bring_to_front()
    initial_pages=set(context.pages)
    ready_deadline=time.monotonic()+15
    while not service.evaluate('typeof fixtureNative === "function"'):
     if time.monotonic()>=ready_deadline:
      raise AssertionError('Outlook fixture native handler did not initialize')
     front.wait_for_timeout(100)
-   def request(operation,mail=None,success=True):
+   def request(operation,mail=None,success=True,open_tab=False):
     nonlocal book
     request_id=str(uuid.uuid4())
     query={'type':'outlook','operation':operation,'requestId':request_id,'expectedSender':'seller@example.com',**({'mail':mail} if mail else {})}
@@ -84,12 +86,12 @@ chrome.runtime.connectNative=()=>({postMessage:m=>{if(m.type==='result')fixtureR
     service.evaluate('m=>fixtureNative(m)',query)
     deadline=time.monotonic()+30
     while time.monotonic()<deadline:
-     if book is None and operation=='send':
+     if book is None and open_tab:
       matches=[page for page in context.pages if page not in initial_pages]
       if matches:
        assert len(matches)==1;book=matches[0]
        book.route('https://outlook.cloud.microsoft/**',lambda r:r.fulfill(content_type='text/html; charset=utf-8',body=PAGE))
-       book.goto('https://outlook.cloud.microsoft/mail/')
+       book.goto(inbox)
      result=service.evaluate('id=>fixtureResults.find(r=>r.requestId===id)',request_id)
      if result:
       assert result['success'] is success,result
@@ -99,14 +101,21 @@ chrome.runtime.connectNative=()=>({postMessage:m=>{if(m.type==='result')fixtureR
     raise AssertionError(('Outlook timed out',{'url':book.url.split('?')[0] if book else None,'job':service.evaluate('()=>fixtureState()'),'pages':[page.url.split('?')[0] for page in context.pages]}))
    connected=request('connect');assert connected['senderEmail']=='seller@example.com'
    assert len([page for page in context.pages if '/mail/' in page.url])==1
-   assert front.locator('#compose').count()==1
-   assert front.locator('#mectrl_main_trigger').get_attribute('aria-expanded')=='false'
+   assert book.locator('#mectrl_main_trigger').get_attribute('aria-expanded')=='false'
    mail={**snapshots['currentMail'],'recipient':'receiver@example.com','subject':'salgs reg'}
-   sent=request('send',mail);assert sent['status']=='mail-sent';assert book.evaluate('sent.length')==1
+   blocked=request('send',mail,False)
+   assert blocked['status']=='mail-draft-open' and blocked['notSent']
+   assert book.url==inbox and book.get_by_label('Emne').input_value()=='User draft' and book.evaluate('sent.length')==0
+   assert set(context.pages)==initial_pages
+   book.evaluate('document.querySelector("#compose").remove()')
+   sent=request('send',mail);assert sent['status']=='mail-sent'
+   book.wait_for_url(inbox,wait_until='domcontentloaded')
+   assert book.evaluate('sent.length')==1
    assert book.evaluate('sent[0].recipient')==mail['recipient'];assert book.evaluate('sent[0].html').count('<td ')==102
    assert not book.evaluate('sent[0].html').find('Personal signature')>=0
    tabs=service.evaluate('async()=> chrome.tabs.query({url:"https://outlook.cloud.microsoft/*"})')
-   assert len(tabs)==2 and any(tab['active'] is False and tab['autoDiscardable'] is False for tab in tabs)
+   assert len(tabs)==1 and tabs[0]['active'] is False
+   assert set(context.pages)==initial_pages
    repeat=request('send',mail);assert repeat['status']=='mail-already-sent' and book.evaluate('sent.length')==1
    wrong=request('send',{**mail,'recipient':'other@example.com'},False);assert wrong['status']=='mail-not-sent' and book.evaluate('sent.length')==1
    book.evaluate('chipMode=true');chipmail={**mail,**snapshots['shiftedMail'],'registrationId':str(uuid.uuid4())};chip=request('send',chipmail);assert chip['status']=='mail-sent' and book.evaluate('sent.length')==2
@@ -118,7 +127,12 @@ chrome.runtime.connectNative=()=>({postMessage:m=>{if(m.type==='result')fixtureR
    repeatUncertain=request('send',uncertainMail,False);assert repeatUncertain['status']=='mail-uncertain' and book.evaluate('sent.length')==3
    book.evaluate('noToast=false')
    book.evaluate('compose()');draft=request('send',{**mail,'registrationId':str(uuid.uuid4())},False);assert 'under redigering' in draft['error'];assert book.evaluate('sent.length')==3
-   assert front.locator('#compose').count()==1
-   print('Actual inactive Outlook fixture passed: own-account connection, recipient commit, subject, 3x34 formatted cells, signature replacement, new server copy in Sent Items, verified recipient and full table, duplicate/content guard, personal-draft preservation and background tab.')
+   book.close();book=None
+   fallback=request('send',{**mail,'registrationId':str(uuid.uuid4())},open_tab=True)
+   assert fallback['status']=='mail-sent' and book.evaluate('sent.length')==4
+   assert len([page for page in context.pages if '/mail/' in page.url])==1
+   fallback_tab=service.evaluate('async()=> (await chrome.tabs.query({url:"https://outlook.cloud.microsoft/*"}))[0]')
+   assert fallback_tab['active'] is False and fallback_tab['autoDiscardable'] is False
+   print('Outlook fixture: existing background tab reused, personal draft preserved, inbox restored, new-tab fallback, recipient and full table verified, and duplicate sends prevented.')
   finally:context.close()
 if __name__=='__main__':run()

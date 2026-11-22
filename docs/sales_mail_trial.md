@@ -1,14 +1,14 @@
-# Salgs reg på mail — Provi Tracker 2.0.6
+# Salgs reg på mail
 
 ## Opsætning
 
 1. Opdater Provi Tracker, og åbn Indstillinger → Masterark.
-2. Provi Tracker opdaterer den eksisterende Chrome-udvidelse i samme mappe. Kontrollér, at Chrome viser version 0.1.25.
+2. Provi Tracker opdaterer den eksisterende Chrome-udvidelse i samme mappe. Kontrollér, at Chrome viser version 0.1.27.
 3. Vælg Forbind Outlook i Chrome. Godkend udvidelsens valgfrie Outlook-adgang, og log ind med sælgerens egen arbejdsmail, hvis Microsoft beder om det. De tilladte Outlook-adresser er outlook.office.com, outlook.cloud.microsoft og outlook.office365.com.
 4. Indtast én modtagermailadresse i Salgs reg på mail. Slå Send automatisk salgs reg efter registrering til, og vælg Gem mailindstillinger. Automatisk masterark-registrering skal være aktiveret.
 5. Opret en ny ordre. Mailen sendes først efter Excels verificerede registrering. Følg den separate mailstatus på ordrekortet.
 
-Chrome skal køre med netforbindelse og gyldigt Microsoft-login. Outlook åbnes i udvidelsens egen baggrundsfane. Den beskyttes mod automatisk aflastning/frysning, men løsningen omgår ikke MFA, udløbet login, lukket Chrome eller slukket computer. Outlooks kontotilknytning og mailkøen gemmes på tværs af sessioner; login skal stadig være gyldigt.
+Chrome skal køre med netforbindelse og gyldigt Microsoft-login. Udvidelsen genbruger en åben Outlook-fane med den tilknyttede afsender og åbner Outlook, hvis ingen fane findes. En aktiv kladde får afsendelsen til at vente. Ved bekræftet afsendelse vender den genbrugte fane tilbage til den side, der var åben før afsendelse. Outlooks kontotilknytning og mailkøen gemmes på tværs af sessioner.
 
 ## Indhold og status
 

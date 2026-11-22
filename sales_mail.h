@@ -47,7 +47,7 @@ static bool applySalesMailResult(Order& order,const QJsonObject& result,const QS
     if(ok){order.salesMailState="sent";order.salesMailError.clear();order.salesMail.remove("reviewedRetry");order.salesMail.remove("html");order.salesMail.remove("text");order.salesMail["contentHash"]=result.value("contentHash");order.salesMail["sentAt"]=QDateTime::currentDateTimeUtc().toString(Qt::ISODate);}
     else{
         const bool safe=identity && result.value("notSent").toBool(false) && status!="mail-uncertain";
-        order.salesMailState=!safe?"uncertain":(status=="mail-login-required" || status=="mail-permission-required" || status=="mail-sleeping" || status=="mail-busy" || status=="chrome-update-required")?"waiting-browser":"error";
+        order.salesMailState=!safe?"uncertain":(status=="mail-login-required" || status=="mail-permission-required" || status=="mail-sleeping" || status=="mail-busy" || status=="mail-draft-open" || status=="chrome-update-required")?"waiting-browser":"error";
         order.salesMailError=result.value("error").toString("Afsendelsen er ikke sikkert bekræftet. Kontrollér Sendt post i Outlook.");
     }
     return ok;

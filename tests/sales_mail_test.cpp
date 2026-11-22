@@ -17,6 +17,7 @@ int main(){
     r["requestId"]="old";assert(!applySalesMailResult(o,r,"attempt") && o.salesMailState=="uncertain");
     r=QJsonObject{{"requestId","attempt"},{"success",false},{"notSent",true},{"status","mail-login-required"}};
     assert(!applySalesMailResult(o,r,"attempt") && o.salesMailState=="waiting-browser" && o.masterRegistrationState=="registered");
+    r["status"]="mail-draft-open";assert(!applySalesMailResult(o,r,"attempt") && o.salesMailState=="waiting-browser");
     r["status"]="mail-uncertain";assert(!applySalesMailResult(o,r,"attempt") && o.salesMailState=="uncertain");
     r["status"]="mail-not-sent";assert(!applySalesMailResult(o,r,"attempt") && o.salesMailState=="error");
     r.remove("notSent");assert(!applySalesMailResult(o,r,"attempt") && o.salesMailState=="uncertain");
