@@ -119,10 +119,12 @@ def atomic_json(path, value):
     finally:
         temp.unlink(missing_ok=True)
 
-def read_json(path):
+def read_json(path, limit=LIMIT):
     try:
-        if path.stat().st_size > LIMIT: return {}
-        value = json.loads(path.read_text(encoding='utf-8'))
+        with path.open('rb') as stream:
+            raw = stream.read(limit + 1)
+        if len(raw) > limit: return {}
+        value = json.loads(raw.decode('utf-8'))
         return value if isinstance(value, dict) else {}
     except (OSError, ValueError): return {}
 
@@ -153,7 +155,7 @@ def install_extension(only_existing=False):
     if only_existing and not (destination / 'manifest.json').exists():
         return {'success': True, 'status': 'chrome-not-installed', 'updated': False}
     with update_lock():
-        request = read_json(root() / 'request.json')
+        request = read_json(root() / 'request.json', MAIL_LIMIT)
         if request.get('expiresAt', 0) > time.time():
             return {'success': True, 'status': 'chrome-update-deferred', 'updated': False}
         source = extension_dir()
@@ -275,20 +277,26 @@ def valid_mail_snapshot(value,receipt,registration):
 def request_outlook(payload):
     return request_chrome(payload,'outlook')
 
-def extension_version_loaded(required, seconds=12):
+def extension_version_loaded(required, seconds=12, since=None):
     deadline=time.monotonic()+seconds
     while time.monotonic()<deadline:
         try:
-            if version_tuple(read_json(root()/'loaded.json').get('version','0')) >= version_tuple(required): return True
+            loaded = read_json(root()/'loaded.json')
+            checked_at = loaded.get('checkedAt')
+            if version_tuple(loaded.get('version','0')) >= version_tuple(required) and (
+                since is None or (isinstance(checked_at, (float, int)) and checked_at >= since)
+            ):
+                return True
         except ValueError: pass
         time.sleep(.2)
     return False
 
 def request_chrome(payload, kind):
+    started_at = time.time()
     url = payload.get('workbookUrl', '')
     if kind != 'outlook' and (kind not in WORKBOOK_ACTIONS or not valid_workbook(url)): raise ValueError('Gem et direkte link til masterarket med sourcedoc i adressen.')
     register_host()
-    if kind in VERSIONED_ACTIONS: sync_installed_extension()
+    extension = sync_installed_extension() if kind in VERSIONED_ACTIONS else {}
     folder = root()
     request_id = str(uuid.uuid4())
     if kind in {'setup','install'} and payload.get('registration', {}).get('requestId'):
@@ -313,12 +321,21 @@ def request_chrome(payload, kind):
         if not valid_outlook_request(envelope):raise ValueError('Kontrollér Outlook-afsender, modtager og mailudsnit.')
     if len(json.dumps(envelope, ensure_ascii=False).encode('utf-8')) > (MAIL_LIMIT if kind=='outlook' else LIMIT):
         raise ValueError('Salgsregistreringen er for lang til Chrome. Forkort bemærkningerne og prøv igen.')
-    if kind in VERSIONED_ACTIONS and not extension_version_loaded(envelope['requiredExtensionVersion']):
+    connecting_outlook = kind == 'outlook' and envelope['operation'] == 'connect'
+    if connecting_outlook and extension.get('status') == 'chrome-not-installed':
+        return {'success':False,'status':'chrome-update-required','requestId':request_id,'notSent':True,
+                'error':'Vælg Installer Chrome-udvidelse under Masterark. Indlæs den i den Chrome-profil, hvor du bruger Outlook, og vælg derefter Forbind Outlook igen.'}
+    if kind in VERSIONED_ACTIONS and not extension_version_loaded(
+        envelope['requiredExtensionVersion'], since=started_at if connecting_outlook else None
+    ):
+        if connecting_outlook:
+            return {'success':False,'status':'chrome-update-required','requestId':request_id,'notSent':True,
+                    'error':'Provi Tracker-udvidelsen svarer ikke. Åbn chrome://extensions i den Chrome-profil, hvor du bruger Outlook. Indlæs udvidelsen, hvis den mangler, eller genindlæs den, hvis den allerede er installeret.'}
         return {'success':False,'status':'chrome-update-required','requestId':request_id,**({'notSent':True} if kind=='outlook' else {}),'error':'Afventer den opdaterede Chrome-udvidelse. Åbn Chrome og klik på Provi Tracker-udvidelsen. Salget afventer, indtil den nye version er klar.'}
     request = folder / 'request.json'
     response = folder / 'response.json'
     with update_lock():
-        existing = read_json(request)
+        existing = read_json(request, MAIL_LIMIT)
         if existing.get('expiresAt', 0) > time.time(): raise RuntimeError('En anden Chrome-kontrol er i gang. Prøv igen om lidt.')
         atomic_json(request, envelope)
     try:
@@ -332,9 +349,11 @@ def request_chrome(payload, kind):
                 if progress.get('requestId')==request_id and phase in phases and phase!=last_phase:
                     last_phase=phase
                     print('PROVITRACKER_PROGRESS:'+json.dumps({'phase':phase}),file=sys.stderr,flush=True)
-            result = read_json(response)
+            result = read_json(response, MAIL_LIMIT)
             if result.get('requestId') == request_id:
                 if kind=='probe' or result.get('success') is not True or (valid_outlook_result(result,envelope) if kind=='outlook' else valid_receipt(result, registration)): return result
+                if kind=='outlook':
+                    return {'success':False,'requestId':request_id,'error':'Outlook returnerede en ugyldig kvittering.'}
                 return {'success':False,'error':'Excel returnerede en forkert kvittering. Kontrollér salget før genforsøg.'}
             time.sleep(.2)
         if kind == 'outlook':
@@ -342,8 +361,8 @@ def request_chrome(payload, kind):
                     'error':'Chrome svarede ikke på Outlook-opgaven. Åbn Outlook og Provi Tracker-udvidelsen i Chrome.'}
         return {'success':False, 'error':'Chrome svarede ikke. Åbn Chrome og masterarket, og klik på Provi Tracker-udvidelsen. Prøv derefter igen.'}
     finally:
-        if read_json(request).get('requestId') == request_id: request.unlink(missing_ok=True)
-        if read_json(response).get('requestId') == request_id: response.unlink(missing_ok=True)
+        if read_json(request, MAIL_LIMIT).get('requestId') == request_id: request.unlink(missing_ok=True)
+        if read_json(response, MAIL_LIMIT).get('requestId') == request_id: response.unlink(missing_ok=True)
 
 def prepare_native_stdio():
     if sys.platform == 'win32':
@@ -358,7 +377,7 @@ def native_main(origin):
     while True:
         message = read_frame(sys.stdin.buffer)
         if message is None: return 0
-        request = read_json(root() / 'request.json')
+        request = read_json(root() / 'request.json', MAIL_LIMIT)
         live = request.get('type') in NATIVE_ACTIONS and request.get('expiresAt', 0) > time.time()
         if message.get('type') == 'poll':
             if not live:
@@ -366,7 +385,7 @@ def native_main(origin):
                     sync_installed_extension()
                     with update_lock():
                         # A probe or another updater may have started since the initial read.
-                        request = read_json(root() / 'request.json')
+                        request = read_json(root() / 'request.json', MAIL_LIMIT)
                         live = request.get('type') in NATIVE_ACTIONS and request.get('expiresAt', 0) > time.time()
                         ready = ready_package()
                         loaded = message.get('extensionVersion')

@@ -2,8 +2,9 @@
 export const outlookOrigins=['https://outlook.office.com/*','https://outlook.cloud.microsoft/*','https://outlook.office365.com/*'];
 export const isOutlookOrigin=value=>outlookOrigins.some(origin=>origin===value+'/*');
 const base='https://outlook.office.com/mail/';
-const loginOrigin='https://login.microsoftonline.com';
+const loginOrigins=['https://login.microsoftonline.com','https://login.microsoft.com','https://login.live.com'];
 const isMailPath=path=>/^\/mail(?:\/|$)/.test(path);
+const isOutlookEntry=path=>isMailPath(path) || path==='/' || /^\/owa(?:\/|$)/.test(path);
 export const validEmail=value=>typeof value==='string' && value.length<=254 && /^[A-Z0-9.!#$%&'*+\/=?^_`{|}~-]+@[A-Z0-9](?:[A-Z0-9.-]*[A-Z0-9])?\.[A-Z]{2,}$/i.test(value);
 export async function mailHash(mail,sender) {
   const text=[mail.recipient.toLowerCase(),sender.toLowerCase(),mail.registrationId,mail.html,mail.text].join('\n');
@@ -12,24 +13,31 @@ export async function mailHash(mail,sender) {
 }
 async function tabAddress(tab) {
   let value=tab.pendingUrl || tab.url;
-  if(!value)value=(await chrome.webNavigation.getAllFrames({tabId:tab.id}))?.find(frame=>frame.frameId===0)?.url;
+  if(!value)value=(await chrome.webNavigation.getAllFrames({tabId:tab.id}).catch(()=>null))?.find(frame=>frame.frameId===0)?.url;
   try{return new URL(value);}catch{return null;}
 }
 
 async function selectOutlookTab(job) {
-  job.candidates=(await chrome.tabs.query({url:outlookOrigins})).filter(tab=>
-    tab.url && !tab.incognito && isMailPath(new URL(tab.url).pathname));
-  job.candidates.sort((a,b)=>Number(b.active)-Number(a.active) || (b.lastAccessed || 0)-(a.lastAccessed || 0));
+  const candidates=(await chrome.tabs.query({url:outlookOrigins})).flatMap(tab=>{
+    if(tab.incognito || !tab.url)return [];
+    const url=new URL(tab.url);
+    return isOutlookOrigin(url.origin) && isOutlookEntry(url.pathname)?[{tab,mail:isMailPath(url.pathname)}]:[];
+  });
+  candidates.sort((a,b)=>Number(b.mail)-Number(a.mail) ||
+    Number(Boolean(a.tab.discarded || a.tab.frozen))-Number(Boolean(b.tab.discarded || b.tab.frozen)) ||
+    Number(b.tab.active)-Number(a.tab.active) || (b.tab.lastAccessed || 0)-(a.tab.lastAccessed || 0));
+  job.candidates=candidates.map(entry=>entry.tab);
   const existing=job.candidates.shift();
   if(existing){
     job.existingTab=true;
+    await chrome.storage.session.set({outlookTab:existing.id});
     return existing;
   }
 
   const saved=(await chrome.storage.session.get('outlookTab')).outlookTab;
   if(Number.isInteger(saved))try {
     const tab=await chrome.tabs.get(saved), url=await tabAddress(tab);
-    if(url && (isOutlookOrigin(url.origin) || url.origin===loginOrigin))return tab;
+    if(!tab.incognito && url && (isOutlookOrigin(url.origin) && isOutlookEntry(url.pathname) || loginOrigins.includes(url.origin)))return tab;
   }catch{}
   const origin=(await chrome.storage.local.get('outlookOrigin')).outlookOrigin;
   const tab=await chrome.tabs.create({url:isOutlookOrigin(origin) ? origin+'/mail/' : base,active:job.operation==='connect'});
@@ -61,9 +69,9 @@ export function outlookStep(request) {
   const addresses=elements=>[...new Set([...elements].filter(visible).flatMap(el=>
     [label(el),el.getAttribute('title') || ''].flatMap(text=>
       text.split(/[\s<>()]+/).filter(email).map(value=>value.toLowerCase()))))];
-  const profile=document.querySelector('#O365_MainLink_Me, #mectrl_main_trigger, #O365_MainLink_MePhoto, button[aria-label^="Account manager"], button[aria-label^="Kontoadministration"]');
-  const accountLabel=document.querySelector('#mectrl_currentAccount_secondary, #O365_MainLink_MeEmail');
-  const profileAddresses=addresses([profile,accountLabel].filter(Boolean));
+  const profile=[...document.querySelectorAll('#mectrl_main_trigger, #O365_MainLink_Me, #O365_MainLink_MePhoto, [aria-label^="Account manager"], [aria-label^="Kontoadministration"]')].find(visible);
+  const accountLabels=[...document.querySelectorAll('#mectrl_currentAccount_secondary, #O365_MainLink_MeEmail')].filter(visible);
+  const profileAddresses=addresses([profile,...accountLabels].filter(Boolean));
   const probe=globalThis.proviOutlookProfileProbe;
   if(!profileAddresses.length && probe?.requestId===request.requestId && probe.email && probe.profile===profile && probe.label===label(profile)){
     profileAddresses.push(probe.email);
@@ -75,7 +83,7 @@ export function outlookStep(request) {
   if(profileAddresses.length===1 && mailboxAddresses.length && !mailboxAddresses.includes(profileAddresses[0]))return {waiting:'multiple-accounts'};
   const senderEmail=profileAddresses[0] || mailboxAddresses[0];
   if(!senderEmail){
-    if(profile && visible(profile) && profile.getAttribute('aria-expanded')!=='true' && (!accountLabel || !visible(accountLabel))
+    if(profile && profile.getAttribute('aria-expanded')!=='true' && !accountLabels.length
       && probe?.requestId!==request.requestId){
       globalThis.proviOutlookProfileProbe={requestId:request.requestId,profile,label:label(profile)};
       profile.click();
@@ -227,7 +235,8 @@ export function outlookStep(request) {
 export async function outlookStatus(){
   const sender=(await chrome.storage.local.get('outlookAccount')).outlookAccount;
   const permitted=await chrome.permissions.contains({origins:outlookOrigins});
-  return {bound:validEmail(sender),senderEmail:validEmail(sender)?sender:'',permission:permitted};
+  const bound=permitted && validEmail(sender);
+  return {bound,senderEmail:bound?sender:'',permission:permitted};
 }
 export async function startOutlook(job,finish,current,{protectTab=async()=>{},progress=()=>{}}={}) {
   const done=result=>finish(job,{senderEmail:job.expectedSender,registrationId:job.mail?.registrationId,recipient:job.mail?.recipient,contentHash:job.contentHash,...result});
@@ -251,7 +260,7 @@ export async function startOutlook(job,finish,current,{protectTab=async()=>{},pr
   const tryAnotherTab=(status,error)=>{
     if(status==='mail-draft-open')job.blockedDraft=true;
     const next=job.phase==='identity' ? job.candidates.shift() : null;
-    if(next){job.tabId=next.id;return;}
+    if(next){job.tabId=next.id;job.waiting=null;job.openedLogin=false;job.waking=false;return;}
     if(job.blockedDraft)failed(draftMessage,'mail-draft-open');
     else failed(error,status);
   };
@@ -267,10 +276,10 @@ export async function startOutlook(job,finish,current,{protectTab=async()=>{},pr
         failed('Forbind Outlook i indstillingerne, og tillad Outlook-adgang i Chrome-udvidelsen.','mail-permission-required');return;
       }
       if(!job.tabId){report('outlook-open');const tab=await selectOutlookTab(job);job.tabId=tab.id;}
-      const tab=await chrome.tabs.get(job.tabId);
+      const tab=await chrome.tabs.get(job.tabId).catch(()=>null);
       if(!tab){failed('Outlook-fanen blev lukket. Åbn Outlook i Chrome og prøv igen.');return;}
       const url=await tabAddress(tab);
-      if(url?.origin===loginOrigin){
+      if(loginOrigins.includes(url?.origin)){
         if(job.operation==='connect'){
           report('outlook-login');
           if(!job.openedLogin){job.openedLogin=true;await chrome.tabs.update(job.tabId,{active:true});}
@@ -279,8 +288,14 @@ export async function startOutlook(job,finish,current,{protectTab=async()=>{},pr
         failed('Log ind på Outlook i Chrome. Mailen afventer; salget er allerede registreret.','mail-login-required');return;
       }
       if(!url || url.href==='about:blank' || tab.status==='loading')return;
-      if(!isOutlookOrigin(url.origin) || !isMailPath(url.pathname)){failed('Den åbne side er ikke Outlook på nettet til arbejdsbrug. Åbn din indbakke i Chrome, og vælg Forbind Outlook igen.');return;}
+      if(isOutlookOrigin(url.origin) && isOutlookEntry(url.pathname) && !isMailPath(url.pathname))return;
+      if(!isOutlookOrigin(url.origin) || !isMailPath(url.pathname)){tryAnotherTab('mail-not-sent','Den åbne side er ikke Outlook på nettet til arbejdsbrug. Åbn din indbakke i Chrome, og vælg Forbind Outlook igen.');return;}
       if(tab.discarded || tab.frozen){
+        if(job.operation==='connect'){
+          report('outlook-open');
+          if(!job.waking){job.waking=true;await chrome.tabs.update(tab.id,{active:true});}
+          return;
+        }
         tryAnotherTab('mail-sleeping','Åbn Outlook-fanen i Chrome én gang for at genoptage mailforbindelsen.');return;
       }
       if(!job.existingTab)await protectTab(tab);
@@ -288,7 +303,14 @@ export async function startOutlook(job,finish,current,{protectTab=async()=>{},pr
       const args={operation:navigate?'navigate-sent':job.phase,requestId:job.requestId,expectedSender:job.expectedSender,
         recipient:job.mail?.recipient,html:job.mail?.html,text:job.mail?.text,baseline:job.baseline || [],candidate:job.candidate,
         fromUrl:navigate ? job.navigateFrom : job.composeUrl};
-      const readings=await chrome.scripting.executeScript({target:{tabId:job.tabId,frameIds:[0]},func:outlookStep,args:[args]});
+      let readings;
+      try{
+        readings=await chrome.scripting.executeScript({target:{tabId:job.tabId,frameIds:[0]},func:outlookStep,args:[args]});
+      }catch(error){
+        const latest=await chrome.tabs.get(job.tabId).catch(()=>null);
+        if(latest && (latest.status==='loading' || (await tabAddress(latest))?.href!==url.href))return;
+        throw error;
+      }
       if(!current())return;
       const result=readings[0]?.result;
       if(job.operation==='connect' && result?.waiting){

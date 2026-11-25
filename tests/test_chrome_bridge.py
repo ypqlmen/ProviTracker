@@ -171,6 +171,50 @@ class ChromeBridgeTests(unittest.TestCase):
             with patch.object(bridge.time,'sleep',side_effect=loaded):self.assertTrue(bridge.extension_version_loaded('0.1.14'))
             self.assertFalse(bridge.extension_version_loaded('0.1.15',seconds=0))
 
+    def test_outlook_connect_requires_a_live_version_acknowledgement(self):
+        with tempfile.TemporaryDirectory() as folder, patch.object(bridge, 'root', return_value=Path(folder)), \
+             patch.object(bridge, 'register_host'):
+            root = Path(folder)
+            bridge.install_extension()
+            version = bridge.ready_package()['version']
+            bridge.atomic_json(root/'loaded.json', {'version':version,'checkedAt':time.time()-86400})
+            request_id = '00000000-0000-4000-8000-000000000001'
+            clock = iter([0, 0, 13])
+            with patch.object(bridge.time, 'monotonic', side_effect=lambda:next(clock)), patch.object(bridge.time, 'sleep'):
+                result = bridge.request_outlook({'operation':'connect','requestId':request_id})
+            self.assertEqual(result['status'], 'chrome-update-required')
+            self.assertIn('Provi Tracker-udvidelsen svarer ikke', result['error'])
+            self.assertFalse((root/'request.json').exists())
+
+    def test_large_sales_mail_completes_the_native_roundtrip(self):
+        with tempfile.TemporaryDirectory() as folder, patch.object(bridge, 'root', return_value=Path(folder)), \
+             patch.object(bridge, 'register_host'):
+            root = Path(folder)
+            bridge.install_extension()
+            version = bridge.ready_package()['version']
+            bridge.atomic_json(root/'loaded.json', {'version':version})
+            sender = 'seller@example.com'
+            mail = {'recipient':'receiver@example.com','subject':'salgs reg','registrationId':'00000000-0000-4000-8000-000000000002',
+                    'html':'<table>'+('<tr>'+('<td>'+('Salg ÆØÅ '*45)+'</td>')*32+'</tr>')*3+'</table>', 'text':'Salg ÆØÅ'}
+            request_id = '00000000-0000-4000-8000-000000000003'
+            def respond(_):
+                self.assertGreater((root/'request.json').stat().st_size, bridge.LIMIT)
+                stdin, stdout = io.BytesIO(), io.BytesIO()
+                receipt = {'type':'result','requestId':request_id,'success':True,'status':'mail-sent','senderEmail':sender,
+                           'registrationId':mail['registrationId'],'recipient':mail['recipient'],'contentHash':bridge.mail_content_hash(mail,sender)}
+                bridge.write_frame(stdin, {'type':'poll','extensionVersion':version})
+                bridge.write_frame(stdin, receipt)
+                stdin.seek(0)
+                with patch.object(bridge,'prepare_native_stdio'), \
+                     patch.object(bridge.sys,'stdin',SimpleNamespace(buffer=stdin)), patch.object(bridge.sys,'stdout',SimpleNamespace(buffer=stdout)):
+                    bridge.native_main('chrome-extension://'+bridge.extension_id()+'/')
+                stdout.seek(0)
+                self.assertEqual(bridge.read_frame(stdout)['mail'],mail)
+            with patch.object(bridge.time,'sleep',side_effect=respond):
+                result = bridge.request_outlook({'operation':'send','requestId':request_id,'expectedSender':sender,'mail':mail})
+            self.assertTrue(result['success'])
+            self.assertFalse((root/'request.json').exists())
+
     def test_setup_progress_is_bound_and_report_is_redacted(self):
         with tempfile.TemporaryDirectory() as folder:
             root=Path(folder);request={'requiredExtensionVersion':'0.1.14','type':'install','requestId':'fresh','registration':{'isTest':True,'requestId':'fresh'},'expiresAt':time.time()+30,'workbookUrl':'https://5rmarketing-my.sharepoint.com/a?sourcedoc={535121b9-ed93-447b-9f89-7e8d575d03e4}'}

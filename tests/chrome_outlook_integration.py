@@ -6,7 +6,7 @@ REPO=Path(__file__).resolve().parents[1]
 from sys import path
 path.insert(0, str(REPO/'intramanager_worker'))
 from chrome_bridge import valid_outlook_request, valid_outlook_result
-PAGE=r'''<button id="mectrl_main_trigger" aria-label="Kontoadministration" aria-expanded="false">Kontoadministration</button><div role="tree"><div role="treeitem">Indbakke</div></div><div role="row">unrelated@example.com</div><button id="new">Ny mail</button><div id="mail-list"></div><div id="read"></div><div id="app"></div><div id="toasts"></div>
+PAGE=r'''<button id="O365_MainLink_Me" hidden>Hidden profile</button><span id="O365_MainLink_MeEmail" hidden>wrong@example.com</span><button id="mectrl_main_trigger" aria-label="Kontoadministration" aria-expanded="false">Kontoadministration</button><div role="tree"><div role="treeitem">Indbakke</div></div><div role="row">unrelated@example.com</div><button id="new">Ny mail</button><div id="mail-list"></div><div id="read"></div><div id="app"></div><div id="toasts"></div>
 <script>
 document.getElementById('mectrl_main_trigger').onclick=e=>{
  const previous=document.querySelector('#mectrl_currentAccount_secondary');
@@ -60,8 +60,8 @@ def run():
   folder=Path(folder);ext=folder/'extension';shutil.copytree(REPO/'chrome_extension',ext)
   manifest=ext/'manifest.json';m=json.loads(manifest.read_text());m['host_permissions'].extend(['https://outlook.office.com/*','https://outlook.cloud.microsoft/*','https://outlook.office365.com/*']);manifest.write_text(json.dumps(m))
   bg=ext/'background.js';bg.write_text('''const originalSetTimeout=setTimeout;globalThis.setTimeout=(fn,ms,...args)=>originalSetTimeout(fn,ms===90000?18000:ms,...args);
-globalThis.fixtureResults=[];globalThis.fixtureState=()=>pending?{phase:pending.phase,tabId:pending.tabId}:null;
-chrome.runtime.connectNative=()=>({postMessage:m=>{if(m.type==='result')fixtureResults.push(m)},onDisconnect:{addListener(){}},onMessage:{addListener:fn=>globalThis.fixtureNative=fn}});
+globalThis.fixtureResults=[];globalThis.fixtureProgress=[];globalThis.fixtureState=()=>pending?{phase:pending.phase,tabId:pending.tabId}:null;
+chrome.runtime.connectNative=()=>({postMessage:m=>{if(m.type==='result')fixtureResults.push(m);if(m.type==='progress')fixtureProgress.push(m)},onDisconnect:{addListener(){}},onMessage:{addListener:fn=>globalThis.fixtureNative=fn}});
 '''+bg.read_text())
   context=p.chromium.launch_persistent_context(str(folder/'profile'),headless=True,channel='chromium',service_workers='block',args=['--disable-extensions-except='+str(ext),'--load-extension='+str(ext)])
   try:
@@ -78,7 +78,7 @@ chrome.runtime.connectNative=()=>({postMessage:m=>{if(m.type==='result')fixtureR
     if time.monotonic()>=ready_deadline:
      raise AssertionError('Outlook fixture native handler did not initialize')
     front.wait_for_timeout(100)
-   def request(operation,mail=None,success=True,open_tab=False):
+   def request(operation,mail=None,success=True,open_tab=False,during=None):
     nonlocal book
     request_id=str(uuid.uuid4())
     query={'type':'outlook','operation':operation,'requestId':request_id,'expectedSender':'seller@example.com',**({'mail':mail} if mail else {})}
@@ -86,6 +86,8 @@ chrome.runtime.connectNative=()=>({postMessage:m=>{if(m.type==='result')fixtureR
     service.evaluate('m=>fixtureNative(m)',query)
     deadline=time.monotonic()+30
     while time.monotonic()<deadline:
+     if during:
+      during(request_id)
      if book is None and open_tab:
       matches=[page for page in context.pages if page not in initial_pages]
       if matches:
@@ -133,6 +135,21 @@ chrome.runtime.connectNative=()=>({postMessage:m=>{if(m.type==='result')fixtureR
    assert len([page for page in context.pages if '/mail/' in page.url])==1
    fallback_tab=service.evaluate('async()=> (await chrome.tabs.query({url:"https://outlook.cloud.microsoft/*"}))[0]')
    assert fallback_tab['active'] is False and fallback_tab['autoDiscardable'] is False
-   print('Outlook fixture: existing background tab reused, personal draft preserved, inbox restored, new-tab fallback, recipient and full table verified, and duplicate sends prevented.')
+   book.close()
+   book=context.new_page()
+   context.route('https://outlook.office.com/owa/',lambda r:r.fulfill(content_type='text/html',body='<p>Opening Outlook</p>'))
+   context.route('https://login.microsoft.com/**',lambda r:r.fulfill(content_type='text/html',body='<p>Microsoft login fixture</p>'))
+   book.goto('https://outlook.office.com/owa/')
+   front.bring_to_front()
+   started_pages=set(context.pages)
+   def sign_in(request_id):
+    steps=service.evaluate('id=>fixtureProgress.filter(m=>m.requestId===id).map(m=>m.phase)',request_id)
+    if book.url.endswith('/owa/') and 'outlook-open' in steps:
+     book.goto('https://login.microsoft.com/test')
+    if book.url.endswith('/test') and 'outlook-login' in steps:
+     book.goto(inbox)
+   assert request('connect',during=sign_in)['senderEmail']=='seller@example.com'
+   assert set(context.pages)==started_pages
+   print('Outlook fixture: existing background tab reused, existing login tab resumed, personal draft preserved, inbox restored, new-tab fallback, recipient and full table verified, and duplicate sends prevented.')
   finally:context.close()
 if __name__=='__main__':run()
