@@ -1,8 +1,8 @@
 {
-  "version": "2.0.8",
-  "build_version": 20008,
-  "run_id": 45680346965,
-  "source_sha": "57f6f75b6e369d471bdefbaa91e8fe4164e1c856",
-  "artifact_id": 15053574623,
-  "release_notes": "- Forbind Outlook genbruger den åbne Outlook-fane og fortsætter efter Microsoft-login.\n- Provi Tracker kontrollerer, at Chrome-udvidelsen svarer, og vejleder om indlæsning eller genindlæsning, hvis den mangler.\n- Browserhjælperen kan nu overføre komplette salgsrapporter, som overskred den gamle størrelsesgrænse.\n- Chrome-udvidelsen opdateres til 0.1.28."
+  "version": "2.0.9",
+  "build_version": 20009,
+  "run_id": 45879075877,
+  "source_sha": "5040c264d0bf0ef73310dcbb99ce5f339b128070",
+  "artifact_id": 15147340062,
+  "release_notes": "- Windows-installationen frigør Provi Trackers Chrome-hjælper før opdatering. Chrome og de åbne faner kan forblive åbne.\n- Chrome-udvidelsen opdateres automatisk fra 0.1.28 til 0.1.29 og beholder sit udvidelses-ID og sine tilladelser."
 }
