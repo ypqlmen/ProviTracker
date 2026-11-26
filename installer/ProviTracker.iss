@@ -79,6 +79,16 @@ Filename: "{win}\explorer.exe"; Parameters: """{#UserInstallDir}\{#MyAppExeName}
 [Code]
 const
   Legacy11UninstallKey = 'Software\Microsoft\Windows\CurrentVersion\Uninstall\{CBA2670F-F574-46E0-8913-FBEF7822C1B7}_is1';
+  ChromeHostKey = 'Software\Google\Chrome\NativeMessagingHosts\dk.provitracker.masterark';
+  ChromiumHostKey = 'Software\Chromium\NativeMessagingHosts\dk.provitracker.masterark';
+  ChromeHostOrigin = 'chrome-extension://ecjmjejfgehknkghkopejihgcmjnpdif/';
+
+var
+  ChromeHostPaused, ChromiumHostPaused: Boolean;
+  ChromeHostManifest, PausedChromeManifest: string;
+
+procedure GetSystemTimeAsFileTime(var Time: TFileTime);
+  external 'GetSystemTimeAsFileTime@kernel32.dll stdcall';
 
 function ShouldRefreshDesktopShortcut: Boolean;
 begin
@@ -203,6 +213,116 @@ begin
     Result := 0;
 end;
 
+function PauseChromeHostKey(HostKey: string; var Paused: Boolean): Boolean;
+var
+  CurrentManifest: string;
+begin
+  Result := True;
+  if RegQueryStringValue(HKCU, HostKey, '', CurrentManifest) and
+     (CompareText(CurrentManifest, ChromeHostManifest) = 0) then begin
+    Result := RegWriteStringValue(HKCU, HostKey, '', PausedChromeManifest);
+    Paused := Paused or Result;
+  end;
+end;
+
+procedure RestoreChromeHostKey(HostKey: string; var Paused: Boolean);
+var
+  CurrentManifest: string;
+begin
+  if Paused and RegQueryStringValue(HKCU, HostKey, '', CurrentManifest) and
+     (CompareText(CurrentManifest, PausedChromeManifest) = 0) then
+    if not RegWriteStringValue(HKCU, HostKey, '', ChromeHostManifest) then begin
+      Log('Could not restore the Provi Tracker Chrome host registration');
+      exit;
+    end;
+  Paused := False;
+end;
+
+procedure RestoreChromeHost;
+begin
+  RestoreChromeHostKey(ChromeHostKey, ChromeHostPaused);
+  RestoreChromeHostKey(ChromiumHostKey, ChromiumHostPaused);
+end;
+
+function ChromeRequestMayBeActive(RequestPath: string): Boolean;
+var
+  RequestFile: TFindRec;
+  Now: TFileTime;
+  Age: Int64;
+begin
+  Result := False;
+  if not FindFirst(RequestPath, RequestFile) then exit;
+  try
+    GetSystemTimeAsFileTime(Now);
+    Age := (Int64(Now.dwHighDateTime) - Int64(RequestFile.LastWriteTime.dwHighDateTime)) * 65536 * 65536 +
+           Int64(Now.dwLowDateTime) - Int64(RequestFile.LastWriteTime.dwLowDateTime);
+    Result := Age < Int64(720) * 10000000;
+  finally
+    FindClose(RequestFile);
+  end;
+end;
+
+function PrepareToInstall(var NeedsRestart: Boolean): string;
+var
+  Locator, Management, Processes, Process: Variant;
+  BridgeFolder, InstallerWorker, CommandLine, RequestPath: string;
+  Attempt, Index: Integer;
+  FoundChromeHost: Boolean;
+begin
+  Result := '';
+  BridgeFolder := ExpandConstant('{localappdata}\ProviTrackerChromeBridge');
+  ChromeHostManifest := AddBackslash(BridgeFolder) + 'host.json';
+  RequestPath := AddBackslash(BridgeFolder) + 'request.json';
+  InstallerWorker := AddBackslash(UserInstallDirValue) + 'intramanager_worker\intramanager_sync.exe';
+  if not FileExists(ChromeHostManifest) or not FileExists(InstallerWorker) then exit;
+  PausedChromeManifest := ExpandConstant('{tmp}\provi-native-update-in-progress.json');
+  try
+    if ChromeRequestMayBeActive(RequestPath) then
+      RaiseException('Provi Trackers Chrome-hjælper arbejder stadig. Prøv igen, når opgaven er færdig.');
+    if not PauseChromeHostKey(ChromeHostKey, ChromeHostPaused) or
+       not PauseChromeHostKey(ChromiumHostKey, ChromiumHostPaused) then
+      RaiseException('Provi Trackers Chrome-forbindelse kunne ikke sættes på pause.');
+    Locator := CreateOleObject('WbemScripting.SWbemLocator');
+    Management := Locator.ConnectServer('.', 'root\CIMV2');
+    for Attempt := 1 to 20 do begin
+      FoundChromeHost := False;
+      Processes := Management.ExecQuery('SELECT * FROM Win32_Process WHERE Name = ''intramanager_sync.exe'' AND ExecutablePath IS NOT NULL AND CommandLine IS NOT NULL');
+      for Index := 0 to Processes.Count - 1 do begin
+        Process := Processes.ItemIndex(Index);
+        CommandLine := Process.CommandLine;
+        if (CompareText(Process.ExecutablePath, InstallerWorker) = 0) and
+           ((Pos(' ' + ChromeHostOrigin + ' --parent-window=', CommandLine) > 0) or
+            (Pos(' "' + ChromeHostOrigin + '" --parent-window=', CommandLine) > 0)) then begin
+          FoundChromeHost := True;
+          if ChromeRequestMayBeActive(RequestPath) then
+            RaiseException('Provi Trackers Chrome-hjælper arbejder stadig. Prøv igen, når opgaven er færdig.');
+          if Process.Terminate(0) <> 0 then
+            RaiseException('Provi Trackers Chrome-hjælper kunne ikke stoppes. Luk Chrome, og prøv igen.');
+          Log('Stopped the idle Provi Tracker native Chrome host');
+        end;
+      end;
+      if not FoundChromeHost then begin
+        if ChromeHostPaused and not PauseChromeHostKey(ChromeHostKey, ChromeHostPaused) then
+          RaiseException('Provi Trackers Chrome-forbindelse kunne ikke holdes på pause.');
+        if ChromiumHostPaused and not PauseChromeHostKey(ChromiumHostKey, ChromiumHostPaused) then
+          RaiseException('Provi Trackers Chromium-forbindelse kunne ikke holdes på pause.');
+        exit;
+      end;
+      Sleep(250);
+    end;
+    RaiseException('Provi Trackers Chrome-hjælper er stadig åben. Luk Chrome, og prøv igen.');
+  except
+    Log('Chrome host preparation failed: ' + GetExceptionMessage);
+    RestoreChromeHost;
+    Result := 'Provi Tracker kunne ikke klargøre browserhjælperen til opdatering. Afslut en eventuel salgsregistrering, luk Chrome, og prøv igen.';
+  end;
+end;
+
+procedure DeinitializeSetup;
+begin
+  RestoreChromeHost;
+end;
+
 procedure UninstallLegacy11IfSeparate(LegacyDir: string);
 var
   UninstallString: string;
@@ -224,6 +344,7 @@ var
   LegacyDir: string;
 begin
   if CurStep = ssPostInstall then begin
+    RestoreChromeHost;
     if RegQueryStringValue(HKCU, Legacy11UninstallKey, 'InstallLocation', LegacyDir) then begin
       MigrateLegacyDataFrom(LegacyDir);
       MigrateLegacyDataFrom(AddBackslash(LegacyDir) + 'data');

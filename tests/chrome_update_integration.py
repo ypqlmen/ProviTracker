@@ -87,8 +87,9 @@ def main(worker, installer):
                 # Exercise app replacement while Chrome holds the packaged native host open.
                 log = root / 'integration-installer.log'
                 result = subprocess.run([str(installer), '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART',
-                    '/CLOSEAPPLICATIONS', '/FORCECLOSEAPPLICATIONS', f'/LOG={log}'], timeout=180)
+                    '/NOCLOSEAPPLICATIONS', f'/LOG={log}'], timeout=180)
                 assert result.returncode == 0, log.read_text(encoding='utf-8', errors='replace')[-5000:]
+                assert 'Stopped the idle Provi Tracker native Chrome host' in log.read_text(encoding='utf-8', errors='replace')
                 assert not installed_retired.exists(), 'The installer must remove the obsolete bundled module'
                 (root / 'loaded.json').unlink(missing_ok=True)
                 wait_for(context, lambda: read_json(root / 'loaded.json').get('version') == initial,
