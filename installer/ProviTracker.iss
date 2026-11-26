@@ -264,7 +264,7 @@ end;
 
 function PrepareToInstall(var NeedsRestart: Boolean): string;
 var
-  Locator, Management, Processes, Process: Variant;
+  Locator, Management, Processes, Process, Parameters, Termination: Variant;
   BridgeFolder, InstallerWorker, CommandLine, RequestPath: string;
   Attempt, Index: Integer;
   FoundChromeHost: Boolean;
@@ -289,14 +289,17 @@ begin
       Processes := Management.ExecQuery('SELECT * FROM Win32_Process WHERE Name = ''intramanager_sync.exe'' AND ExecutablePath IS NOT NULL AND CommandLine IS NOT NULL');
       for Index := 0 to Processes.Count - 1 do begin
         Process := Processes.ItemIndex(Index);
-        CommandLine := Process.CommandLine;
-        if (CompareText(Process.ExecutablePath, InstallerWorker) = 0) and
+        CommandLine := Process.Properties_.Item('CommandLine').Value;
+        if (CompareText(Process.Properties_.Item('ExecutablePath').Value, InstallerWorker) = 0) and
            ((Pos(' ' + ChromeHostOrigin + ' --parent-window=', CommandLine) > 0) or
             (Pos(' "' + ChromeHostOrigin + '" --parent-window=', CommandLine) > 0)) then begin
           FoundChromeHost := True;
           if ChromeRequestMayBeActive(RequestPath) then
             RaiseException('Provi Trackers Chrome-hjælper arbejder stadig. Prøv igen, når opgaven er færdig.');
-          if Process.Terminate(0) <> 0 then
+          Parameters := Process.Methods_.Item('Terminate').InParameters.SpawnInstance_();
+          Parameters.Properties_.Item('Reason').Value := 0;
+          Termination := Process.ExecMethod_('Terminate', Parameters);
+          if Termination.Properties_.Item('ReturnValue').Value <> 0 then
             RaiseException('Provi Trackers Chrome-hjælper kunne ikke stoppes. Luk Chrome, og prøv igen.');
           Log('Stopped the idle Provi Tracker native Chrome host');
         end;

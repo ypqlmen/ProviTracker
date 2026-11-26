@@ -12,6 +12,7 @@ on:
       - 'CMakeLists.txt'
       - 'settings_icons.qrc'
       - 'assets/**'
+      - 'installer/**'
       - 'intramanager_worker/**'
       - 'tests/**'
       - 'chrome_extension/**'
