@@ -3,9 +3,9 @@
   <channel>
     <title>Provi Tracker Updates</title>
     <item>
-      <title>Version 2.0.8</title>
-      <pubDate>Wed, 25 Nov 2026 19:34:43 +0000</pubDate>
-      <enclosure url="https://github.com/ypqlmen/ProviTracker/releases/download/autoupdate/ProviBeregnerSetup-2.0.8.exe" length="230620261" sparkle:version="20008" sparkle:shortVersionString="2.0.8" sparkle:installerArguments="/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /CLOSEAPPLICATIONS /FORCECLOSEAPPLICATIONS" provi:zipUrl="https://github.com/ypqlmen/ProviTracker/releases/download/autoupdate/ProviTrackerUpdate-2.0.8.zip" provi:zipLength="230177260" provi:zipSha256="6493576534d65889ca59e59456cb0693d0c02a2a7b6cb94fa805b3bc38460aab" type="application/octet-stream" />
+      <title>Version 2.0.9</title>
+      <pubDate>Thu, 26 Nov 2026 19:03:15 +0000</pubDate>
+      <enclosure url="https://github.com/ypqlmen/ProviTracker/releases/download/autoupdate/ProviBeregnerSetup-2.0.9.exe" length="230621468" sparkle:version="20009" sparkle:shortVersionString="2.0.9" sparkle:installerArguments="/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /CLOSEAPPLICATIONS /FORCECLOSEAPPLICATIONS" provi:zipUrl="https://github.com/ypqlmen/ProviTracker/releases/download/autoupdate/ProviTrackerUpdate-2.0.9.zip" provi:zipLength="230179018" provi:zipSha256="5bc3b77999a65c607ef2b04dc73feab3982c07989da9fa29ad6a1a10170767d5" type="application/octet-stream" />
     </item>
   </channel>
 </rss>
