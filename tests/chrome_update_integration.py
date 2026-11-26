@@ -39,13 +39,12 @@ def main(worker, installer):
     manifest = json.loads(original)
     initial = manifest['version']
     parts = [int(p) for p in initial.split('.')]
+    assert parts[-1] > 0, 'This fixture needs adjacent extension patch versions'
+    previous_version = '.'.join(str(part) for part in [*parts[:-1], parts[-1] - 1])
     parts[-1] += 1
     updated = '.'.join(str(p) for p in parts)
     digest = hashlib.sha256(base64.b64decode(manifest['key'])).hexdigest()[:32]
     extension_id = ''.join(chr(ord('a')+int(c,16)) for c in digest)
-    result = subprocess.run([str(worker), '--stdin-json'], input='{"action":"chrome-install"}',
-        text=True, capture_output=True, timeout=30, check=True)
-    assert json.loads(result.stdout)['success'], result.stdout
     # Playwright's isolated Chromium build uses Chromium's registry namespace.
     registry_path = 'Software\\Chromium\\NativeMessagingHosts\\dk.provitracker.masterark'
     previous = None
@@ -58,6 +57,12 @@ def main(worker, installer):
         winreg.SetValueEx(key, '', 0, winreg.REG_SZ, str(root / 'host.json'))
     (root / 'loaded.json').unlink(missing_ok=True)
     try:
+        previous_manifest = json.dumps({**manifest, 'version': previous_version})
+        bundle_manifest.write_text(previous_manifest, encoding='utf-8')
+        (extension / 'manifest.json').write_text(previous_manifest, encoding='utf-8')
+        result = subprocess.run([str(worker), '--stdin-json'], input='{"action":"chrome-install"}',
+            text=True, capture_output=True, timeout=30, check=True)
+        assert json.loads(result.stdout)['extensionVersion'] == previous_version, result.stdout
         with tempfile.TemporaryDirectory(prefix='provi-chrome-update-') as profile, sync_playwright() as p:
             context = p.chromium.launch_persistent_context(profile, channel='chromium', headless=True,
                 args=[f'--disable-extensions-except={extension}', f'--load-extension={extension}'])
@@ -74,7 +79,7 @@ def main(worker, installer):
                 setup.close()
                 page = context.pages[0]
                 page.evaluate('window.proviUntouched = "keep-me"')
-                wait_for(context, lambda: read_json(root / 'loaded.json').get('version') == initial,
+                wait_for(context, lambda: read_json(root / 'loaded.json').get('version') == previous_version,
                     'initial native-host connection')
                 assert any(w.url.startswith('chrome-extension://'+extension_id+'/') for w in context.service_workers)
                 connected=next(w for w in context.service_workers if w.url.startswith('chrome-extension://'+extension_id+'/'))
@@ -93,7 +98,8 @@ def main(worker, installer):
                 assert not installed_retired.exists(), 'The installer must remove the obsolete bundled module'
                 (root / 'loaded.json').unlink(missing_ok=True)
                 wait_for(context, lambda: read_json(root / 'loaded.json').get('version') == initial,
-                    'native-host reconnection after silent app installation')
+                    'automatic extension update after silent app installation')
+                print(f'Silent installer upgraded the active extension: {previous_version} -> {initial}')
                 assert page.evaluate('window.proviUntouched') == 'keep-me', 'Installation must keep Chrome tabs open'
                 # An in-flight check must postpone the copy and reload until it finishes.
                 (root / 'request.json').write_text(json.dumps({'expiresAt':time.time()+120}), encoding='utf-8')

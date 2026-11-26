@@ -3,7 +3,7 @@
 ## Opsætning
 
 1. Opdater Provi Tracker, og åbn Indstillinger → Masterark.
-2. Provi Tracker opdaterer den eksisterende Chrome-udvidelse i samme mappe. Kontrollér, at Chrome viser version 0.1.28. Hvis Chrome mangler udvidelsen, vælg Installer Chrome-udvidelse under Masterark og indlæs den i den Chrome-profil, hvor du bruger Outlook.
+2. Provi Tracker opdaterer den eksisterende Chrome-udvidelse i samme mappe. Kontrollér, at Chrome viser version 0.1.29. Hvis Chrome mangler udvidelsen, vælg Installer Chrome-udvidelse under Masterark og indlæs den i den Chrome-profil, hvor du bruger Outlook.
 3. Vælg Forbind Outlook i Chrome. Godkend udvidelsens valgfrie Outlook-adgang, og log ind med sælgerens egen arbejdsmail, hvis Microsoft beder om det. De tilladte Outlook-adresser er outlook.office.com, outlook.cloud.microsoft og outlook.office365.com.
 4. Indtast én modtagermailadresse i Salgs reg på mail. Slå Send automatisk salgs reg efter registrering til, og vælg Gem mailindstillinger. Automatisk masterark-registrering skal være aktiveret.
 5. Opret en ny ordre. Mailen sendes først efter Excels verificerede registrering. Følg den separate mailstatus på ordrekortet.
